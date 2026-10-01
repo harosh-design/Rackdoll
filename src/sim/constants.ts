@@ -266,6 +266,8 @@ export const powerScale = (power: number): number =>
  * connects with; at minimum charge (a tap) it's a light dab.
  */
 export const SWING = {
+  /** Both hands share a 45-second recovery after each rally swing. */
+  cooldownFrames: 45 * FPS,
   fingerImpulseX: 3.4,
   fingerImpulseY: -2.1,
   handImpulseX: 5.8,
@@ -294,18 +296,6 @@ export const SWING = {
   counterHoldFrames: 3,
   counterBallSpeedX: 12,
   counterBallSpeedY: -9,
-} as const;
-
-/** One desperate dive toward a falling ball per rally. */
-export const RESCUE = {
-  reachPx: 220,
-  maxAboveHeadPx: 100,
-  headImpulseX: 3.6,
-  headImpulseY: 1.2,
-  hipsImpulseX: 2.4,
-  hipsImpulseY: 0.8,
-  torsoAngularImpulse: 0.4,
-  activeFrames: 10,
 } as const;
 
 /**
@@ -384,6 +374,21 @@ export const TIMERS = {
 
 /** §11.3 — contact > 3 hands the point to the opponent. 3 lights the warning. */
 export const MAX_TOUCHES = 3;
+
+/** A gift appears after every three points and lasts ten real game seconds. */
+export const GIFT = {
+  goalsPerGift: 3,
+  lifeFrames: 10 * FPS,
+  powerFrames: 30 * FPS,
+  xPx: { 1: 220, 2: 420 },
+  yPx: 310,
+  pickupRadiusPx: 24,
+} as const;
+
+/** Giant and tiny resize the doll this much per frame: 1 → 1.5 takes 13 frames. */
+export const SIZE = {
+  stepPerFrame: 0.04,
+} as const;
 
 // ---------------------------------------------------------------------------
 // §13 Hazards
@@ -533,15 +538,12 @@ export const OPTIONS = {
   championLevel: 6,
 } as const;
 
-/** The champion anticipates shots and can make a last-moment save. */
+/** The champion reads the ball's trajectory and moves before it arrives. */
 export const CHAMPION = {
-  chaseImpulse: 14,
-  saveYpx: 245,
-  nearNetXpx: 410,
-  nearNetSaveYpx: 175,
-  returnSpeedX: -14,
-  returnSpeedY: -15,
-  saveCooldownFrames: 12,
+  chaseImpulse: 11,
+  aimGain: 3,
+  swingReachPx: 85,
+  jumpCooldownFrames: 18,
   minHeadXpx: 375,
   maxHeadXpx: 790,
 } as const;

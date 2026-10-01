@@ -1,4 +1,4 @@
-import type { Control } from '../sim/control';
+import type { Control, ControlKey } from '../sim/control';
 
 /**
  * Maps physical keys to the raw key codes the original tabled (§7). Using
@@ -18,16 +18,20 @@ const CODE_TO_KEYCODE: Record<string, number> = {
   KeyS: 83,
   KeyR: 82,
   KeyE: 69,
-  KeyC: 67,
-  KeyF: 70,
 };
 
-export type KeySink = Pick<Control, 'press' | 'release' | 'clear'>;
+/** Keep original key codes for defaults and use physical codes for new keys. */
+export function controlKey(code: string): ControlKey {
+  return CODE_TO_KEYCODE[code] ?? code;
+}
+
+export type KeySink = Pick<Control, 'press' | 'release' | 'clear' | 'uses'>;
 
 export function bindKeyboard(target: Window, control: KeySink, isActive: () => boolean): () => void {
   const down = (e: KeyboardEvent) => {
-    const code = CODE_TO_KEYCODE[e.code];
-    if (code === undefined || !isActive()) return;
+    if (!isActive() || e.altKey || e.ctrlKey || e.metaKey || e.code === 'Unidentified') return;
+    const code = controlKey(e.code);
+    if (!control.uses(code)) return;
     e.preventDefault(); // no page scrolling on arrows/space
     // Auto-repeat is deliberately NOT filtered. Flash re-fired KEY_DOWN on OS
     // key repeat, which re-armed the consumed jump flag — so holding jump in
@@ -35,9 +39,8 @@ export function bindKeyboard(target: Window, control: KeySink, isActive: () => b
     control.press(code);
   };
   const up = (e: KeyboardEvent) => {
-    const code = CODE_TO_KEYCODE[e.code];
-    if (code === undefined) return;
-    control.release(code);
+    const code = controlKey(e.code);
+    if (control.uses(code)) control.release(code);
   };
   const blur = () => control.clear();
   target.addEventListener('keydown', down);

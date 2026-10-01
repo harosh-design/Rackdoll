@@ -3,16 +3,18 @@ import {
   type Body, type RevoluteJoint as RevoluteJointT, type Vec2Value, type World,
 } from 'planck';
 import {
-  ACTIONS, BODYTYPE, clamp01, DEG, JOINTS, PARTS, PLAYER_FRICTION, powerScale,
+  ACTIONS, BODYTYPE, clamp01, DEG, FLOOR_TOP_PX, JOINTS, PARTS, PLAYER_FRICTION, powerScale,
   PRISM_DENSITY, PRISM_FRICTION, PRISM_HALF_PX, PRISM_RESTITUTION, PRISM_Y_PX,
-  RAIL_H_LIMITS, RAIL_V_LIMITS, SERVE, SPAWN_P1_PX, SPAWN_P2_PX, STAND_POSE,
-  RESCUE, SWING, toM, type PartName, WINDUP,
+  RAIL_H_LIMITS, RAIL_V_LIMITS, SERVE, SIZE, SPAWN_P1_PX, SPAWN_P2_PX, STAND_POSE,
+  SWING, toM, type JointDef, type PartName, WINDUP,
 } from './constants';
 import type { BodyUserData } from './types';
-import { PADEL, type Sport } from './padel';
+import type { PowerId } from './powerUps';
 
 export type PlayerId = 1 | 2;
 export type SwingHand = 'outside' | 'inside';
+
+const PART_DEFS = new Map(PARTS.map((p) => [p.name, p]));
 
 const norm = (v: Vec2): Vec2 => {
   const len = Math.sqrt(v.x * v.x + v.y * v.y);
@@ -40,10 +42,13 @@ export class Player {
   bContact = false;
   /** A short lateral stumble after an executer-head punch. */
   recoilFrames = 0;
+  power: PowerId | null = null;
+  /** Current collision scale. Eases toward targetScale in tickSize(). */
+  sizeScale = 1;
+  targetScale = 1;
 
   private readonly world: World;
   private ballJoint: RevoluteJointT | null = null;
-  readonly sport: Sport;
 
   constructor(
     world: World,
@@ -52,11 +57,9 @@ export class Player {
     xPx: number,
     yPx: number,
     id: PlayerId,
-    sport: Sport = 'volleyball',
   ) {
     this.world = world;
     this.id = id;
-    this.sport = sport;
     const friction = PLAYER_FRICTION[id];
 
     // --- §5 the 13 bodies, in the original's creation order ------------------
@@ -87,17 +90,6 @@ export class Player {
       body.setUserData(data);
       this.parts.set(p.name, body);
       this.bodies.push(body);
-    }
-
-    if (sport === 'padel') {
-      // A light sensor follows the net-facing hand. The stroke controls the
-      // rebound, so simply brushing the ball with a stationary racket does not hit.
-      const racket = this.racketHand.createFixture({
-        shape: Circle(Vec2(toM(this.racketDirection * PADEL.racketOffsetPx), 0), toM(PADEL.racketRadiusPx)),
-        isSensor: true,
-        density: 0,
-      });
-      racket.setUserData({ racket: true });
     }
 
     // --- §5 the 12 revolute joints, all with limits enabled ------------------
@@ -197,14 +189,92 @@ export class Player {
   get head(): Body { return this.part('Head'); }
   get tors(): Body { return this.part('Tors'); }
   get ass(): Body { return this.part('Ass'); }
+  get attackFactor(): number { return this.power === 'smash' ? 1.8 : 1; }
+  private get massFactor(): number { return this.sizeScale * this.sizeScale; }
+
+  /**
+   * Set the size the doll grows or shrinks toward. `immediate` snaps instead,
+   * which is only safe when the doll is re-stood straight after.
+   */
+  resizeTo(scale: number, immediate = false): void {
+    this.targetScale = scale;
+    if (immediate) this.setSizeScale(scale);
+  }
+
+  /**
+   * One step of easing toward targetScale. Growing in one jump teleports a
+   * limb straight through the 2 px net; small steps let the solver push it
+   * back out on the correct side.
+   */
+  tickSize(): void {
+    if (this.sizeScale === this.targetScale) return;
+    const step = SIZE.stepPerFrame;
+    this.setSizeScale(this.sizeScale < this.targetScale
+      ? Math.min(this.targetScale, this.sizeScale + step)
+      : Math.max(this.targetScale, this.sizeScale - step));
+  }
+
+  /** Resize the actual ragdoll fixtures and joint anchors around its feet. */
+  setSizeScale(scale: number): void {
+    if (scale === this.sizeScale) return;
+    const ratio = scale / this.sizeScale;
+    const left = this.part('FootLeft').getWorldCenter();
+    const right = this.part('FootRight').getWorldCenter();
+    // Keep the rail-mounted head on its horizontal line while the soles keep
+    // their height; scaling around the feet in x would pull the head off rail.
+    const pivot = Vec2(this.head.getWorldCenter().x, (left.y + right.y) / 2 + toM(11 * this.sizeScale));
+    const transform = (p: Vec2Value) => Vec2(pivot.x + (p.x - pivot.x) * ratio, pivot.y + (p.y - pivot.y) * ratio);
+    const referenceAngles = this.revolutes.map((joint) => joint.getReferenceAngle());
+    for (const joint of this.revolutes) this.world.destroyJoint(joint);
+    this.revolutes.length = 0;
+
+    for (const def of PARTS) {
+      const body = this.part(def.name);
+      const fixture = body.getFixtureList()!;
+      body.destroyFixture(fixture);
+      const s = scale;
+      body.createFixture({
+        shape: def.shape.kind === 'box'
+          ? Box(toM(def.shape.hw * s), toM(def.shape.hh * s))
+          : Circle(toM(def.shape.r * s)),
+        density: def.density,
+        friction: PLAYER_FRICTION[this.id],
+        restitution: def.restitution,
+      });
+      body.resetMassData();
+      body.setTransform(transform(body.getWorldCenter()), body.getAngle());
+    }
+
+    // Anchors come from the joint table, not the current pose: a joint that
+    // is stretched mid-jump would otherwise bake the stretch into the
+    // skeleton, and it would accumulate with every resize.
+    const localAnchor = (name: PartName, def: JointDef) => {
+      const part = PART_DEFS.get(name)!;
+      return Vec2(toM((def.dx - part.dx) * scale), toM((def.dy - part.dy) * scale));
+    };
+    JOINTS.forEach((def, i) => {
+      this.revolutes.push(this.world.createJoint(new RevoluteJoint({
+        bodyA: this.part(def.a),
+        bodyB: this.part(def.b),
+        localAnchorA: localAnchor(def.a, def),
+        localAnchorB: localAnchor(def.b, def),
+        enableLimit: true,
+        lowerAngle: def.lower * DEG,
+        upperAngle: def.upper * DEG,
+        referenceAngle: referenceAngles[i],
+        enableMotor: false,
+        maxMotorTorque: 0,
+        motorSpeed: 0,
+      }))!);
+    });
+    this.sizeScale = scale;
+    if (this.ballJoint) {
+      this.ballJoint.getBodyB().setTransform(this.servingFinger.getWorldCenter(), 0);
+    }
+  }
   /** The hand that holds the ball: right for player 1, left for player 2. */
   get servingFinger(): Body {
     return this.id === 1 ? this.part('FingerRight') : this.part('FingerLeft');
-  }
-  get racketDirection(): 1 | -1 { return this.id === 1 ? 1 : -1; }
-  get racketHand(): Body { return this.servingFinger; }
-  get racketCenter(): Vec2 {
-    return this.racketHand.getWorldPoint(Vec2(toM(this.racketDirection * PADEL.racketOffsetPx), 0));
   }
   /** The outside hand winds up and swings across the body. */
   get strikingFinger(): Body {
@@ -212,7 +282,6 @@ export class Player {
   }
 
   swingSide(hand: SwingHand): 'Left' | 'Right' {
-    if (this.sport === 'padel') return this.id === 1 ? 'Right' : 'Left';
     return (this.id === 1) === (hand === 'outside') ? 'Left' : 'Right';
   }
 
@@ -231,19 +300,23 @@ export class Player {
   jump(): void {
     const ass = this.ass;
     // Only when the hips are low, i.e. grounded.
-    if (!(ass.getWorldCenter().y > toM(ACTIONS.jumpHipsBelowPx))) return;
+    const threshold = FLOOR_TOP_PX - (FLOOR_TOP_PX - ACTIONS.jumpHipsBelowPx) * this.sizeScale;
+    if (!(ass.getWorldCenter().y > toM(threshold))) return;
 
     const head = this.head;
     const d = Vec2.sub(head.getWorldCenter(), this.tors.getWorldCenter());
-    const v = Vec2.mul(norm(d), ACTIONS.jumpLeanImpulse);
+    const v = Vec2.mul(norm(d), ACTIONS.jumpLeanImpulse * this.massFactor);
+    // The rail and ragdoll joints absorb much of the extra impulse. A 2x
+    // launch impulse produces about 1.5x measured head height.
+    const lift = ACTIONS.jumpLift * this.massFactor * (this.power === 'highJump' ? 2 : 1);
 
     ass.setLinearVelocity(Vec2(0, 0));
     head.setLinearVelocity(Vec2(0, 0));
-    head.applyLinearImpulse(Vec2(0, -ACTIONS.jumpLift), head.getWorldCenter(), true);
+    head.applyLinearImpulse(Vec2(0, -lift), head.getWorldCenter(), true);
     // §16.7 — applied to the HEAD, at the fingertips' positions. Not a slip.
     head.applyLinearImpulse(v, this.part('FingerLeft').getWorldCenter(), true);
     head.applyLinearImpulse(v, this.part('FingerRight').getWorldCenter(), true);
-    ass.applyLinearImpulse(Vec2(0, -ACTIONS.jumpLift), head.getWorldCenter(), true);
+    ass.applyLinearImpulse(Vec2(0, -lift), head.getWorldCenter(), true);
   }
 
   /**
@@ -255,10 +328,12 @@ export class Player {
     const ass = this.ass;
     const head = this.head;
     ass.setLinearVelocity(Vec2(0, 0));
+    const boost = this.massFactor * (this.power === 'speed' ? 1.5 : 1);
+    const moved = Vec2(impulse.x * boost, impulse.y * boost);
     if (head.getWorldCenter().y * 30 > ACTIONS.groundedHeadPx) {
-      ass.applyLinearImpulse(impulse, ass.getWorldCenter(), true); // grounded
+      ass.applyLinearImpulse(moved, ass.getWorldCenter(), true); // grounded
     } else {
-      head.applyLinearImpulse(impulse, head.getWorldCenter(), true); // airborne
+      head.applyLinearImpulse(moved, head.getWorldCenter(), true); // airborne
     }
   }
 
@@ -269,12 +344,14 @@ export class Player {
     const head = this.head;
     ass.setLinearVelocity(Vec2(0, 0));
     head.setLinearVelocity(Vec2(0, 0));
+    const boost = this.massFactor * (this.power === 'speed' ? 1.5 : 1);
+    const moved = Vec2(impulse.x * boost, impulse.y * boost);
     if (head.getWorldCenter().y * 30 > ACTIONS.groundedHeadPx) {
-      const half = Vec2(impulse.x * 0.5, impulse.y * 0.5);
+      const half = Vec2(moved.x * 0.5, moved.y * 0.5);
       head.applyLinearImpulse(half, head.getWorldCenter(), true);
       ass.applyLinearImpulse(half, ass.getWorldCenter(), true);
     } else {
-      ass.applyLinearImpulse(impulse, ass.getWorldCenter(), true);
+      ass.applyLinearImpulse(moved, ass.getWorldCenter(), true);
     }
   }
 
@@ -309,6 +386,7 @@ export class Player {
 
   /** Apply a small whole-doll recoil without locking out jump or swing. */
   receiveHeadPunch(impulse: Vec2Value, frames: number): void {
+    if (this.power === 'shield') return;
     this.head.applyLinearImpulse(impulse, this.head.getWorldCenter(), true);
     this.ass.applyLinearImpulse(impulse, this.ass.getWorldCenter(), true);
     this.recoilFrames = Math.max(this.recoilFrames, frames);
@@ -323,7 +401,11 @@ export class Player {
     this.recoilFrames = 0;
     this.setLinVelZero();
     for (const p of STAND_POSE) {
-      this.part(p.name).setTransform(Vec2(toM(xPx + p.dx), toM(yPx + p.dy)), 0);
+      const footOffset = 101;
+      this.part(p.name).setTransform(Vec2(
+        toM(xPx + p.dx * this.sizeScale),
+        toM(yPx + footOffset + (p.dy - footOffset) * this.sizeScale),
+      ), 0);
     }
     // Deliberately NOT reset: PrismBody's position, and every part's angular
     // velocity. The original leaves both. The rails pull PrismBody back into
@@ -384,12 +466,13 @@ export class Player {
 
     const hand = this.servingFinger;
     hand.applyLinearImpulse(
-      Vec2(sign * SERVE.handImpulseX, SERVE.handImpulseY),
+      Vec2(sign * SERVE.handImpulseX * this.massFactor * this.attackFactor,
+        SERVE.handImpulseY * this.massFactor * this.attackFactor),
       hand.getWorldCenter(),
       true,
     );
     ballBody.applyLinearImpulse(
-      Vec2(sign * SERVE.ballImpulseX, SERVE.ballImpulseY),
+      Vec2(sign * SERVE.ballImpulseX * this.attackFactor, SERVE.ballImpulseY * this.attackFactor),
       ballBody.getWorldCenter(),
       true,
     );
@@ -406,7 +489,7 @@ export class Player {
    */
   swingArm(power = 1, swingHand: SwingHand = 'outside'): void {
     const sign = this.id === 1 ? 1 : -1;
-    const scale = powerScale(power);
+    const scale = powerScale(power) * this.massFactor * this.attackFactor;
     const side = this.swingSide(swingHand);
     const finger = this.part(`Finger${side}`);
     const hand = this.part(`Hand${side}`);
@@ -461,19 +544,6 @@ export class Player {
     );
   }
 
-  /** A low, off-balance lunge toward the falling ball. */
-  diveToward(ball: Body): void {
-    const head = this.head;
-    const hips = this.ass;
-    const sign = Math.sign(ball.getWorldCenter().x - head.getWorldCenter().x) || (this.id === 1 ? 1 : -1);
-    head.applyLinearImpulse(
-      Vec2(sign * RESCUE.headImpulseX, RESCUE.headImpulseY), head.getWorldCenter(), true,
-    );
-    hips.applyLinearImpulse(
-      Vec2(sign * RESCUE.hipsImpulseX, RESCUE.hipsImpulseY), hips.getWorldCenter(), true,
-    );
-    this.tors.applyAngularImpulse(sign * RESCUE.torsoAngularImpulse, true);
-  }
 }
 
 export const spawnFor = (id: PlayerId) => (id === 1 ? SPAWN_P1_PX : SPAWN_P2_PX);

@@ -6,6 +6,7 @@
 import { Vec2, World } from 'planck';
 import { describe, expect, it, vi } from 'vitest';
 import { Ball } from '../src/sim/ball';
+import { predictLanding } from '../src/sim/ai';
 import {
   BALL, CHARGE, GRAVITY, ITERATIONS, JOINTS, NET_TOP_PX, PARTS, PLAYER_FRICTION, SWING, TIME_STEP, toM,
 } from '../src/sim/constants';
@@ -403,20 +404,51 @@ describe('fixed serve and charged outside-arm swing', () => {
     expect(step.mock.lastCall?.[0]).toBeCloseTo(TIME_STEP);
   });
 
-  it('allows consecutive fully charged hits without a cooldown', () => {
+  it('shares a 45-second cooldown across both hands, but not across players', () => {
     const gw = hazardWorld({ hazards: false });
     const swing = vi.spyOn(gw.p1, 'swingArm');
     gw.control.press(32);
     run(gw, CHARGE.maxFrames);
     gw.control.release(32);
     gw.step();
-    gw.control.press(32);
-    run(gw, CHARGE.maxFrames);
-    expect(gw.control.chargeLevel(1)?.power).toBe(1);
-    gw.control.release(32);
+    const firstHitFrame = gw.swingEffects[1].frame;
+    expect(gw.swingCooldownFramesLeft(1)).toBe(SWING.cooldownFrames - 1);
+
+    gw.control.press(16);
+    run(gw, 3);
+    expect(gw.control.chargeLevel(1)).toBeNull();
+    gw.control.release(16);
+    gw.step();
+    expect(gw.swing(gw.p1, 1, 'inside')).toBe(false);
+    expect(swing).toHaveBeenCalledTimes(1);
+    expect(gw.swing(gw.p2, 1, 'inside')).toBe(true);
+
+    gw.frame = firstHitFrame + SWING.cooldownFrames - 1;
+    gw.control.press(16);
+    gw.step();
+    expect(gw.control.chargeLevel(1)).toBeNull();
+    gw.step();
+    expect(gw.control.chargeLevel(1)?.hand).toBe('inside');
+    gw.control.release(16);
     gw.step();
     expect(swing).toHaveBeenCalledTimes(2);
-    expect(swing).toHaveBeenLastCalledWith(1, 'outside');
+    expect(swing).toHaveBeenLastCalledWith(1 / CHARGE.maxFrames, 'inside');
+  });
+
+  it('keeps the hit cooldown across rounds while allowing a serve', () => {
+    const gw = hazardWorld({ hazards: false });
+    expect(gw.swing(gw.p1, 1)).toBe(true);
+    const remaining = gw.swingCooldownFramesLeft(1);
+    gw.paused = true;
+    run(gw, 30);
+    expect(gw.swingCooldownFramesLeft(1)).toBe(remaining);
+    gw.paused = false;
+    gw.game.newRound();
+    expect(gw.swingCooldownFramesLeft(1)).toBe(remaining);
+    gw.control.press(32);
+    gw.step();
+    expect(gw.ball.held).toBe(false);
+    expect(gw.swingCooldownFramesLeft(1)).toBe(remaining - 1);
   });
 
   it('gently pulls a nearby free ball toward the striking hand while charging', () => {
@@ -580,38 +612,6 @@ describe('perfect contact, net counter, and desperate save', () => {
     expect(gw.counterEffect.frame).toBe(gw.frame - 1);
   });
 
-  it('dives toward a falling ball, saves it once, and rearms next rally', () => {
-    for (const id of [1, 2] as const) {
-      const gw = hazardWorld({ hazards: false });
-      const player = id === 1 ? gw.p1 : gw.p2;
-      const key = id === 1 ? 67 : 70;
-      const direction = id === 1 ? 1 : -1;
-      const head = player.head.getWorldCenter();
-      gw.ball.body.setTransform(Vec2(head.x + direction * toM(50), head.y + toM(60)), 0);
-      gw.ball.body.setLinearVelocity(Vec2(0, 3));
-      gw.flags.onBallDown = false;
-      expect(gw.rescueState(player)).toBe('ready');
-      gw.control.press(key);
-      gw.step();
-      expect(gw.rescueAvailable[id]).toBe(false);
-      expect(gw.rescueEffects[id].success).toBe(true);
-      expect(player.contact).toBe(1);
-      const effectFrame = gw.rescueEffects[id].frame;
-      gw.control.press(key);
-      gw.step();
-      expect(gw.rescueEffects[id].frame).toBe(effectFrame);
-      gw.game.newRound();
-      expect(gw.rescueAvailable[id]).toBe(true);
-    }
-  });
-
-  it('does not spend a dive while the ball is held', () => {
-    const gw = world();
-    gw.control.press(67);
-    gw.step();
-    expect(gw.rescueAvailable[1]).toBe(true);
-    expect(gw.rescueFeedback[1].text).toBe('WAIT FOR RALLY');
-  });
 });
 
 describe('ball off the body (not in the original)', () => {
@@ -678,45 +678,61 @@ describe('§17.5 AI + hazards', () => {
 });
 
 describe('champion opponent', () => {
-  const fallingBall = (level: number, xPx: number, singlePlayer = true, vx = 0) => {
-    const gw = world({ singlePlayer, level, hazards: false });
+  const freeBall = (level: number, xPx: number, yPx: number, vx: number, vy: number) => {
+    const gw = world({ singlePlayer: true, level, hazards: false });
     gw.world.destroyJoint(gw.p1.holdingJoint!);
     gw.p1.forgetBallJoint();
     gw.ball.ballOfPlayer = 0;
-    gw.ball.body.setTransform(Vec2(toM(xPx), toM(330)), 0);
-    gw.ball.body.setLinearVelocity(Vec2(vx, 12));
+    gw.ball.body.setTransform(Vec2(toM(xPx), toM(yPx)), 0);
+    gw.ball.body.setLinearVelocity(Vec2(vx, vy));
     return gw;
   };
 
-  it('saves fast drops across its half, including beside the net and wall', () => {
-    for (const [x, vx] of [[330, 0], [400, -12], [400, 12], [700, -15], [700, 15], [820, 0]]) {
-      const gw = fallingBall(6, x, true, vx);
-      gw.p2.contact = 3;
-      gw.step();
-      expect(gw.game.phase, `drop at x=${x}, vx=${vx}`).toBe('play');
-      expect(gw.game.score[1]).toBe(0);
-      expect(gw.ball.velocity.x).toBeLessThan(-10);
-      expect(gw.ball.velocity.y).toBeLessThan(-10);
-      expect(gw.p2.contact).toBeLessThan(4);
-      expect(gw.swingEffects[2].frame).toBe(gw.frame - 1);
-      expect(Math.abs(px(gw.p2.head.getWorldCenter().x) - x)).toBeLessThan(100);
-      run(gw, 90);
-      expect(gw.game.score[1], `drop at x=${x}, vx=${vx}`).toBe(0);
-    }
+  it('forecasts a long lob and a shot that rebounds from the net', () => {
+    const clear = predictLanding(Vec2(toM(200), toM(100)), Vec2(8, 0));
+    const blocked = predictLanding(Vec2(toM(200), toM(250)), Vec2(8, 0));
+    expect(px(clear.x)).toBeGreaterThan(400);
+    expect(px(clear.x)).toBeLessThan(600);
+    expect(px(blocked.x)).toBeLessThan(320);
+    expect(clear.seconds).toBeGreaterThan(1);
   });
 
-  it('keeps the extraordinary save exclusive to the single-player champion level', () => {
-    for (const gw of [fallingBall(5, 700), fallingBall(6, 700, false)]) {
-      run(gw, 3);
-      expect(gw.swingEffects[2].frame).toBe(-100);
-      expect(gw.game.score[1]).toBe(1);
-    }
-    const humanSide = fallingBall(6, 300);
-    humanSide.step();
-    expect(humanSide.swingEffects[2].frame).toBe(-100);
+  it('moves toward the predicted landing while the ball is still across the net', () => {
+    const champion = freeBall(6, 200, 100, 8, 0);
+    const ordinary = freeBall(5, 200, 100, 8, 0);
+    run(champion, 12);
+    run(ordinary, 12);
+    expect(px(champion.ball.position.x)).toBeLessThan(320);
+    expect(px(champion.p2.head.getWorldCenter().x - ordinary.p2.head.getWorldCenter().x))
+      .toBeGreaterThan(25);
   });
 
-  it('can continue a rally after a fourth touch', () => {
+  it('still loses a point when the ball lands out of reach', () => {
+    const gw = freeBall(6, 700, 330, 0, 12);
+    const ordinary = freeBall(5, 700, 330, 0, 12);
+    const headX = gw.p2.head.getWorldCenter().x;
+    gw.step();
+    ordinary.step();
+    expect(gw.ball.position.x).toBeCloseTo(ordinary.ball.position.x, 6);
+    expect(gw.ball.position.y).toBeCloseTo(ordinary.ball.position.y, 6);
+    expect(gw.ball.velocity.y).toBeCloseTo(ordinary.ball.velocity.y, 6);
+    run(gw, 2);
+    expect(gw.game.lastPointReason).toBe('floor');
+    expect(gw.game.score[1]).toBe(1);
+    expect(Math.abs(px(gw.p2.head.getWorldCenter().x - headX))).toBeLessThan(100);
+  });
+
+  it('strikes with a real hand when the falling ball is within reach', () => {
+    const gw = freeBall(6, 500, 100, 0, 0);
+    const finger = gw.p2.swingFinger('inside').getWorldCenter();
+    gw.ball.body.setTransform(Vec2(finger.x, finger.y - toM(50)), 0);
+    gw.ball.body.setLinearVelocity(Vec2(0, 3));
+    gw.step();
+    expect(gw.swingEffects[2].frame).toBe(gw.frame - 1);
+    expect(gw.swingEffects[2].hand).toBe('inside');
+  });
+
+  it('loses on a fourth touch under the same rules as every other level', () => {
     const gw = world({ singlePlayer: true, level: 6, hazards: false });
     run(gw, 60);
     jumpServe(gw);
@@ -725,9 +741,9 @@ describe('champion opponent', () => {
     const head = gw.p2.head.getWorldCenter();
     gw.ball.body.setTransform(Vec2(head.x, head.y - toM(40)), 0);
     gw.ball.body.setLinearVelocity(Vec2(0, 3));
-    for (let i = 0; i < 30 && gw.p2.contact === 3; i++) gw.step();
-    expect(gw.p2.contact).toBe(1);
-    expect(gw.game.score[1]).toBe(0);
+    untilPoint(gw, 60);
+    expect(gw.game.lastPointReason).toBe('touches');
+    expect(gw.game.score[1]).toBe(1);
   });
 });
 

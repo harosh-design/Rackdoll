@@ -2,23 +2,22 @@ import { Vec2, World } from 'planck';
 import { AI } from './ai';
 import { Ball } from './ball';
 import {
-  BALL, CHAMPION, CHARGE, EXECUTER, EXECUTER_ITERATIONS, GRAVITY, ITERATIONS,
-  LANDING_CENTRE_M, MS_PER_FRAME, OPTIONS, PRIZE_ANIM, NET_X_PX, RIGHT_WALL_INNER_PX, powerScale, RESCUE,
+  CHARGE, EXECUTER, EXECUTER_ITERATIONS, GRAVITY, ITERATIONS,
+  MS_PER_FRAME, OPTIONS, PRIZE_ANIM, NET_X_PX, powerScale,
   SERVE_CENTRE_M, SPAWN_P1_PX, SPAWN_P2_PX, SWING, toM,
 } from './constants';
-import { Control } from './control';
+import { Control, type KeyBindings } from './control';
 import { installContactListener, installContactTweaks, type ContactFlags } from './contacts';
 import { Executer, type ExecuterTuning } from './executer';
 import { executerVariantForHit } from './executerVariants';
 import { Game, type GameEvents } from './game';
 import { Ground } from './ground';
 import { Player, type PlayerId, type SwingHand } from './player';
+import { PowerUps } from './powerUps';
 import type { PrizeButton } from './prizeButton';
 import { FrameTimer, TimerSet } from './timer';
-import { PADEL, type Sport } from './padel';
 
 export interface GameWorldOptions {
-  sport?: Sport;
   /** Single player puts an AI on player 2. */
   singlePlayer?: boolean;
   /** Campaign level 1..6; level 6 enables the champion opponent. */
@@ -29,6 +28,10 @@ export interface GameWorldOptions {
   executerTuning?: Partial<ExecuterTuning>;
   /** Solver iterations on frames where an executer is touching a doll. */
   contactIterations?: number;
+  /** Physical keyboard bindings for each human player. */
+  bindings?: KeyBindings;
+  /** Optional random seed for reproducible gift abilities. */
+  powerSeed?: number;
   events?: GameEvents;
 }
 
@@ -37,14 +40,14 @@ export interface GameWorldOptions {
  * imports, so thousands of frames can be run headless and asserted on (§17).
  */
 export class GameWorld {
-  readonly sport: Sport;
   readonly world: World;
   readonly ground: Ground;
   readonly p1: Player;
   readonly p2: Player;
   readonly ball: Ball;
+  readonly powerUps: PowerUps;
   readonly game: Game;
-  readonly control = new Control();
+  readonly control: Control;
   readonly ai: AI | null;
   readonly timers = new TimerSet();
   readonly flags: ContactFlags = { onBallDown: false, bYesPrize: false, prizeHits: [], ballPlayerHits: [] };
@@ -63,13 +66,6 @@ export class GameWorld {
     1: { frame: -100, power: 0 }, 2: { frame: -100, power: 0 },
   };
   counterEffect = { frame: -100, power: 0 };
-  readonly rescueEffects: Record<PlayerId, { frame: number; success: boolean }> = {
-    1: { frame: -100, success: false }, 2: { frame: -100, success: false },
-  };
-  readonly rescueFeedback: Record<PlayerId, { frame: number; text: string }> = {
-    1: { frame: -100, text: '' }, 2: { frame: -100, text: '' },
-  };
-  readonly rescueAvailable: Record<PlayerId, boolean> = { 1: true, 2: true };
 
   /** Frames simulated since construction. */
   frame = 0;
@@ -82,16 +78,13 @@ export class GameWorld {
     1: null, 2: null,
   };
   private counter: { framesLeft: number; direction: 1 | -1 } | null = null;
-  private readonly rescueActiveUntil: Record<PlayerId, number> = { 1: -1, 2: -1 };
   private aiCounterWindupFrames = 0;
-  private lastChampionSaveFrame = -100;
-  private padelAiLastSwingFrame = -100;
-  private padelServeBounce: { player: Player; stage: 'drop' | 'rise' } | null = null;
+  private readonly nextSwingFrame: Record<PlayerId, number> = { 1: 0, 2: 0 };
 
   constructor(opts: GameWorldOptions = {}) {
-    this.sport = opts.sport ?? 'volleyball';
+    this.control = new Control(opts.bindings);
     this.singlePlayer = opts.singlePlayer ?? true;
-    this.hazards = this.sport === 'padel' ? false : opts.hazards ?? true;
+    this.hazards = opts.hazards ?? true;
     this.executerTuning = opts.executerTuning;
     this.contactIterations = opts.contactIterations ?? EXECUTER_ITERATIONS;
 
@@ -104,36 +97,34 @@ export class GameWorld {
     // that the horizontal rails anchor to.
     const railAnchor = this.world.createBody({ type: 'static', position: Vec2(0, 0) });
 
-    this.ground = new Ground(this.world, this.sport);
-    this.p1 = new Player(this.world, railAnchor, SPAWN_P1_PX.x, SPAWN_P1_PX.y, 1, this.sport);
-    this.p2 = new Player(this.world, railAnchor, SPAWN_P2_PX.x, SPAWN_P2_PX.y, 2, this.sport);
-    this.ball = new Ball(this.world, undefined, undefined, this.sport);
+    this.ground = new Ground(this.world);
+    this.p1 = new Player(this.world, railAnchor, SPAWN_P1_PX.x, SPAWN_P1_PX.y, 1);
+    this.p2 = new Player(this.world, railAnchor, SPAWN_P2_PX.x, SPAWN_P2_PX.y, 2);
+    this.ball = new Ball(this.world);
+    this.powerUps = new PowerUps({ 1: this.p1, 2: this.p2 }, opts.powerSeed);
 
-    installContactListener(this.world, this.flags, this.sport);
-    installContactTweaks(this.world, this.sport);
+    installContactListener(this.world, this.flags);
+    installContactTweaks(this.world);
 
     const events: GameEvents = {
       ...opts.events,
       onPoint: (winner, reason) => {
-        this.padelServeBounce = null;
+        this.powerUps.onGoal();
         this.strikes[1] = this.strikes[2] = null;
         this.counter = null;
-        this.rescueActiveUntil[1] = this.rescueActiveUntil[2] = -1;
         opts.events?.onPoint?.(winner, reason);
       },
       onNewRound: () => {
-        this.padelServeBounce = null;
+        this.powerUps.onNewRound(this.frame);
         this.ai?.reset();
         this.strikes[1] = this.strikes[2] = null;
         this.counter = null;
-        this.rescueAvailable[1] = this.rescueAvailable[2] = true;
-        this.rescueActiveUntil[1] = this.rescueActiveUntil[2] = -1;
         this.aiCounterWindupFrames = 0;
-        this.lastChampionSaveFrame = -100;
-        this.padelAiLastSwingFrame = -100;
         opts.events?.onNewRound?.();
       },
       onResetMatch: () => {
+        this.nextSwingFrame[1] = this.nextSwingFrame[2] = 0;
+        this.powerUps.reset();
         this.clearExecuters();
         this.executerLaunches = 0;
         for (const button of this.ground.prizeButtons) button.launches = 0;
@@ -142,13 +133,13 @@ export class GameWorld {
     };
 
     this.game = new Game(
-      this.world, this.timers, this.p1, this.p2, this.ball, this.flags, events, this.sport,
+      this.world, this.timers, this.p1, this.p2, this.ball, this.flags, events,
     );
     if (opts.level != null) this.game.level = opts.level;
-    this.game.championDefense = this.singlePlayer && this.game.level === OPTIONS.championLevel;
 
-    this.ai = this.singlePlayer && this.sport === 'volleyball'
-      ? new AI(this.timers, this.p2, this.ball, (p) => this.serve(p))
+    this.ai = this.singlePlayer
+      ? new AI(this.timers, this.p2, this.ball,
+        (p) => this.serve(p), (p, power, hand) => this.swing(p, power, hand), this.canSwing)
       : null;
   }
 
@@ -157,60 +148,28 @@ export class GameWorld {
    * here so the AI and the keyboard take exactly the same fixed-power path.
    */
   serve = (player: Player): void => {
-    if (this.sport === 'padel') {
-      if (this.ball.ballOfPlayer !== player.id || this.game.phase !== 'play') return;
-      const j = player.holdingJoint;
-      if (!j) return;
-      this.world.destroyJoint(j);
-      player.forgetBallJoint();
-      this.ball.ballOfPlayer = 0;
-      this.padelServeBounce = { player, stage: 'drop' };
-      this.ball.body.setLinearVelocity(Vec2(0, 1));
-      return;
-    }
     const ok = player.pas(this.ball.body, this.ball.ballOfPlayer, SERVE_CENTRE_M);
     if (!ok) return;
     this.ball.ballOfPlayer = 0;
+    if (player.power === 'smash') this.ball.boostFrames = 18;
     this.game.registerServe(player);
   };
 
-  /** Not in the original: the rally hit, routed the same way as serve(). */
-  swing = (player: Player, power = 1, hand: SwingHand = 'outside'): void => {
-    player.swingArm(power, hand);
-    this.swingEffects[player.id] = { frame: this.frame, power, hand };
-    if (this.game.phase !== 'play' || this.ball.ballOfPlayer !== 0) return;
-    this.strikes[player.id] = { frame: this.frame, power, hand, ballHit: false, opponentHit: false, hitExecuters: new Set() };
-  };
-
-  /** The same eligibility check drives the button hint and the move itself. */
-  rescueState(player: Player): 'ready' | 'used' | 'held' | 'otherSide' | 'rising' | 'far' | 'high' {
-    if (!this.rescueAvailable[player.id]) return 'used';
-    if (this.game.phase !== 'play' || this.ball.ballOfPlayer !== 0 || this.ball.held) return 'held';
-    const ball = this.ball.position;
-    const head = player.head.getWorldCenter();
-    if (player.id === 1 ? ball.x > toM(NET_X_PX) : ball.x < toM(NET_X_PX)) return 'otherSide';
-    if (this.ball.velocity.y <= 0) return 'rising';
-    if (Math.abs(ball.x - head.x) > toM(RESCUE.reachPx)) return 'far';
-    if (ball.y < head.y - toM(RESCUE.maxAboveHeadPx)) return 'high';
-    return 'ready';
+  swingCooldownFramesLeft(id: PlayerId): number {
+    return Math.max(0, this.nextSwingFrame[id] - this.frame);
   }
 
-  /** One off-balance dive per rally, only toward a nearby falling ball. */
-  rescue = (player: Player): void => {
-    if (this.sport === 'padel') return;
-    const state = this.rescueState(player);
-    if (state !== 'ready') {
-      const reason = {
-        used: 'DIVE USED', held: 'WAIT FOR RALLY', otherSide: 'OTHER SIDE',
-        rising: 'WAIT FOR FALL', far: 'GET CLOSER', high: 'BALL TOO HIGH',
-      }[state];
-      this.rescueFeedback[player.id] = { frame: this.frame, text: reason };
-      return;
-    }
-    player.diveToward(this.ball.body);
-    this.rescueAvailable[player.id] = false;
-    this.rescueActiveUntil[player.id] = this.frame + RESCUE.activeFrames;
-    this.rescueEffects[player.id] = { frame: this.frame, success: false };
+  canSwing = (player: Player): boolean => this.swingCooldownFramesLeft(player.id) === 0;
+
+  /** Not in the original: the rally hit, routed the same way as serve(). */
+  swing = (player: Player, power = 1, hand: SwingHand = 'outside'): boolean => {
+    if (!this.canSwing(player) || this.game.phase !== 'play' || this.ball.ballOfPlayer !== 0) return false;
+    player.swingArm(power, hand);
+    if (player.power === 'smash') this.ball.boostFrames = 18;
+    this.swingEffects[player.id] = { frame: this.frame, power, hand };
+    this.strikes[player.id] = { frame: this.frame, power, hand, ballHit: false, opponentHit: false, hitExecuters: new Set() };
+    this.nextSwingFrame[player.id] = this.frame + SWING.cooldownFrames;
+    return true;
   };
 
   /**
@@ -219,13 +178,15 @@ export class GameWorld {
    */
   step(): void {
     if (this.paused) return;
-    this.game.championDefense = this.singlePlayer && this.game.level === OPTIONS.championLevel;
     this.p1.tickRecoil();
     this.p2.tickRecoil();
+    // Before the step, so the solver settles each size change straight away.
+    this.p1.tickSize();
+    this.p2.tickSize();
 
     // 1. The physics. 1/28 s once per 30 fps frame (§1.3).
     const dt = this.game.timeStep * (
-      this.sport === 'volleyball' && this.game.phase === 'play' && this.control.isChargingSwing() ? CHARGE.windupTimeScale : 1
+      this.game.phase === 'play' && this.control.isChargingSwing() ? CHARGE.windupTimeScale : 1
     );
     // The original's 10 iterations everywhere, except while an executer is at
     // a doll: a 0.07 kg hand hitting a 6 kg ball is badly conditioned, and at
@@ -240,30 +201,23 @@ export class GameWorld {
     // 2. (The renderer syncs sprites here; it reads bodies directly instead.)
 
     // 3. Controls, both players.
-    this.control.update(this.p1, this.serve, this.swing, this.rescue);
-    if (!this.singlePlayer) this.control.update(this.p2, this.serve, this.swing, this.rescue);
-    if (this.sport === 'padel') {
-      this.resolvePadelServeBounce();
-      this.resolvePadelStrikes();
-    }
-    else {
-      this.resolveStrikes();
-      this.advanceCounter();
-      this.resolveRescueTouches();
-      this.attractBallDuringWindup();
-      this.tryChampionSave();
-    }
+    this.control.update(this.p1, this.serve, this.swing, this.canSwing);
+    if (!this.singlePlayer) this.control.update(this.p2, this.serve, this.swing, this.canSwing);
+    this.resolveStrikes();
+    this.advanceCounter();
+    this.attractBallDuringWindup();
 
     // 4. Rules.
     this.game.update();
+    this.powerUps.tick(this.frame, this.game.phase === 'play');
+    this.applyMagnetPower();
 
     // 5. AI, single player only.
     if (this.ai) {
       this.ai.champion = this.game.level === OPTIONS.championLevel;
       this.ai.update();
     }
-    if (this.sport === 'padel' && this.singlePlayer) this.updatePadelAi();
-    else this.updateAiCounter();
+    this.updateAiCounter();
 
     // 6. Hazards.
     for (const e of this.executers) e.update(dt);
@@ -273,70 +227,6 @@ export class GameWorld {
 
     this.timers.step();
     this.frame += 1;
-  }
-
-  private resolvePadelServeBounce(): void {
-    const serve = this.padelServeBounce;
-    if (!serve || this.game.phase !== 'play') return;
-    if (serve.stage === 'drop' && this.flags.padelFloorHit) {
-      serve.stage = 'rise';
-      this.flags.padelFloorHit = false;
-      this.game.notePadelServeBounce();
-      this.ball.body.setLinearVelocity(Vec2(0, -8));
-    }
-    if (serve.stage === 'rise' && this.ball.position.y <= serve.player.racketCenter.y + toM(20)) {
-      this.padelServeBounce = null;
-      this.game.registerPadelHit(serve.player, true);
-      serve.player.swingArm(0.45, 'inside');
-      this.swingEffects[serve.player.id] = { frame: this.frame, power: 0.45, hand: 'inside' };
-      const sign = serve.player.id === 1 ? 1 : -1;
-      this.ball.body.setLinearVelocity(Vec2(sign * PADEL.serveSpeedX, PADEL.serveSpeedY));
-    }
-  }
-
-  private resolvePadelStrikes(): void {
-    if (this.game.phase !== 'play' || this.ball.ballOfPlayer !== 0 || this.padelServeBounce) return;
-    for (const p of [this.p1, this.p2]) {
-      const strike = this.strikes[p.id];
-      if (!strike || strike.ballHit) continue;
-      const age = this.frame - strike.frame;
-      if (age >= PADEL.hitFrames) { this.strikes[p.id] = null; continue; }
-      const racket = p.racketCenter;
-      const ball = this.ball.position;
-      if (Math.hypot(racket.x - ball.x, racket.y - ball.y) >
-          toM(PADEL.racketRadiusPx + this.ball.radiusPx + PADEL.hitReachPx)) continue;
-      if (p.id === 1 ? ball.x > toM(NET_X_PX + 10) : ball.x < toM(NET_X_PX - 10)) continue;
-      if (!this.game.registerPadelHit(p)) continue;
-      strike.ballHit = true;
-      const sign = p.id === 1 ? 1 : -1;
-      const powerFactor = 0.65 + 0.6 * powerScale(strike.power);
-      const lob = strike.hand === 'inside';
-      this.ball.body.setLinearVelocity(Vec2(sign * (lob ? PADEL.lobSpeedX : PADEL.hitSpeedX) * powerFactor,
-        (lob ? PADEL.lobSpeedY : PADEL.hitSpeedY) * (0.75 + 0.35 * powerScale(strike.power))));
-      this.perfectEffects[p.id] = { frame: this.frame, power: strike.power };
-    }
-  }
-
-  private updatePadelAi(): void {
-    const p = this.p2;
-    if (this.game.phase !== 'play') return;
-    if (this.ball.ballOfPlayer === 2) {
-      if (this.frame % 30 === 0) this.serve(p);
-      return;
-    }
-    if (this.ball.ballOfPlayer !== 0 || this.padelServeBounce) return;
-    const ball = this.ball.position;
-    const head = p.head.getWorldCenter();
-    const target = this.game.padelReturnNeedsBounce ? toM(815) : ball.x > toM(NET_X_PX)
-      ? Math.max(toM(375), Math.min(toM(760), ball.x + toM(70)))
-      : toM(525);
-    if (head.x < target - toM(12)) p.turnComp(Vec2(5, 0));
-    else if (head.x > target + toM(12)) p.turnComp(Vec2(-5, 0));
-    if (!this.game.padelReturnNeedsBounce && ball.x > toM(NET_X_PX) && this.frame - this.padelAiLastSwingFrame > 15 &&
-        Math.hypot(p.racketCenter.x - ball.x, p.racketCenter.y - ball.y) < toM(75)) {
-      this.swing(p, 0.65, 'outside');
-      this.padelAiLastSwingFrame = this.frame;
-    }
   }
 
   /** Resolve simultaneous counters before individual ball and player hits. */
@@ -364,7 +254,7 @@ export class GameWorld {
       strike.ballHit = true;
       if (age <= SWING.perfectFrames) {
         const sign = contact.playerId === 1 ? 1 : -1;
-        const scale = powerScale(strike.power);
+        const scale = powerScale(strike.power) * (contact.playerId === 1 ? this.p1 : this.p2).attackFactor;
         this.ball.body.applyLinearImpulse(
           Vec2(sign * SWING.perfectBallImpulseX * scale, SWING.perfectBallImpulseY * scale),
           this.ball.position,
@@ -463,7 +353,8 @@ export class GameWorld {
 
   /** The CPU visibly answers a charge near the net if it had time to prepare. */
   private updateAiCounter(): void {
-    if (!this.ai || this.ai.DisableAI || this.game.phase !== 'play' || this.ball.ballOfPlayer !== 0) {
+    if (!this.ai || this.ai.DisableAI || !this.canSwing(this.p2) ||
+        this.game.phase !== 'play' || this.ball.ballOfPlayer !== 0) {
       this.aiCounterWindupFrames = 0;
       return;
     }
@@ -490,58 +381,6 @@ export class GameWorld {
     this.aiCounterWindupFrames = 0;
   }
 
-  /** The dive grants one assisted touch if a hand or head reaches the ball. */
-  private resolveRescueTouches(): void {
-    if (this.game.phase !== 'play' || this.ball.ballOfPlayer !== 0 || this.ball.held || this.flags.onBallDown) return;
-    for (const player of [this.p1, this.p2]) {
-      if (this.frame > this.rescueActiveUntil[player.id] || this.ball.velocity.y <= 0) continue;
-      const ball = this.ball.position;
-      if (player.id === 1 ? ball.x > toM(NET_X_PX) : ball.x < toM(NET_X_PX)) continue;
-      const reached = [player.head, player.servingFinger, player.strikingFinger].some(
-        (part) => Vec2.sub(part.getWorldCenter(), ball).length() < toM(65),
-      );
-      if (!reached) continue;
-      if (this.game.registerRescueTouch(player)) {
-        this.rescueActiveUntil[player.id] = -1;
-        this.rescueEffects[player.id] = { frame: this.frame, success: true };
-      }
-    }
-  }
-
-  /** The final opponent can dash to a falling ball and turn a desperate save into a return. */
-  private tryChampionSave(): void {
-    if (!this.singlePlayer || this.game.level !== OPTIONS.championLevel ||
-        this.game.phase !== 'play' || this.ball.ballOfPlayer !== 0 || this.ball.held) return;
-    const ball = this.ball.position;
-    if (ball.x < LANDING_CENTRE_M || (this.ball.velocity.y <= 0 && !this.flags.onBallDown) ||
-        (ball.y < toM(CHAMPION.saveYpx) && !this.flags.onBallDown) ||
-        this.frame - this.lastChampionSaveFrame < CHAMPION.saveCooldownFrames) return;
-
-    const ballX = Math.max(toM(NET_X_PX + BALL.radiusPx + 5),
-      Math.min(ball.x, toM(RIGHT_WALL_INNER_PX - BALL.radiusPx - 5)));
-    const headX = Math.max(toM(CHAMPION.minHeadXpx),
-      Math.min(ballX + toM(45), toM(CHAMPION.maxHeadXpx)));
-    const dx = headX - this.p2.head.getWorldCenter().x;
-    for (const body of [...this.p2.bodies, this.p2.prismBody]) {
-      const position = body.getPosition();
-      body.setTransform(Vec2(position.x + dx, position.y), body.getAngle());
-      body.setLinearVelocity(Vec2(0, body.getLinearVelocity().y));
-    }
-
-    // A champion save also forgives an exhausted touch count and a floor contact
-    // already reported by the physics step that brought the ball into range.
-    this.p2.contact = 0;
-    this.game.registerRescueTouch(this.p2);
-    this.flags.onBallDown = false;
-    const saveY = ballX < toM(CHAMPION.nearNetXpx)
-      ? toM(CHAMPION.nearNetSaveYpx)
-      : Math.min(ball.y, toM(CHAMPION.saveYpx));
-    this.ball.body.setTransform(Vec2(ballX, saveY), this.ball.body.getAngle());
-    this.ball.body.setLinearVelocity(Vec2(CHAMPION.returnSpeedX, CHAMPION.returnSpeedY));
-    this.swing(this.p2, 0.8, ballX <= headX ? 'inside' : 'outside');
-    this.lastChampionSaveFrame = this.frame;
-  }
-
   /** A near, forward-facing opponent receives one charge-scaled knockback. */
   private hitOpponent(attackerId: PlayerId, power: number): boolean {
     const attacker = attackerId === 1 ? this.p1 : this.p2;
@@ -552,6 +391,7 @@ export class GameWorld {
     const forward = sign * (target.x - from.x);
     if (forward <= 0 || forward > toM(SWING.opponentReachPx)) return false;
     if (Math.abs(target.y - from.y) > toM(SWING.opponentHeightPx)) return false;
+    if (defender.power === 'shield') return true;
 
     const scale = powerScale(power);
     const impulse = Vec2(sign * SWING.opponentImpulseX * scale, SWING.opponentImpulseY * scale);
@@ -574,6 +414,24 @@ export class GameWorld {
       if (distance < 0.001 || distance >= radius) continue;
       const impulse = CHARGE.attractImpulse * charge.power * (1 - distance / radius) / distance;
       this.ball.body.applyLinearImpulse(Vec2.mul(delta, impulse), ballPos, true);
+    }
+  }
+
+  /** The magnet pulls a free ball toward the player's hands within 140 px. */
+  private applyMagnetPower(): void {
+    if (this.game.phase !== 'play' || this.ball.held || this.ball.ballOfPlayer !== 0) return;
+    const radius = toM(140);
+    for (const player of [this.p1, this.p2]) {
+      if (player.power !== 'magnet') continue;
+      const ballPos = this.ball.position;
+      const left = player.part('FingerLeft').getWorldCenter();
+      const right = player.part('FingerRight').getWorldCenter();
+      const target = Vec2.distance(left, ballPos) < Vec2.distance(right, ballPos) ? left : right;
+      const delta = Vec2.sub(target, ballPos);
+      const distance = delta.length();
+      if (distance < 0.01 || distance >= radius) continue;
+      const strength = 0.028 * (1 - distance / radius) / distance;
+      this.ball.body.applyLinearImpulse(Vec2.mul(delta, strength), ballPos, true);
     }
   }
 

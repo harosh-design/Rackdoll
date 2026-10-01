@@ -1,7 +1,6 @@
 import { Circle, Vec2, type Body, type World } from 'planck';
 import { BALL, BODYTYPE, SPAWN_BALL_PX, toM } from './constants';
 import type { BodyUserData } from './types';
-import { PADEL, type Sport } from './padel';
 
 /** §9 Ball. */
 export class Ball {
@@ -9,9 +8,11 @@ export class Ball {
   /** 0 while in flight, otherwise the id of whoever holds it. */
   ballOfPlayer: 0 | 1 | 2 = 0;
   readonly radiusPx: number;
+  /** Temporary higher speed cap for a super shot. */
+  boostFrames = 0;
 
-  constructor(world: World, xPx = SPAWN_BALL_PX.x, yPx = SPAWN_BALL_PX.y, sport: Sport = 'volleyball') {
-    this.radiusPx = sport === 'padel' ? PADEL.ballRadiusPx : BALL.radiusPx;
+  constructor(world: World, xPx = SPAWN_BALL_PX.x, yPx = SPAWN_BALL_PX.y) {
+    this.radiusPx = BALL.radiusPx;
     this.body = world.createBody({
       type: 'dynamic',
       position: Vec2(toM(xPx), toM(yPx)),
@@ -24,13 +25,13 @@ export class Ball {
       shape: Circle(toM(this.radiusPx)),
       density: BALL.density,
       friction: BALL.friction, // the contact listener identifies the ball by this
-      restitution: sport === 'padel' ? PADEL.ballRestitution : BALL.restitution,
+      restitution: BALL.restitution,
     });
     // §16.3 — explicit, after CreateShape, overriding the density.
     this.body.setMassData({
-      mass: sport === 'padel' ? PADEL.ballMass : BALL.mass,
+      mass: BALL.mass,
       center: Vec2(0, 0),
-      I: sport === 'padel' ? PADEL.ballInertia : BALL.inertia,
+      I: BALL.inertia,
     });
     this.body.setUserData({ e_bodytype: BODYTYPE.BALL, sprite: 'Ball' } as BodyUserData);
   }
@@ -39,11 +40,13 @@ export class Ball {
   update(): void {
     const v = this.body.getLinearVelocity();
     let { x, y } = v;
-    if (y > BALL.maxVy) y = BALL.maxVy;
-    if (y < -BALL.maxVy) y = -BALL.maxVy;
-    if (x > BALL.maxVx) x = BALL.maxVx;
-    if (x < -BALL.maxVx) x = -BALL.maxVx;
+    const boost = this.boostFrames > 0 ? 1.5 : 1;
+    if (y > BALL.maxVy * boost) y = BALL.maxVy * boost;
+    if (y < -BALL.maxVy * boost) y = -BALL.maxVy * boost;
+    if (x > BALL.maxVx * boost) x = BALL.maxVx * boost;
+    if (x < -BALL.maxVx * boost) x = -BALL.maxVx * boost;
     if (x !== v.x || y !== v.y) this.body.setLinearVelocity(Vec2(x, y));
+    if (this.boostFrames > 0) this.boostFrames--;
   }
 
   get position(): Vec2 { return this.body.getWorldCenter(); }
@@ -55,5 +58,6 @@ export class Ball {
     this.body.setLinearVelocity(Vec2(0, 0));
     this.body.setAngularVelocity(0);
     this.ballOfPlayer = 0;
+    this.boostFrames = 0;
   }
 }

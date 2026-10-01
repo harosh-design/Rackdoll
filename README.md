@@ -42,7 +42,8 @@ src/sim/        the game — no DOM anywhere, runs headless
   world.ts      one frame in the original's exact order (§3)
 src/render/     canvas renderer at the original's 0.56 world scale + interpolation
 src/input/      physical-key mapping to the original's raw key codes
-src/audio/      procedural stand-in sounds
+src/audio/      Stable Audio 3 sample playback with procedural fallback
+public/audio/   generated sound effects (Ogg Vorbis)
 test/           the §17 build-order checks as assertions
 ```
 
@@ -64,42 +65,44 @@ original.
 
 ## How to play it
 
-### Padel mode
-
-Choose **Padel** in the menu. Each player has a racket on the hand facing the
-net. Tap Space (or R for player 2) to drop the ball and serve it underhand after
-one bounce. During a rally, hold and release that key for a driven racket shot;
-Shift (or E) makes a higher lob. The racket must reach the ball during the swing.
-
-The ball is smaller and the net lower. A shot must bounce in the opponent's
-court before reaching the glass wall. The receiver may return it after that
-bounce and wall rebound, but loses the point on a second floor bounce. Body
-touches and volleyed serve returns are faults. The server gets two attempts;
-a serve that clips the net and still lands across is replayed.
-Scoring uses 15–30–40, advantage, games to six by two, and a tie break at 6–6.
-This side view represents one player per side; it cannot show diagonal service
-boxes or doubles positioning. Hazards are off in padel mode.
-
-### Volleyball mode
+In the main menu, click any key in the **Controls** panel to reassign that
+action for either player. Press Esc to cancel, or **Reset keys** to restore the
+original layout. Assignments are saved in this browser. P and M remain the
+pause and sound shortcuts; a key already assigned to another action cannot be
+assigned again.
 
 **Serve in the air.** The held ball hangs at your feet. Tap Space (or R for
 player 2) to serve with a fixed underhand flick. Jump first to clear the net.
 Once the ball is free, hold the same key to wind up the outside arm and release
 to hit. Hold Shift (or E for player 2) to hit with the other arm instead.
 The windup briefly slows the physics and gently draws a nearby free
-ball toward the striking hand. A full charge delivers a stronger hit, and you
-can charge the next one immediately. A swing that reaches a nearby opponent
+ball toward the striking hand. A full charge delivers a stronger hit. Both hands
+share a 45-second cooldown after each swing; serving remains available. A swing that reaches a nearby opponent
 also knocks them back, with force set by the charge.
 
 Releasing a swing within two frames of contact between the selected hand and
 ball adds a perfect-hit boost. Nearly simultaneous swings by the net trap the
-ball briefly before the stronger side sends it across. Press C (player 1) or F
-(player 2) when the on-screen DIVE prompt appears: the free ball must be
-falling nearby on that player's half. The doll lunges toward it; a head or hand
-within reach pops the ball back up. Each player gets one dive per rally.
+ball briefly before the stronger side sends it across.
 
 Holding jump bunny-hops. That is deliberate: Flash re-fired key-down on OS key
 repeat, which re-armed the consumed jump flag.
+
+## Goal gifts
+
+Every third point, however it was scored, produces a gift in the next round.
+Gifts alternate between player 1's and player 2's side, stay for 10 seconds,
+and can be collected only by the player on that side. Pickup grants one random
+ability for 30 seconds: 1.5× body size, ⅔ body size, stronger shots, 1.5× jump,
+faster movement, a nearby-ball magnet, or protection against opponent and boxer
+knockback. The player then returns to normal. The HUD shows the ability and its
+remaining time.
+
+Size changes affect the ragdoll's actual collision shapes. The doll grows or
+shrinks over about 13 frames. An instant ×1.5 would teleport a hand through the
+2 px net, where it stays caught. Each resize rebuilds the joints from the joint
+table rather than the current pose, so a stretched joint never becomes
+permanent. A new pickup replaces any existing ability outright. Every ability
+is just `player.power` plus a target size, so nothing can stack.
 
 ## Fidelity notes
 
@@ -136,12 +139,13 @@ code where it happens.
   marks the cadence as its least certain detail.
 - **Campaign levels** scale the points a goal is worth. Levels 1–5 use the
   spec's AI defaults (`AImaxSpeed` 7). **Level 6** is a champion challenge: the bot
-  predicts the ball's landing spot, rushes across its half, and can make an
-  extraordinary last-moment save and return.
+  predicts the ball's landing spot, moves early, and times its jump and hand
+  swing. It follows the same physics and touch rules as the other levels.
 - **Pause** freezes the physics and every timer, serve clock included.
-- **Sounds** are procedural stand-ins, because the spec does not describe the
-  originals. **Render interpolation** blends the last two frames on high-refresh
-  displays. Neither touches the simulation.
+- **Sounds** use short Stable Audio 3 samples for hits, serves, points, buttons,
+  and special moves. Procedural cues cover the first moments while samples load
+  or if a file is unavailable. Press M to mute. **Render interpolation** blends
+  the last two frames on high-refresh displays. Neither touches the simulation.
 
 ## The hazard: deliberately reworked from §13
 

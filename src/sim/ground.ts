@@ -2,7 +2,6 @@ import { Box, Vec2, type Body, type World } from 'planck';
 import { COLLISION, COURT, EXECUTER_BARRIER, PRIZE_BUTTONS, toM } from './constants';
 import { PrizeButton } from './prizeButton';
 import type { BodyUserData } from './types';
-import { PADEL, type Sport } from './padel';
 
 /**
  * §4 Court. Every body is static because the original leaves the polygon defs
@@ -20,17 +19,15 @@ export class Ground {
   /** Keeps executers on their own half. Invisible; touches nothing else. */
   readonly executerBarrier: Body;
 
-  constructor(world: World, sport: Sport = 'volleyball') {
+  constructor(world: World) {
     this.leftWall = this.make(world, COURT.leftWall, 'leftWall');
     this.rightWall = this.make(world, COURT.rightWall, 'rightWall');
     this.ceiling = this.make(world, COURT.ceiling, 'ceiling');
     this.floor = this.make(world, COURT.ground, 'floor');
-    this.net = this.make(world, sport === 'padel'
-      ? { ...COURT.net, y: (PADEL.netTopPx + 356) / 2, hh: (356 - PADEL.netTopPx) / 2 }
-      : COURT.net, 'net');
+    this.net = this.make(world, COURT.net, 'net');
 
     // §13 Prize buttons: two static targets at the far left and right.
-    this.prizeButtons = sport === 'padel' ? [] : PRIZE_BUTTONS.map((d) => new PrizeButton(world, d));
+    this.prizeButtons = PRIZE_BUTTONS.map((d) => new PrizeButton(world, d));
     for (const b of this.prizeButtons) this.bodies.push(b.body);
 
     // Not in the original: continues the net up to the ceiling, for

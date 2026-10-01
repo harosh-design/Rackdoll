@@ -1,13 +1,17 @@
 import { Sfx } from './audio/sfx';
+import {
+  ACTIONS, PLAYERS, bindingOwner, defaultBindings, isAssignableCode, keyLabel,
+  loadBindings, normalizeCode, saveBindings, toKeyBindings,
+} from './input/bindings';
 import { bindKeyboard } from './input/keyboard';
 import { Interpolator } from './render/interp';
 import { Renderer } from './render/renderer';
 import { BALL, BODYTYPE, FPS, ITERATIONS, OPTIONS } from './sim/constants';
+import type { ControlAction } from './sim/control';
 import type { PointReason } from './sim/game';
 import type { PlayerId } from './sim/player';
 import { bodyTypeOf } from './sim/types';
 import { GameWorld } from './sim/world';
-import type { Sport } from './sim/padel';
 
 type Screen = 'menu' | 'playing' | 'paused' | 'over';
 
@@ -24,8 +28,9 @@ const renderer = new Renderer(canvas);
 const interp = new Interpolator();
 const sfx = new Sfx();
 
-const settings = { mode: '1p' as '1p' | '2p', sport: 'volleyball' as Sport, level: OPTIONS.currentLevel as number, hazards: true };
+const settings = { mode: '1p' as '1p' | '2p', level: OPTIONS.currentLevel as number, hazards: true, bindings: loadBindings() };
 let screen: Screen = 'menu';
+let capturing: { player: PlayerId; action: ControlAction } | null = null;
 let gw = createWorld(true);
 let message: string | null = null;
 let servesSeen = 0;
@@ -36,10 +41,11 @@ let servesSeen = 0;
 
 function createWorld(demo = false): GameWorld {
   const w = new GameWorld({
-    sport: settings.sport,
     singlePlayer: demo ? true : settings.mode === '1p',
     level: settings.level,
     hazards: settings.hazards,
+    bindings: toKeyBindings(settings.bindings),
+    powerSeed: Math.floor(Math.random() * 0x100000000),
     events: {
       onPoint: (winner, reason) => onPoint(winner, reason),
       onNewRound: () => { message = null; },
@@ -57,6 +63,7 @@ function* allBodies(w: GameWorld) {
 }
 
 function startMatch(): void {
+  $('menu-sub').textContent = 'Starting...';
   sfx.unlock();
   servesSeen = 0;
   gw = createWorld();
@@ -98,10 +105,7 @@ function hookSounds(w: GameWorld): void {
 function onPoint(winner: PlayerId, reason: PointReason): void {
   const single = gw.singlePlayer;
   const who = single ? (winner === 1 ? 'POINT!' : 'CPU POINT') : `PLAYER ${winner} POINT`;
-  const why = reason === 'touches' ? ' · 4 TOUCHES' : reason === 'serveClock' ? ' · TOO SLOW'
-    : reason === 'doubleBounce' ? ' · TWO BOUNCES' : reason === 'wall' ? ' · WALL FIRST'
-    : reason === 'body' ? ' · BODY HIT' : reason === 'ownCourt' ? ' · OWN COURT'
-    : reason === 'volleyReturn' ? ' · SERVE VOLLEY' : '';
+  const why = reason === 'touches' ? ' · 4 TOUCHES' : reason === 'serveClock' ? ' · TOO SLOW' : '';
   message = who + why;
   if (single && winner === 2) sfx.lose();
   else sfx.point();
@@ -112,13 +116,6 @@ function onMatchOver(winner: PlayerId): void {
   const single = gw.singlePlayer;
   $('over-score').textContent = `${g.score[1]} – ${g.score[2]}`;
   const next = $<HTMLButtonElement>('over-next');
-  if (gw.sport === 'padel') {
-    $('over-title').textContent = single ? (winner === 1 ? 'You win!' : 'The CPU wins') : `Player ${winner} wins`;
-    $('over-sub').textContent = 'Padel set complete.';
-    next.style.display = 'none';
-    setScreen('over');
-    return;
-  }
   if (single) {
     const won = winner === 1;
     const last = g.level >= OPTIONS.maxLevel;
@@ -142,6 +139,10 @@ function onMatchOver(winner: PlayerId): void {
 // ---------------------------------------------------------------------------
 
 function setScreen(s: Screen): void {
+  if (s !== 'menu') {
+    capturing = null;
+    renderBindings();
+  }
   screen = s;
   overlays.menu.classList.toggle('show', s === 'menu');
   overlays.pause.classList.toggle('show', s === 'paused');
@@ -157,7 +158,99 @@ function togglePause(): void {
   else if (screen === 'paused') setScreen('playing');
 }
 
+const actionNames: Record<ControlAction, string> = {
+  left: 'Move left', right: 'Move right', jump: 'Jump', down: 'Down',
+  serve: 'Serve / hit', otherHit: 'Other hand',
+};
+
+function renderBindings(): void {
+  document.querySelectorAll<HTMLButtonElement>('[data-binding-player]').forEach((button) => {
+    const player = Number(button.dataset.bindingPlayer) as PlayerId;
+    const action = button.dataset.bindingAction as ControlAction;
+    const waiting = capturing?.player === player && capturing.action === action;
+    const label = keyLabel(settings.bindings[player][action]);
+    button.textContent = waiting ? 'Press a key…' : label;
+    button.classList.toggle('capturing', waiting);
+    button.setAttribute('aria-label', `Player ${player}, ${actionNames[action]}: ${label}. Click to change.`);
+  });
+}
+
+function wireBindings(): void {
+  const grid = $('binding-grid');
+  const status = $('binding-status');
+  for (const player of PLAYERS) {
+    const card = document.createElement('div');
+    card.className = 'binding-player';
+    const heading = document.createElement('strong');
+    heading.textContent = `Player ${player}${player === 2 ? ' · CPU in 1 player mode' : ''}`;
+    card.append(heading);
+    for (const action of ACTIONS) {
+      const row = document.createElement('div');
+      row.className = 'binding-row';
+      const label = document.createElement('span');
+      label.textContent = actionNames[action];
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'binding-key';
+      button.dataset.bindingPlayer = String(player);
+      button.dataset.bindingAction = action;
+      button.addEventListener('click', () => {
+        capturing = { player, action };
+        status.textContent = `Press a key for Player ${player} · ${actionNames[action]}. Esc cancels.`;
+        renderBindings();
+      });
+      row.append(label, button);
+      card.append(row);
+    }
+    grid.append(card);
+  }
+  renderBindings();
+
+  $('reset-bindings').addEventListener('click', () => {
+    capturing = null;
+    settings.bindings = defaultBindings();
+    saveBindings(settings.bindings);
+    status.textContent = 'Default keys restored.';
+    renderBindings();
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (!capturing || e.repeat) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (e.code === 'Escape') {
+      capturing = null;
+      status.textContent = 'Key change cancelled.';
+      renderBindings();
+      return;
+    }
+    if (e.altKey || e.ctrlKey || e.metaKey || !isAssignableCode(e.code)) {
+      status.textContent = 'Choose a letter, number, arrow or common key. P and M are game shortcuts.';
+      return;
+    }
+    const code = normalizeCode(e.code);
+    const owner = bindingOwner(settings.bindings, code);
+    if (owner && (owner.player !== capturing.player || owner.action !== capturing.action)) {
+      status.textContent = `${keyLabel(code)} is used by Player ${owner.player} · ${actionNames[owner.action]}. Choose another key.`;
+      return;
+    }
+    settings.bindings[capturing.player][capturing.action] = code;
+    saveBindings(settings.bindings);
+    status.textContent = `Player ${capturing.player} · ${actionNames[capturing.action]}: ${keyLabel(code)}.`;
+    capturing = null;
+    renderBindings();
+  }, true);
+  window.addEventListener('blur', () => {
+    if (capturing) {
+      capturing = null;
+      status.textContent = '';
+      renderBindings();
+    }
+  });
+}
+
 function wireMenu(): void {
+  wireBindings();
   const group = (attr: string, apply: (v: string) => void) => {
     const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>(`[data-${attr}]`));
     for (const b of buttons) {
@@ -169,21 +262,7 @@ function wireMenu(): void {
   };
   group('mode', (v) => {
     settings.mode = v as '1p' | '2p';
-    $('level-field').style.display = v === '1p' && settings.sport === 'volleyball' ? '' : 'none';
-  });
-  group('sport', (v) => {
-    settings.sport = v as Sport;
-    $('level-field').style.display = v === 'volleyball' && settings.mode === '1p' ? '' : 'none';
-    $('hazards-field').style.display = v === 'padel' ? 'none' : '';
-    $('volley-tip').style.display = v === 'padel' ? 'none' : '';
-    $('padel-tip').style.display = v === 'padel' ? '' : 'none';
-    document.querySelectorAll<HTMLElement>('.dive-control').forEach((el) => {
-      el.style.display = v === 'padel' ? 'none' : '';
-    });
-    $('menu-title').textContent = v === 'padel' ? 'Ragdoll Padel' : 'Ragdoll Volleyball';
-    document.title = v === 'padel' ? 'Ragdoll Padel' : 'Ragdoll Volleyball';
-    $('menu-sub').textContent = v === 'padel' ? 'Racket rallies inside a glass court.' : 'One-on-one volleyball with hazards.';
-    gw = createWorld(true);
+    $('level-field').style.display = v === '1p' ? '' : 'none';
   });
   group('level', (v) => { settings.level = Number(v); });
   group('hazards', (v) => { settings.hazards = v === 'on'; });
@@ -209,7 +288,7 @@ function wireMenu(): void {
       }
     } else if (e.code === 'KeyM') {
       sfx.enabled = !sfx.enabled;
-    } else if (e.code === 'Enter' && screen === 'menu') {
+    } else if (e.code === 'Enter' && screen === 'menu' && (e.target === document.body || e.target === canvas)) {
       startMatch();
     }
   });
@@ -228,13 +307,13 @@ let last = performance.now();
 function simFrame(): void {
   const wasHeld = gw.ball.held;
   const wasDown = gw.flags.onBallDown;
-  const padelBounces = gw.game.padelBounceEvents;
   const executers = gw.executers.length;
   const buttons = gw.ground.prizeButtons.map((b) => [b.pressedAt, b.releasedAt]);
   const opponentHits = { 1: gw.opponentHitEffects[1].frame, 2: gw.opponentHitEffects[2].frame };
   const perfects = { 1: gw.perfectEffects[1].frame, 2: gw.perfectEffects[2].frame };
-  const rescues = { 1: gw.rescueEffects[1].frame, 2: gw.rescueEffects[2].frame };
   const counter = gw.counterEffect.frame;
+  const gift = gw.powerUps.gift;
+  const powers = { 1: gw.powerUps.active[1], 2: gw.powerUps.active[2] };
   pendingHit = null;
 
   gw.step();
@@ -251,16 +330,19 @@ function simFrame(): void {
     sfx.serve();
     servesSeen++;
   }
-  if ((!wasDown && gw.flags.onBallDown) || gw.game.padelBounceEvents !== padelBounces) sfx.thud();
+  if (!wasDown && gw.flags.onBallDown) sfx.thud();
   if (gw.executers.length > executers) sfx.executer();
   for (const id of [1, 2] as const) {
     const effect = gw.opponentHitEffects[id];
     if (effect.frame !== opponentHits[id]) sfx.bump(0.4 + 1.1 * effect.power);
     if (gw.perfectEffects[id].frame !== perfects[id]) sfx.perfect();
-    const rescue = gw.rescueEffects[id];
-    if (rescue.frame !== rescues[id]) sfx.rescue(rescue.success);
   }
   if (gw.counterEffect.frame !== counter) sfx.counter();
+  if (gw.powerUps.gift && gw.powerUps.gift !== gift) sfx.giftSpawn();
+  for (const id of [1, 2] as const) {
+    const power = gw.powerUps.active[id];
+    if (power && power !== powers[id]) sfx.giftPickup();
+  }
   const hit = pendingHit as { kind: HitKind; strength: number } | null;
   if (hit) (hit.kind === 'doll' ? sfx.bump(hit.strength) : sfx.clack(hit.strength));
 }
@@ -305,6 +387,7 @@ bindKeyboard(
     press: (c) => gw.control.press(c),
     release: (c) => gw.control.release(c),
     clear: () => gw.control.clear(),
+    uses: (c) => gw.control.uses(c),
   },
   () => screen === 'playing',
 );

@@ -2,10 +2,14 @@ import { Vec2 } from 'planck';
 import { ACTIONS, CHARGE } from './constants';
 import type { Player, PlayerId, SwingHand } from './player';
 
-/** §7 Controls — raw key codes, exactly as the original tabled them. */
-export const KEYS: Record<PlayerId, { left: number; right: number; jump: number; down: number; serve: number; otherHit: number; rescue: number }> = {
-  1: { left: 37, right: 39, jump: 38, down: 40, serve: 32, otherHit: 16, rescue: 67 }, // arrows + Space / Shift + C
-  2: { left: 65, right: 68, jump: 87, down: 83, serve: 82, otherHit: 69, rescue: 70 }, // A D W S R / E + F
+export type ControlKey = number | string;
+export type ControlAction = 'left' | 'right' | 'jump' | 'down' | 'serve' | 'otherHit';
+export type KeyBindings = Record<PlayerId, Record<ControlAction, ControlKey>>;
+
+/** §7 default controls — raw key codes, exactly as the original tabled them. */
+export const KEYS: KeyBindings = {
+  1: { left: 37, right: 39, jump: 38, down: 40, serve: 32, otherHit: 16 }, // arrows + Space / Shift
+  2: { left: 65, right: 68, jump: 87, down: 83, serve: 82, otherHit: 69 }, // A D W S R / E
 };
 
 export interface ChargeInfo {
@@ -20,13 +24,21 @@ export interface ChargeInfo {
  * swing charge, and releasing it strikes with the chosen arm.
  */
 export class Control {
-  private readonly down = new Map<number, boolean>();
-  private readonly active = new Map<PlayerId, { kind: 'serve' | 'swing'; key: number; hand: SwingHand }>();
+  private readonly down = new Map<ControlKey, boolean>();
+  private readonly active = new Map<PlayerId, { kind: 'serve' | 'swing'; key: ControlKey; hand: SwingHand }>();
   private readonly chargeFrames = new Map<PlayerId, number>();
+  private readonly keys: KeyBindings;
 
-  press(code: number): void { this.down.set(code, true); }
-  release(code: number): void { this.down.set(code, false); }
-  isDown(code: number): boolean { return this.down.get(code) === true; }
+  constructor(bindings: KeyBindings = KEYS) {
+    this.keys = { 1: { ...bindings[1] }, 2: { ...bindings[2] } };
+  }
+
+  press(code: ControlKey): void { this.down.set(code, true); }
+  release(code: ControlKey): void { this.down.set(code, false); }
+  isDown(code: ControlKey): boolean { return this.down.get(code) === true; }
+  uses(code: ControlKey): boolean {
+    return Object.values(this.keys[1]).includes(code) || Object.values(this.keys[2]).includes(code);
+  }
   clear(): void {
     this.down.clear();
     this.active.clear();
@@ -45,17 +57,13 @@ export class Control {
     player: Player,
     serve: (p: Player) => void,
     swing: (p: Player, power: number, hand: SwingHand) => void,
-    rescue: (p: Player) => void = () => {},
+    canSwing: (p: Player) => boolean = () => true,
   ): void {
-    const k = KEYS[player.id];
+    const k = this.keys[player.id];
 
     if (this.isDown(k.jump)) {
       player.jump();
       this.down.set(k.jump, false);
-    }
-    if (this.isDown(k.rescue)) {
-      rescue(player);
-      this.down.set(k.rescue, false);
     }
     if (this.isDown(k.down)) player.turnDown();
     if (this.isDown(k.left)) player.turn(Vec2(-ACTIONS.turnImpulse, 0));
@@ -66,10 +74,10 @@ export class Control {
       if (player.holdingJoint != null) {
         this.active.set(player.id, { kind: 'serve', key: k.serve, hand: 'outside' });
         serve(player);
-      } else {
+      } else if (canSwing(player)) {
         this.active.set(player.id, { kind: 'swing', key: k.serve, hand: 'outside' });
       }
-    } else if (action == null && this.isDown(k.otherHit) && player.holdingJoint == null) {
+    } else if (action == null && this.isDown(k.otherHit) && player.holdingJoint == null && canSwing(player)) {
       this.active.set(player.id, { kind: 'swing', key: k.otherHit, hand: 'inside' });
     }
     action = this.active.get(player.id);

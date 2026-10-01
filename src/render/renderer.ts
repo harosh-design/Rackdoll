@@ -1,13 +1,13 @@
 import {
-  ART, BALL, CHARGE, COURT, EXECUTER, FLOOR_TOP_PX, MAX_TOUCHES, OPTIONS, PARTS, PRIZE_ANIM, PRIZE_BUTTONS,
+  ART, BALL, CHARGE, COURT, EXECUTER, FLOOR_TOP_PX, FPS, GIFT, MAX_TOUCHES, OPTIONS, PARTS, PRIZE_ANIM, PRIZE_BUTTONS,
   RIGHT_WALL_INNER_PX, VIEW, toPx, type PartName,
 } from '../sim/constants';
 import type { Executer } from '../sim/executer';
 import type { GameWorld } from '../sim/world';
 import type { Player } from '../sim/player';
 import type { PrizeButton } from '../sim/prizeButton';
+import { POWER_LABELS } from '../sim/powerUps';
 import type { Interpolator, Pose } from './interp';
-import { PADEL, type Sport } from '../sim/padel';
 
 /**
  * Canvas renderer. Draws in the original's coordinate systems: a 640x400
@@ -81,7 +81,6 @@ export class Renderer {
   private readonly shadow: HTMLCanvasElement;
   /** Device pixels per stage pixel. */
   private k = 1;
-  private sport: Sport = 'volleyball';
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -147,28 +146,28 @@ export class Renderer {
     ctx.fillRect(-400, seaTop, 1500, 3);
     ctx.fillRect(-400, FLOOR_TOP_PX - 10, 1500, 2);
 
-    // Sand or the blue padel playing surface.
+    // Sand playing surface.
     const g = COURT.ground;
     const sand = ctx.createLinearGradient(0, FLOOR_TOP_PX, 0, g.y + g.hh);
-    sand.addColorStop(0, this.sport === 'padel' ? '#2a91b5' : PAL.sand);
-    sand.addColorStop(1, this.sport === 'padel' ? '#17627f' : PAL.sandDark);
+    sand.addColorStop(0, PAL.sand);
+    sand.addColorStop(1, PAL.sandDark);
     ctx.fillStyle = sand;
     ctx.fillRect(g.x - g.hw, g.y - g.hh, g.hw * 2, g.hh * 2);
-    ctx.fillStyle = this.sport === 'padel' ? '#e9fbff' : PAL.sandLine;
+    ctx.fillStyle = PAL.sandLine;
     ctx.fillRect(g.x - g.hw, FLOOR_TOP_PX, g.hw * 2, 1.5);
 
     // Walls.
     for (const w of [COURT.leftWall, COURT.rightWall]) {
-      ctx.fillStyle = this.sport === 'padel' ? 'rgba(119,205,223,0.35)' : PAL.wall;
+      ctx.fillStyle = PAL.wall;
       ctx.fillRect(w.x - w.hw, w.y - w.hh, w.hw * 2, w.hh * 2);
-      ctx.fillStyle = this.sport === 'padel' ? '#8dd6df' : PAL.wallEdge;
+      ctx.fillStyle = PAL.wallEdge;
       const inner = w === COURT.leftWall ? w.x + w.hw - 4 : w.x - w.hw;
       ctx.fillRect(inner, w.y - w.hh, 4, w.hh * 2);
     }
 
     // Prize buttons (§13): the recess each sits in. The button itself animates,
     // so it is drawn per frame.
-    for (const p of this.sport === 'padel' ? [] : PRIZE_BUTTONS) {
+    for (const p of PRIZE_BUTTONS) {
       const inward = p.side === 1 ? 1 : -1;
       const wallFace = p.x - inward * (p.hw + 1);
       const depth = PRIZE_ANIM.pressDepthPx + 3;
@@ -182,9 +181,7 @@ export class Renderer {
 
     // Net: the collider is 2 px wide, 150 tall. Drawn a touch wider to read,
     // with a mesh panel hanging off the top half.
-    const n = this.sport === 'padel'
-      ? { ...COURT.net, y: (PADEL.netTopPx + 356) / 2, hh: (356 - PADEL.netTopPx) / 2 }
-      : COURT.net;
+    const n = COURT.net;
     const top = n.y - n.hh;
     const bottom = n.y + n.hh;
     ctx.fillStyle = PAL.netMesh;
@@ -213,10 +210,6 @@ export class Renderer {
   // -------------------------------------------------------------------------
 
   draw(gw: GameWorld, interp: Interpolator, alpha: number, hud: HudState): void {
-    if (this.sport !== gw.sport) {
-      this.sport = gw.sport;
-      this.paintBackground();
-    }
     const ctx = this.ctx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.drawImage(this.bg, 0, 0);
@@ -228,7 +221,9 @@ export class Renderer {
     // previous frame and the latest, so this does too.
     const now = gw.frame - 1 + alpha;
     this.drawPrizeButtons(ctx, gw, now);
+    this.drawGift(ctx, gw, now);
     for (const p of [gw.p1, gw.p2]) this.drawDoll(ctx, p, interp, alpha);
+    this.drawPowerGlows(ctx, gw, interp, alpha);
     this.drawBall(ctx, gw, interp, alpha);
     this.drawSwingEffects(ctx, gw, interp, alpha);
     this.drawOpponentHitEffects(ctx, gw, interp, alpha);
@@ -258,7 +253,7 @@ export class Renderer {
       this.worldSpace(sctx);
       sctx.translate(dx, dy);
       for (const name of DRAW_ORDER) {
-        this.withPose(sctx, interp.pose(p.part(name), alpha), () => this.partShape(sctx, name, true));
+        this.withPose(sctx, interp.pose(p.part(name), alpha), () => this.partShape(sctx, name, true), p.sizeScale);
       }
     }
     const ctx = this.ctx;
@@ -268,48 +263,78 @@ export class Renderer {
     ctx.globalAlpha = 1;
   }
 
-  private withPose(ctx: CanvasRenderingContext2D, pose: Pose, fn: () => void): void {
+  private withPose(ctx: CanvasRenderingContext2D, pose: Pose, fn: () => void, scale = 1): void {
     ctx.save();
     ctx.translate(pose.x, pose.y);
     ctx.rotate(pose.a);
+    ctx.scale(scale, scale);
     fn();
     ctx.restore();
   }
 
   private drawDoll(ctx: CanvasRenderingContext2D, p: Player, interp: Interpolator, alpha: number): void {
     for (const name of DRAW_ORDER) {
-      this.withPose(ctx, interp.pose(p.part(name), alpha), () => this.partArt(ctx, name, p.id));
+      this.withPose(ctx, interp.pose(p.part(name), alpha), () => this.partArt(ctx, name, p.id), p.sizeScale);
     }
-    if (p.sport === 'padel') this.drawRacket(ctx, p, interp, alpha);
   }
 
-  private drawRacket(ctx: CanvasRenderingContext2D, p: Player, interp: Interpolator, alpha: number): void {
-    const pose = interp.pose(p.racketHand, alpha);
+  private drawGift(ctx: CanvasRenderingContext2D, gw: GameWorld, now: number): void {
+    const gift = gw.powerUps.gift;
+    if (!gift) return;
+    const y = gift.yPx - 5 + Math.sin(now * 0.14) * 3;
+    const life = Math.max(0, (gift.expiresAt - now) / GIFT.lifeFrames);
     ctx.save();
-    ctx.translate(pose.x, pose.y);
-    ctx.rotate(pose.a);
-    const dir = p.racketDirection;
-    ctx.strokeStyle = '#243849';
-    ctx.lineWidth = 5;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(dir * PADEL.racketOffsetPx, 0);
-    ctx.stroke();
-    ctx.fillStyle = p.id === 1 ? '#f0a62e' : '#ec6656';
-    ctx.strokeStyle = '#263a47';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.ellipse(dir * PADEL.racketOffsetPx, 0, PADEL.racketRadiusPx, PADEL.racketRadiusPx * 0.78, 0, 0, Math.PI * 2);
+    ctx.translate(gift.xPx, y);
+    ctx.shadowColor = '#ffd44f';
+    ctx.shadowBlur = 18;
+    ctx.fillStyle = gift.side === 1 ? '#427be7' : '#e9574a';
+    roundRect(ctx, -16, -11, 32, 25, 4);
     ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(33,61,75,0.65)';
-    for (const x of [-6, 0, 6]) for (const y of [-5, 2, 9]) {
-      ctx.beginPath();
-      ctx.arc(dir * PADEL.racketOffsetPx + x, y, 1.5, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    ctx.fillStyle = '#ffdb54';
+    ctx.fillRect(-3, -15, 6, 29);
+    ctx.fillRect(-19, -3, 38, 6);
+    ctx.fillStyle = '#fff4b4';
+    ctx.beginPath();
+    ctx.ellipse(-7, -15, 7, 4, -0.35, 0, Math.PI * 2);
+    ctx.ellipse(7, -15, 7, 4, 0.35, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(20,30,45,0.5)';
+    roundRect(ctx, -17, 20, 34, 4, 2);
+    ctx.fill();
+    ctx.fillStyle = '#ffdb54';
+    roundRect(ctx, -17, 20, 34 * life, 4, 2);
+    ctx.fill();
     ctx.restore();
+  }
+
+  /** A ring on a powered head, and the ability's name rising for 1.5 s on pickup. */
+  private drawPowerGlows(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: Interpolator, alpha: number): void {
+    const now = gw.frame - 1 + alpha;
+    for (const p of [gw.p1, gw.p2]) {
+      const power = gw.powerUps.active[p.id];
+      if (!power) continue;
+      const head = interp.pose(p.head, alpha);
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255,216,67,0.8)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(head.x, head.y, 18 * p.sizeScale + 2, 0, Math.PI * 2);
+      ctx.stroke();
+      const age = now - power.startedAt;
+      if (age >= 0 && age < 1.5 * FPS) {
+        const fade = Math.min(1, 2 - age / (0.75 * FPS));
+        ctx.font = 'bold 16px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = `rgba(255,255,255,${0.85 * fade})`;
+        ctx.fillStyle = `rgba(120,55,0,${fade})`;
+        const y = head.y - 30 * p.sizeScale - age * 0.8;
+        ctx.strokeText(`${POWER_LABELS[power.kind]}!`, head.x, y);
+        ctx.fillText(`${POWER_LABELS[power.kind]}!`, head.x, y);
+      }
+      ctx.restore();
+    }
   }
 
   /**
@@ -403,30 +428,11 @@ export class Renderer {
     }
   }
 
-  /** Callouts for the three timing-based moves. */
+  /** Callouts for timing-based moves. */
   private drawSpecialEffects(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: Interpolator, alpha: number): void {
     const now = gw.frame - 1 + alpha;
     const ball = interp.pose(gw.ball.body, alpha);
     for (const p of [gw.p1, gw.p2]) {
-      const pose = interp.pose(p.head, alpha);
-      if (gw.rescueState(p) === 'ready' && (!gw.singlePlayer || p.id === 1)) {
-        ctx.save();
-        ctx.fillStyle = 'rgba(10,110,140,0.9)';
-        ctx.font = 'bold 17px system-ui, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(`${p.id === 1 ? 'C' : 'F'} DIVE!`, pose.x, pose.y - 42);
-        ctx.restore();
-      }
-      const feedback = gw.rescueFeedback[p.id];
-      const feedbackAge = now - feedback.frame;
-      if (feedbackAge >= 0 && feedbackAge < 30) {
-        ctx.save();
-        ctx.fillStyle = `rgba(30,45,55,${1 - feedbackAge / 30})`;
-        ctx.font = 'bold 13px system-ui, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(feedback.text, pose.x, pose.y - 62);
-        ctx.restore();
-      }
       const perfect = gw.perfectEffects[p.id];
       const perfectAge = now - perfect.frame;
       if (perfectAge >= 0 && perfectAge < 12) {
@@ -441,25 +447,6 @@ export class Renderer {
         ctx.font = 'bold 16px system-ui, sans-serif';
         ctx.textAlign = 'center';
         ctx.fillText('PERFECT!', ball.x, ball.y - 30 - perfectAge);
-        ctx.restore();
-      }
-
-      const rescue = gw.rescueEffects[p.id];
-      const rescueAge = now - rescue.frame;
-      if (rescueAge >= 0 && rescueAge < 12) {
-        const fade = 1 - rescueAge / 12;
-        ctx.save();
-        ctx.strokeStyle = `rgba(70,210,245,${fade})`;
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.arc(pose.x, pose.y, 20 + rescueAge * 2, Math.PI * 0.2, Math.PI * 1.3);
-        ctx.stroke();
-        if (rescue.success) {
-          ctx.fillStyle = `rgba(10,95,125,${fade})`;
-          ctx.font = 'bold 16px system-ui, sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillText('SAVE!', pose.x, pose.y - 32 - rescueAge);
-        }
         ctx.restore();
       }
     }
@@ -679,29 +666,29 @@ export class Renderer {
       const ux = speed > 0 ? v.x / speed : 0;
       const uy = speed > 0 ? v.y / speed : 0;
       ctx.globalAlpha = 0.18 / i;
-      this.ballArt(ctx, { x: pose.x - ux * back, y: pose.y - uy * back, a: pose.a }, gw.sport);
+      this.ballArt(ctx, { x: pose.x - ux * back, y: pose.y - uy * back, a: pose.a });
     }
     ctx.globalAlpha = 1;
-    this.ballArt(ctx, pose, gw.sport);
+    this.ballArt(ctx, pose);
   }
 
-  private ballArt(ctx: CanvasRenderingContext2D, pose: Pose, sport: Sport): void {
-    const r = sport === 'padel' ? PADEL.ballRadiusPx : BALL.radiusPx;
+  private ballArt(ctx: CanvasRenderingContext2D, pose: Pose): void {
+    const r = BALL.radiusPx;
     ctx.save();
     ctx.translate(pose.x, pose.y);
     ctx.rotate(pose.a);
-    ctx.fillStyle = sport === 'padel' ? '#d7eb3c' : PAL.ball;
+    ctx.fillStyle = PAL.ball;
     ctx.beginPath();
     ctx.arc(0, 0, r, 0, Math.PI * 2);
     ctx.fill();
     ctx.save();
     ctx.clip();
     ctx.lineWidth = 3.2;
-    ctx.strokeStyle = sport === 'padel' ? '#f5ffba' : PAL.ballPanelA;
+    ctx.strokeStyle = PAL.ballPanelA;
     ctx.beginPath();
     ctx.arc(-r * 0.9, -r * 0.2, r * 1.05, -0.9, 0.9);
     ctx.stroke();
-    ctx.strokeStyle = sport === 'padel' ? '#f5ffba' : PAL.ballPanelB;
+    ctx.strokeStyle = PAL.ballPanelB;
     ctx.beginPath();
     ctx.arc(r * 0.95, r * 0.35, r * 1.1, Math.PI - 0.8, Math.PI + 0.8);
     ctx.stroke();
@@ -1004,7 +991,7 @@ export class Renderer {
       const x = id === 1 ? leftX : rightX;
       const align: CanvasTextAlign = id === 1 ? 'left' : 'right';
       const label = hud.singlePlayer
-        ? (id === 1 ? 'YOU' : gw.sport === 'padel' ? 'CPU' : g.level === OPTIONS.championLevel ? 'CPU · CHAMPION' : `CPU · LV ${g.level}`)
+        ? (id === 1 ? 'YOU' : g.level === OPTIONS.championLevel ? 'CPU · CHAMPION' : `CPU · LV ${g.level}`)
         : `PLAYER ${id}`;
       ctx.textAlign = align;
       ctx.textBaseline = 'top';
@@ -1014,13 +1001,6 @@ export class Renderer {
       ctx.fillStyle = PAL.jersey[id];
       ctx.font = '800 30px system-ui, sans-serif';
       ctx.fillText(String(g.score[id]), x, 22);
-      if (gw.sport === 'padel') {
-        ctx.fillStyle = 'rgba(15,25,35,0.8)';
-        ctx.font = '800 13px system-ui, sans-serif';
-        ctx.fillText(`${g.padelPointLabel(id)}${g.padelServer === id ? ' •' : ''}`, x, 58);
-        return;
-      }
-
       // Touch pips. The third lights the warning (§11.3).
       const warn = p.contact >= MAX_TOUCHES;
       for (let i = 0; i < MAX_TOUCHES; i++) {
@@ -1031,17 +1011,6 @@ export class Renderer {
         ctx.fillStyle = on ? (warn ? '#e63b2e' : 'rgba(15,25,35,0.75)') : 'rgba(15,25,35,0.16)';
         ctx.fill();
       }
-      if (!hud.singlePlayer || id === 1) {
-        const state = gw.rescueState(p);
-        const hint = {
-          ready: 'DIVE NOW', used: 'DIVE USED', held: 'WAIT FOR RALLY',
-          otherSide: 'OPPONENT SIDE', rising: 'WAIT FOR FALL',
-          far: 'GET CLOSER', high: 'BALL TOO HIGH',
-        }[state];
-        ctx.fillStyle = state === 'ready' ? 'rgba(10,110,140,0.95)' : 'rgba(15,25,35,0.45)';
-        ctx.font = '700 8px system-ui, sans-serif';
-        ctx.fillText(`${id === 1 ? 'C' : 'F'}: ${hint}`, x, 86);
-      }
     };
     side(1);
     side(2);
@@ -1050,9 +1019,7 @@ export class Renderer {
     ctx.textBaseline = 'top';
     ctx.fillStyle = 'rgba(15,25,35,0.55)';
     ctx.font = '700 8px system-ui, sans-serif';
-    ctx.fillText(gw.sport === 'padel'
-      ? (g.padelTieBreak ? 'TIE BREAK · FIRST TO 7' : 'PADEL · ONE SET')
-      : `FIRST TO ${OPTIONS.gameSet}`, midX, 10);
+    ctx.fillText(`FIRST TO ${OPTIONS.gameSet}`, midX, 10);
 
     // Serve clock: 6 - count (§11).
     if (g.phase === 'play' && gw.ball.ballOfPlayer !== 0) {
@@ -1064,9 +1031,9 @@ export class Renderer {
       ctx.font = '700 8px system-ui, sans-serif';
       ctx.fillStyle = 'rgba(15,25,35,0.6)';
       const who = hud.singlePlayer ? (holder === 1 ? 'YOUR SERVE' : 'CPU SERVE') : `P${holder} SERVE`;
-      ctx.fillText(gw.sport === 'padel' ? `${who} · ${g.padelServeFaults ? '2ND' : '1ST'}` : who, midX, 44);
+      ctx.fillText(who, midX, 44);
       if (hud.showControlsHint && holder === 1) {
-        ctx.fillText(gw.sport === 'padel' ? 'TAP FOR UNDERHAND SERVE' : 'JUMP, THEN TAP TO SERVE', midX, 55);
+        ctx.fillText('JUMP, THEN TAP TO SERVE', midX, 55);
       }
     }
 
@@ -1082,14 +1049,28 @@ export class Renderer {
 
     for (const id of [1, 2] as const) {
       const live = gw.executers.filter((e) => !e.dead && e.target.id === id);
-      if (live.length === 0) continue;
-      const secs = Math.max(...live.map((e) => e.secondsLeft));
       ctx.textAlign = id === 1 ? 'left' : 'right';
       ctx.textBaseline = 'top';
-      ctx.fillStyle = '#e63b2e';
       ctx.font = '800 8px system-ui, sans-serif';
-      const label = live.length > 1 ? `EXECUTERS ×${live.length} · ${secs}s` : `EXECUTER · ${secs}s`;
-      ctx.fillText(label, id === 1 ? leftX : rightX, 72);
+      const x = id === 1 ? leftX : rightX;
+      if (live.length > 0) {
+        const secs = Math.max(...live.map((e) => e.secondsLeft));
+        ctx.fillStyle = '#e63b2e';
+        const label = live.length > 1 ? `EXECUTERS ×${live.length} · ${secs}s` : `EXECUTER · ${secs}s`;
+        ctx.fillText(label, x, 72);
+      }
+      const power = gw.powerUps.active[id];
+      if (power) {
+        ctx.fillStyle = '#9a6400';
+        const seconds = Math.max(0, Math.ceil((power.expiresAt - gw.frame) / 30));
+        ctx.fillText(`${POWER_LABELS[power.kind]} · ${seconds}s`, x, live.length > 0 ? 84 : 72);
+      }
+      const cooldown = gw.swingCooldownFramesLeft(id);
+      if (cooldown > 0) {
+        ctx.fillStyle = 'rgba(15,25,35,0.7)';
+        const y = 72 + (live.length > 0 ? 12 : 0) + (power ? 12 : 0);
+        ctx.fillText(`SWING · ${Math.ceil(cooldown / FPS)}s`, x, y);
+      }
     }
   }
 }

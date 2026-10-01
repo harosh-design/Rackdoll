@@ -4,7 +4,6 @@ import {
   type PartName,
 } from './constants';
 import { bodyTypeOf, ud } from './types';
-import type { Sport } from './padel';
 
 /**
  * §10 MyContactListener::Result — a post-solve callback.
@@ -26,31 +25,9 @@ export interface ContactFlags {
   prizeHits: Body[];
   /** Player parts that met the ball during the physics step. */
   ballPlayerHits?: Array<{ playerId: 1 | 2; part: PartName }>;
-  padelFloorHit?: boolean;
-  padelWallHit?: boolean;
-  padelNetHit?: boolean;
-  padelBodyHit?: 1 | 2;
 }
 
-export function installContactListener(world: World, flags: ContactFlags, sport: Sport = 'volleyball'): void {
-  if (sport === 'padel') {
-    world.on('begin-contact', (contact: Contact) => {
-      const fa = contact.getFixtureA();
-      const fb = contact.getFixtureB();
-      const ta = bodyTypeOf(fa.getBody());
-      const tb = bodyTypeOf(fb.getBody());
-      const other = ta === BODYTYPE.BALL ? fb : tb === BODYTYPE.BALL ? fa : null;
-      if (!other) return;
-      const type = bodyTypeOf(other.getBody());
-      if (type === BODYTYPE.GROUND) flags.padelFloorHit = true;
-      if (type === BODYTYPE.WALL && ud(other.getBody()).sprite !== 'net') flags.padelWallHit = true;
-      if (type === BODYTYPE.WALL && ud(other.getBody()).sprite === 'net') flags.padelNetHit = true;
-      if (type === BODYTYPE.PLAYER && !(other.getUserData() as { racket?: boolean } | null)?.racket) {
-        flags.padelBodyHit = ud(other.getBody()).playerId;
-      }
-    });
-    return;
-  }
+export function installContactListener(world: World, flags: ContactFlags): void {
   world.on('post-solve', (contact: Contact) => {
     const fa = contact.getFixtureA();
     const fb = contact.getFixtureB();
@@ -100,17 +77,12 @@ export function installContactListener(world: World, flags: ContactFlags, sport:
  * is what tore the joints (with restitution 1 on both, Box2D's max-mix gives
  * a perfectly elastic hit). Everything else keeps its own restitution.
  */
-export function installContactTweaks(world: World, sport: Sport = 'volleyball'): void {
+export function installContactTweaks(world: World): void {
   world.on('pre-solve', (contact: Contact) => {
     const fa = contact.getFixtureA();
     const fb = contact.getFixtureB();
     const ta = bodyTypeOf(fa.getBody());
     const tb = bodyTypeOf(fb.getBody());
-    if (sport === 'padel' && ((ta === BODYTYPE.BALL && tb === BODYTYPE.PLAYER) ||
-        (tb === BODYTYPE.BALL && ta === BODYTYPE.PLAYER))) {
-      contact.setEnabled(false);
-      return;
-    }
     const partOf = (t: unknown, f: typeof fa) =>
       t === BODYTYPE.PLAYER ? (f.getBody().getUserData() as { part?: string } | null)?.part : undefined;
     if (ta === BODYTYPE.BALL || tb === BODYTYPE.BALL) {
