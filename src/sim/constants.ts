@@ -260,7 +260,7 @@ export const powerScale = (power: number): number =>
   CHARGE.minPower + (1 - CHARGE.minPower) * clamp01(power);
 
 /**
- * The rally arm swing uses the side farther from the opponent, flinging its
+ * The rally arm swing uses the selected side, flinging its
  * Arm/Hand/Finger together so the whole limb whips forward. At full charge
  * this is a hard smash — enough to knock back an opponent or an executer it
  * connects with; at minimum charge (a tap) it's a light dab.
@@ -272,13 +272,13 @@ export const SWING = {
   handImpulseY: -3.6,
   armImpulseX: 5.8,
   armImpulseY: -3.6,
-  /** Short frontal hit zone, measured from the attacker's head. */
-  opponentReachPx: 155,
-  opponentHeightPx: 95,
-  opponentHitFrames: 8,
+  /** Forgiving frontal hit zone, measured from the attacker's head. */
+  opponentReachPx: 180,
+  opponentHeightPx: 115,
+  opponentHitFrames: 11,
   /** Split the knockback between the head rail and hips to protect joints. */
-  opponentImpulseX: 5,
-  opponentImpulseY: -0.7,
+  opponentImpulseX: 7.5,
+  opponentImpulseY: -1.1,
   /** Release within two frames of a hand-ball contact for a perfect hit. */
   perfectFrames: 2,
   perfectBallImpulseX: 0.85,
@@ -527,9 +527,23 @@ export const OPTIONS = {
   musicVol: 1,
   quality: 0,
   Shadows: true,
-  /** Five opponents in the campaign. */
+  /** The sixth opponent is the champion challenge. */
   currentLevel: 1,
-  maxLevel: 5,
+  maxLevel: 6,
+  championLevel: 6,
+} as const;
+
+/** The champion anticipates shots and can make a last-moment save. */
+export const CHAMPION = {
+  chaseImpulse: 14,
+  saveYpx: 245,
+  nearNetXpx: 410,
+  nearNetSaveYpx: 175,
+  returnSpeedX: -14,
+  returnSpeedY: -15,
+  saveCooldownFrames: 12,
+  minHeadXpx: 375,
+  maxHeadXpx: 790,
 } as const;
 
 // ---------------------------------------------------------------------------

@@ -7,6 +7,7 @@ import type { PointReason } from './sim/game';
 import type { PlayerId } from './sim/player';
 import { bodyTypeOf } from './sim/types';
 import { GameWorld } from './sim/world';
+import type { Sport } from './sim/padel';
 
 type Screen = 'menu' | 'playing' | 'paused' | 'over';
 
@@ -23,7 +24,7 @@ const renderer = new Renderer(canvas);
 const interp = new Interpolator();
 const sfx = new Sfx();
 
-const settings = { mode: '1p' as '1p' | '2p', level: OPTIONS.currentLevel as number, hazards: true };
+const settings = { mode: '1p' as '1p' | '2p', sport: 'volleyball' as Sport, level: OPTIONS.currentLevel as number, hazards: true };
 let screen: Screen = 'menu';
 let gw = createWorld(true);
 let message: string | null = null;
@@ -35,6 +36,7 @@ let servesSeen = 0;
 
 function createWorld(demo = false): GameWorld {
   const w = new GameWorld({
+    sport: settings.sport,
     singlePlayer: demo ? true : settings.mode === '1p',
     level: settings.level,
     hazards: settings.hazards,
@@ -56,6 +58,7 @@ function* allBodies(w: GameWorld) {
 
 function startMatch(): void {
   sfx.unlock();
+  servesSeen = 0;
   gw = createWorld();
   message = null;
   setScreen('playing');
@@ -95,7 +98,10 @@ function hookSounds(w: GameWorld): void {
 function onPoint(winner: PlayerId, reason: PointReason): void {
   const single = gw.singlePlayer;
   const who = single ? (winner === 1 ? 'POINT!' : 'CPU POINT') : `PLAYER ${winner} POINT`;
-  const why = reason === 'touches' ? ' · 4 TOUCHES' : reason === 'serveClock' ? ' · TOO SLOW' : '';
+  const why = reason === 'touches' ? ' · 4 TOUCHES' : reason === 'serveClock' ? ' · TOO SLOW'
+    : reason === 'doubleBounce' ? ' · TWO BOUNCES' : reason === 'wall' ? ' · WALL FIRST'
+    : reason === 'body' ? ' · BODY HIT' : reason === 'ownCourt' ? ' · OWN COURT'
+    : reason === 'volleyReturn' ? ' · SERVE VOLLEY' : '';
   message = who + why;
   if (single && winner === 2) sfx.lose();
   else sfx.point();
@@ -106,13 +112,20 @@ function onMatchOver(winner: PlayerId): void {
   const single = gw.singlePlayer;
   $('over-score').textContent = `${g.score[1]} – ${g.score[2]}`;
   const next = $<HTMLButtonElement>('over-next');
+  if (gw.sport === 'padel') {
+    $('over-title').textContent = single ? (winner === 1 ? 'You win!' : 'The CPU wins') : `Player ${winner} wins`;
+    $('over-sub').textContent = 'Padel set complete.';
+    next.style.display = 'none';
+    setScreen('over');
+    return;
+  }
   if (single) {
     const won = winner === 1;
     const last = g.level >= OPTIONS.maxLevel;
     $('over-title').textContent = won ? (last ? 'Champion!' : 'You win!') : 'The CPU wins';
     $('over-sub').textContent = won
       ? last
-        ? `All five opponents beaten. Campaign score ${g.campaignScore}.`
+        ? `You beat the champion. Campaign score ${g.campaignScore}.`
         : `Opponent ${g.level} down. Points this match: ${g.campaignScore}.`
       : `Opponent ${g.level} takes it. Have another go.`;
     next.style.display = won && !last ? '' : 'none';
@@ -156,7 +169,21 @@ function wireMenu(): void {
   };
   group('mode', (v) => {
     settings.mode = v as '1p' | '2p';
-    $('level-field').style.display = v === '1p' ? '' : 'none';
+    $('level-field').style.display = v === '1p' && settings.sport === 'volleyball' ? '' : 'none';
+  });
+  group('sport', (v) => {
+    settings.sport = v as Sport;
+    $('level-field').style.display = v === 'volleyball' && settings.mode === '1p' ? '' : 'none';
+    $('hazards-field').style.display = v === 'padel' ? 'none' : '';
+    $('volley-tip').style.display = v === 'padel' ? 'none' : '';
+    $('padel-tip').style.display = v === 'padel' ? '' : 'none';
+    document.querySelectorAll<HTMLElement>('.dive-control').forEach((el) => {
+      el.style.display = v === 'padel' ? 'none' : '';
+    });
+    $('menu-title').textContent = v === 'padel' ? 'Ragdoll Padel' : 'Ragdoll Volleyball';
+    document.title = v === 'padel' ? 'Ragdoll Padel' : 'Ragdoll Volleyball';
+    $('menu-sub').textContent = v === 'padel' ? 'Racket rallies inside a glass court.' : 'One-on-one volleyball with hazards.';
+    gw = createWorld(true);
   });
   group('level', (v) => { settings.level = Number(v); });
   group('hazards', (v) => { settings.hazards = v === 'on'; });
@@ -201,6 +228,7 @@ let last = performance.now();
 function simFrame(): void {
   const wasHeld = gw.ball.held;
   const wasDown = gw.flags.onBallDown;
+  const padelBounces = gw.game.padelBounceEvents;
   const executers = gw.executers.length;
   const buttons = gw.ground.prizeButtons.map((b) => [b.pressedAt, b.releasedAt]);
   const opponentHits = { 1: gw.opponentHitEffects[1].frame, 2: gw.opponentHitEffects[2].frame };
@@ -223,7 +251,7 @@ function simFrame(): void {
     sfx.serve();
     servesSeen++;
   }
-  if (!wasDown && gw.flags.onBallDown) sfx.thud();
+  if ((!wasDown && gw.flags.onBallDown) || gw.game.padelBounceEvents !== padelBounces) sfx.thud();
   if (gw.executers.length > executers) sfx.executer();
   for (const id of [1, 2] as const) {
     const effect = gw.opponentHitEffects[id];

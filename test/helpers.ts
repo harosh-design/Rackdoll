@@ -136,7 +136,7 @@ export function ramScenario(
   longestTear: number;
 } {
   const gw = hazardWorld({ hazards: withExecuter, executerTuning: tuning, contactIterations });
-  if (withExecuter) gw.ground.prizeButtons[0].launches = 1; // exercise the original ball variant
+  // The first (kettlebell) variant uses the original ball's hunting and pinning.
   fireAtButton(gw, 1);
   let maxJointPx = 0;
   let maxPenetrationPx = 0;

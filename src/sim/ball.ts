@@ -1,14 +1,17 @@
 import { Circle, Vec2, type Body, type World } from 'planck';
 import { BALL, BODYTYPE, SPAWN_BALL_PX, toM } from './constants';
 import type { BodyUserData } from './types';
+import { PADEL, type Sport } from './padel';
 
 /** §9 Ball. */
 export class Ball {
   readonly body: Body;
   /** 0 while in flight, otherwise the id of whoever holds it. */
   ballOfPlayer: 0 | 1 | 2 = 0;
+  readonly radiusPx: number;
 
-  constructor(world: World, xPx = SPAWN_BALL_PX.x, yPx = SPAWN_BALL_PX.y) {
+  constructor(world: World, xPx = SPAWN_BALL_PX.x, yPx = SPAWN_BALL_PX.y, sport: Sport = 'volleyball') {
+    this.radiusPx = sport === 'padel' ? PADEL.ballRadiusPx : BALL.radiusPx;
     this.body = world.createBody({
       type: 'dynamic',
       position: Vec2(toM(xPx), toM(yPx)),
@@ -18,13 +21,17 @@ export class Ball {
       bullet: true,
     });
     this.body.createFixture({
-      shape: Circle(toM(BALL.radiusPx)),
+      shape: Circle(toM(this.radiusPx)),
       density: BALL.density,
       friction: BALL.friction, // the contact listener identifies the ball by this
-      restitution: BALL.restitution,
+      restitution: sport === 'padel' ? PADEL.ballRestitution : BALL.restitution,
     });
     // §16.3 — explicit, after CreateShape, overriding the density.
-    this.body.setMassData({ mass: BALL.mass, center: Vec2(0, 0), I: BALL.inertia });
+    this.body.setMassData({
+      mass: sport === 'padel' ? PADEL.ballMass : BALL.mass,
+      center: Vec2(0, 0),
+      I: sport === 'padel' ? PADEL.ballInertia : BALL.inertia,
+    });
     this.body.setUserData({ e_bodytype: BODYTYPE.BALL, sprite: 'Ball' } as BodyUserData);
   }
 

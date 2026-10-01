@@ -9,4 +9,5 @@ export * from './control';
 export * from './game';
 export * from './ai';
 export * from './executer';
+export * from './executerVariants';
 export * from './world';

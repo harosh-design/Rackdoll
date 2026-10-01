@@ -1,5 +1,5 @@
 import { Vec2 } from 'planck';
-import { OPTIONS, SERVE_CENTRE_M, TIMERS } from './constants';
+import { CHAMPION, FLOOR_TOP_PX, OPTIONS, SERVE_CENTRE_M, TIMERS, toM } from './constants';
 import type { Ball } from './ball';
 import type { Player } from './player';
 import { FrameTimer, type TimerSet } from './timer';
@@ -18,6 +18,7 @@ const between = (v: number, lo: number, hi: number) => v > lo && v < hi;
 export class AI {
   DisableAI = false;
   DisableMoveAfterPas = false;
+  champion = false;
   maxSpeed: number = OPTIONS.AImaxSpeed;
   act_count = 0;
 
@@ -67,14 +68,22 @@ export class AI {
     }
 
     // Chase the ball while it is on this side.
-    if (ballPos.x > 10 && !this.DisableMoveAfterPas) {
-      let speed = this.maxSpeed;
+    if (ballPos.x > 10 && (!this.DisableMoveAfterPas || this.champion)) {
+      let speed = this.champion ? CHAMPION.chaseImpulse : this.maxSpeed;
       const vx = this.ball.body.getLinearVelocity().x;
-      if (Math.abs(d.x) > 1 && Math.abs(vx) < 4) {
+      const vy = this.ball.body.getLinearVelocity().y;
+      let aimX = ballPos.x;
+      if (this.champion && vy > 0) {
+        const flight = clamp((toM(FLOOR_TOP_PX) - ballPos.y) / vy, 0, 0.75);
+        aimX = clamp(ballPos.x + vx * flight,
+          toM(CHAMPION.minHeadXpx), toM(CHAMPION.maxHeadXpx));
+      } else if (!this.champion && Math.abs(d.x) > 1 && Math.abs(vx) < 4) {
         speed = clamp(Math.abs(vx) * 2, -this.maxSpeed, this.maxSpeed);
       }
-      if (head.x >= ballPos.x + 0.3) c.turnComp(Vec2(-speed, 0));
-      else c.turnComp(Vec2(speed, 0));
+      if (head.x >= aimX + 0.3) c.turnComp(Vec2(-speed, 0));
+      else if (head.x < aimX - 0.3) c.turnComp(Vec2(speed, 0));
+      if (this.champion && Math.abs(aimX - head.x) < toM(65) &&
+          ballPos.y < head.y - toM(45) && ballPos.y > head.y - toM(170)) c.jump();
     }
 
     // Ball is on the human's half: go home and be ready.

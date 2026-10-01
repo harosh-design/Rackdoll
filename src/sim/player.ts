@@ -9,8 +9,10 @@ import {
   RESCUE, SWING, toM, type PartName, WINDUP,
 } from './constants';
 import type { BodyUserData } from './types';
+import { PADEL, type Sport } from './padel';
 
 export type PlayerId = 1 | 2;
+export type SwingHand = 'outside' | 'inside';
 
 const norm = (v: Vec2): Vec2 => {
   const len = Math.sqrt(v.x * v.x + v.y * v.y);
@@ -41,6 +43,7 @@ export class Player {
 
   private readonly world: World;
   private ballJoint: RevoluteJointT | null = null;
+  readonly sport: Sport;
 
   constructor(
     world: World,
@@ -49,9 +52,11 @@ export class Player {
     xPx: number,
     yPx: number,
     id: PlayerId,
+    sport: Sport = 'volleyball',
   ) {
     this.world = world;
     this.id = id;
+    this.sport = sport;
     const friction = PLAYER_FRICTION[id];
 
     // --- §5 the 13 bodies, in the original's creation order ------------------
@@ -82,6 +87,17 @@ export class Player {
       body.setUserData(data);
       this.parts.set(p.name, body);
       this.bodies.push(body);
+    }
+
+    if (sport === 'padel') {
+      // A light sensor follows the net-facing hand. The stroke controls the
+      // rebound, so simply brushing the ball with a stationary racket does not hit.
+      const racket = this.racketHand.createFixture({
+        shape: Circle(Vec2(toM(this.racketDirection * PADEL.racketOffsetPx), 0), toM(PADEL.racketRadiusPx)),
+        isSensor: true,
+        density: 0,
+      });
+      racket.setUserData({ racket: true });
     }
 
     // --- §5 the 12 revolute joints, all with limits enabled ------------------
@@ -185,9 +201,23 @@ export class Player {
   get servingFinger(): Body {
     return this.id === 1 ? this.part('FingerRight') : this.part('FingerLeft');
   }
+  get racketDirection(): 1 | -1 { return this.id === 1 ? 1 : -1; }
+  get racketHand(): Body { return this.servingFinger; }
+  get racketCenter(): Vec2 {
+    return this.racketHand.getWorldPoint(Vec2(toM(this.racketDirection * PADEL.racketOffsetPx), 0));
+  }
   /** The outside hand winds up and swings across the body. */
   get strikingFinger(): Body {
     return this.id === 1 ? this.part('FingerLeft') : this.part('FingerRight');
+  }
+
+  swingSide(hand: SwingHand): 'Left' | 'Right' {
+    if (this.sport === 'padel') return this.id === 1 ? 'Right' : 'Left';
+    return (this.id === 1) === (hand === 'outside') ? 'Left' : 'Right';
+  }
+
+  swingFinger(hand: SwingHand): Body {
+    return this.part(`Finger${this.swingSide(hand)}`);
   }
 
   // -------------------------------------------------------------------------
@@ -367,19 +397,20 @@ export class Player {
   }
 
   /**
-   * The rally hit uses the arm farther from the opponent. Arm/Hand/Finger
+   * The rally hit uses the selected arm. Arm/Hand/Finger
    * are all flung together so the
    * whole limb whips forward instead of just the fingertip. `power` is the
    * 0..1 charge fraction the button was held for, scaled via powerScale() —
    * a fully charged swing hits hard enough to knock back anything it connects
    * with (the opponent, an executer).
    */
-  swingArm(power = 1): void {
+  swingArm(power = 1, swingHand: SwingHand = 'outside'): void {
     const sign = this.id === 1 ? 1 : -1;
     const scale = powerScale(power);
-    const finger = this.strikingFinger;
-    const hand = this.id === 1 ? this.part('HandLeft') : this.part('HandRight');
-    const arm = this.id === 1 ? this.part('ArmLeft') : this.part('ArmRight');
+    const side = this.swingSide(swingHand);
+    const finger = this.part(`Finger${side}`);
+    const hand = this.part(`Hand${side}`);
+    const arm = this.part(`Arm${side}`);
 
     finger.applyLinearImpulse(
       Vec2(sign * SWING.fingerImpulseX * scale, SWING.fingerImpulseY * scale),
@@ -405,12 +436,13 @@ export class Player {
    * visibly winds up (cocks back) as the power builds, settling against its
    * joint limits rather than flying anywhere.
    */
-  windUpArm(power: number): void {
+  windUpArm(power: number, swingHand: SwingHand = 'outside'): void {
     const sign = this.id === 1 ? 1 : -1; // the swing's forward direction
     const k = clamp01(power);
-    const finger = this.strikingFinger;
-    const hand = this.id === 1 ? this.part('HandLeft') : this.part('HandRight');
-    const arm = this.id === 1 ? this.part('ArmLeft') : this.part('ArmRight');
+    const side = this.swingSide(swingHand);
+    const finger = this.part(`Finger${side}`);
+    const hand = this.part(`Hand${side}`);
+    const arm = this.part(`Arm${side}`);
 
     finger.applyLinearImpulse(
       Vec2(-sign * WINDUP.fingerImpulseX * k, -WINDUP.fingerImpulseY * k),

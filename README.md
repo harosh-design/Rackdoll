@@ -64,15 +64,34 @@ original.
 
 ## How to play it
 
+### Padel mode
+
+Choose **Padel** in the menu. Each player has a racket on the hand facing the
+net. Tap Space (or R for player 2) to drop the ball and serve it underhand after
+one bounce. During a rally, hold and release that key for a driven racket shot;
+Shift (or E) makes a higher lob. The racket must reach the ball during the swing.
+
+The ball is smaller and the net lower. A shot must bounce in the opponent's
+court before reaching the glass wall. The receiver may return it after that
+bounce and wall rebound, but loses the point on a second floor bounce. Body
+touches and volleyed serve returns are faults. The server gets two attempts;
+a serve that clips the net and still lands across is replayed.
+Scoring uses 15–30–40, advantage, games to six by two, and a tie break at 6–6.
+This side view represents one player per side; it cannot show diagonal service
+boxes or doubles positioning. Hazards are off in padel mode.
+
+### Volleyball mode
+
 **Serve in the air.** The held ball hangs at your feet. Tap Space (or R for
 player 2) to serve with a fixed underhand flick. Jump first to clear the net.
 Once the ball is free, hold the same key to wind up the outside arm and release
-to hit. The windup briefly slows the physics and gently draws a nearby free
+to hit. Hold Shift (or E for player 2) to hit with the other arm instead.
+The windup briefly slows the physics and gently draws a nearby free
 ball toward the striking hand. A full charge delivers a stronger hit, and you
 can charge the next one immediately. A swing that reaches a nearby opponent
 also knocks them back, with force set by the charge.
 
-Releasing a swing within two frames of contact between the outside hand and
+Releasing a swing within two frames of contact between the selected hand and
 ball adds a perfect-hit boost. Nearly simultaneous swings by the net trap the
 ball briefly before the stronger side sends it across. Press C (player 1) or F
 (player 2) when the on-screen DIVE prompt appears: the free ball must be
@@ -115,9 +134,10 @@ code where it happens.
   half. The spec says when it is set but not when it is cleared.
 - **The executer's ×2 burst** fires every third second of its life. The spec
   marks the cadence as its least certain detail.
-- **Campaign levels 1–5** scale the points a goal is worth. The spec gives no
-  per-level AI numbers, so every opponent uses the spec's defaults
-  (`AImaxSpeed` 7).
+- **Campaign levels** scale the points a goal is worth. Levels 1–5 use the
+  spec's AI defaults (`AImaxSpeed` 7). **Level 6** is a champion challenge: the bot
+  predicts the ball's landing spot, rushes across its half, and can make an
+  extraordinary last-moment save and return.
 - **Pause** freezes the physics and every timer, serve clock included.
 - **Sounds** are procedural stand-ins, because the spec does not describe the
   originals. **Render interpolation** blends the last two frames on high-refresh
@@ -135,12 +155,13 @@ changes that on purpose:
   that side, so aim for your opponent's button. An executer-only barrier above
   the net (collision-filtered, so nothing else ever meets it) keeps it on its
   half.
-- **Two types.** The first hazard launched by each button is a hovering head
-  with reaching arms. It quickly closes to the player's head and throws
-  alternating punches that briefly knock the player back. Every later hit on
-  that button launches the original spiked executer ball. A player's swinging
-  hand can knock either type away, briefly interrupting its pursuit. Starting
-  a new match creates fresh buttons.
+- **Ten-object sequence.** Both buttons share one hit counter: the first hit
+  launches a heavy kettlebell, the second a slower magnet that gently attracts
+  nearby players, and the third a hovering boxer that punches the target's
+  head. Seven more objects follow (comet, anchor, spring, saw, crystal, gear,
+  drone), each with its own artwork and physical tuning. After the tenth, the
+  sequence repeats. A player's swinging hand can knock any type away and
+  briefly interrupt its pursuit. A new match starts again at the kettlebell.
 - **The button** sinks into the wall with a flash and a shockwave. It stays
   pressed and glowing red while any of its executers lives, with a column that
   drains with the longest-lived one, and springs back out when the last dies.
@@ -202,5 +223,5 @@ build on it without touching the physics:
 
 - **Replays and netplay**: the simulation is deterministic, so seeds plus inputs reproduce a match.
 - **Touch controls**: add a `KeySink` next to `src/input/keyboard.ts`.
-- **Per-level AI**: `AI.maxSpeed` and the §12 thresholds are the knobs to vary.
+- **More AI tuning**: `AI.maxSpeed` and the §12 thresholds can vary levels 1–5.
 - **Original art**: swap `Renderer.partArt`. The §15 artwork bounds are already wired in.

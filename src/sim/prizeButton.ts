@@ -29,7 +29,7 @@ export class PrizeButton {
   releasedAt = -Infinity;
   /** Every live executer this button launched. */
   readonly executers: Executer[] = [];
-  /** The first hazard launch from each button is the punching head. */
+  /** Number of hazards this button has launched; variant order lives in GameWorld. */
   launches = 0;
 
   constructor(world: World, def: ButtonDef) {

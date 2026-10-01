@@ -7,6 +7,7 @@ import type { GameWorld } from '../sim/world';
 import type { Player } from '../sim/player';
 import type { PrizeButton } from '../sim/prizeButton';
 import type { Interpolator, Pose } from './interp';
+import { PADEL, type Sport } from '../sim/padel';
 
 /**
  * Canvas renderer. Draws in the original's coordinate systems: a 640x400
@@ -80,6 +81,7 @@ export class Renderer {
   private readonly shadow: HTMLCanvasElement;
   /** Device pixels per stage pixel. */
   private k = 1;
+  private sport: Sport = 'volleyball';
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -145,28 +147,28 @@ export class Renderer {
     ctx.fillRect(-400, seaTop, 1500, 3);
     ctx.fillRect(-400, FLOOR_TOP_PX - 10, 1500, 2);
 
-    // Sand: the ground body's top face is the floor line (y = 355).
+    // Sand or the blue padel playing surface.
     const g = COURT.ground;
     const sand = ctx.createLinearGradient(0, FLOOR_TOP_PX, 0, g.y + g.hh);
-    sand.addColorStop(0, PAL.sand);
-    sand.addColorStop(1, PAL.sandDark);
+    sand.addColorStop(0, this.sport === 'padel' ? '#2a91b5' : PAL.sand);
+    sand.addColorStop(1, this.sport === 'padel' ? '#17627f' : PAL.sandDark);
     ctx.fillStyle = sand;
     ctx.fillRect(g.x - g.hw, g.y - g.hh, g.hw * 2, g.hh * 2);
-    ctx.fillStyle = PAL.sandLine;
+    ctx.fillStyle = this.sport === 'padel' ? '#e9fbff' : PAL.sandLine;
     ctx.fillRect(g.x - g.hw, FLOOR_TOP_PX, g.hw * 2, 1.5);
 
     // Walls.
     for (const w of [COURT.leftWall, COURT.rightWall]) {
-      ctx.fillStyle = PAL.wall;
+      ctx.fillStyle = this.sport === 'padel' ? 'rgba(119,205,223,0.35)' : PAL.wall;
       ctx.fillRect(w.x - w.hw, w.y - w.hh, w.hw * 2, w.hh * 2);
-      ctx.fillStyle = PAL.wallEdge;
+      ctx.fillStyle = this.sport === 'padel' ? '#8dd6df' : PAL.wallEdge;
       const inner = w === COURT.leftWall ? w.x + w.hw - 4 : w.x - w.hw;
       ctx.fillRect(inner, w.y - w.hh, 4, w.hh * 2);
     }
 
     // Prize buttons (§13): the recess each sits in. The button itself animates,
     // so it is drawn per frame.
-    for (const p of PRIZE_BUTTONS) {
+    for (const p of this.sport === 'padel' ? [] : PRIZE_BUTTONS) {
       const inward = p.side === 1 ? 1 : -1;
       const wallFace = p.x - inward * (p.hw + 1);
       const depth = PRIZE_ANIM.pressDepthPx + 3;
@@ -180,14 +182,16 @@ export class Renderer {
 
     // Net: the collider is 2 px wide, 150 tall. Drawn a touch wider to read,
     // with a mesh panel hanging off the top half.
-    const n = COURT.net;
+    const n = this.sport === 'padel'
+      ? { ...COURT.net, y: (PADEL.netTopPx + 356) / 2, hh: (356 - PADEL.netTopPx) / 2 }
+      : COURT.net;
     const top = n.y - n.hh;
     const bottom = n.y + n.hh;
     ctx.fillStyle = PAL.netMesh;
     ctx.strokeStyle = PAL.netMesh;
     ctx.lineWidth = 0.8;
     const meshW = 7;
-    const meshH = 62;
+    const meshH = Math.min(62, bottom - top - 4);
     ctx.beginPath();
     for (let y = top + 4; y <= top + meshH; y += 7) {
       ctx.moveTo(n.x - meshW, y);
@@ -209,6 +213,10 @@ export class Renderer {
   // -------------------------------------------------------------------------
 
   draw(gw: GameWorld, interp: Interpolator, alpha: number, hud: HudState): void {
+    if (this.sport !== gw.sport) {
+      this.sport = gw.sport;
+      this.paintBackground();
+    }
     const ctx = this.ctx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.drawImage(this.bg, 0, 0);
@@ -272,6 +280,36 @@ export class Renderer {
     for (const name of DRAW_ORDER) {
       this.withPose(ctx, interp.pose(p.part(name), alpha), () => this.partArt(ctx, name, p.id));
     }
+    if (p.sport === 'padel') this.drawRacket(ctx, p, interp, alpha);
+  }
+
+  private drawRacket(ctx: CanvasRenderingContext2D, p: Player, interp: Interpolator, alpha: number): void {
+    const pose = interp.pose(p.racketHand, alpha);
+    ctx.save();
+    ctx.translate(pose.x, pose.y);
+    ctx.rotate(pose.a);
+    const dir = p.racketDirection;
+    ctx.strokeStyle = '#243849';
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(dir * PADEL.racketOffsetPx, 0);
+    ctx.stroke();
+    ctx.fillStyle = p.id === 1 ? '#f0a62e' : '#ec6656';
+    ctx.strokeStyle = '#263a47';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.ellipse(dir * PADEL.racketOffsetPx, 0, PADEL.racketRadiusPx, PADEL.racketRadiusPx * 0.78, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(33,61,75,0.65)';
+    for (const x of [-6, 0, 6]) for (const y of [-5, 2, 9]) {
+      ctx.beginPath();
+      ctx.arc(dir * PADEL.racketOffsetPx + x, y, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   /**
@@ -283,7 +321,7 @@ export class Renderer {
       const info = gw.control.chargeLevel(p.id);
       if (!info) continue;
       const pose = interp.pose(p.head, alpha);
-      const finger = interp.pose(p.strikingFinger, alpha);
+      const finger = interp.pose(p.swingFinger(info.hand), alpha);
       if (!gw.ball.held && info.power < 1) {
         const ball = interp.pose(gw.ball.body, alpha);
         const distance = Math.hypot(ball.x - finger.x, ball.y - finger.y);
@@ -325,7 +363,7 @@ export class Renderer {
       const effect = gw.swingEffects[p.id];
       const age = now - effect.frame;
       if (age < 0 || age >= 8) continue;
-      const finger = interp.pose(p.strikingFinger, alpha);
+      const finger = interp.pose(p.swingFinger(effect.hand), alpha);
       const fade = 1 - age / 8;
       const radius = 16 + effect.power * 12 + age * 2;
       const start = p.id === 1 ? -Math.PI * 0.7 : Math.PI * 0.3;
@@ -608,7 +646,7 @@ export class Renderer {
     const pose = interp.pose(gw.ball.body, alpha);
     const v = gw.ball.velocity;
     const speed = Math.hypot(v.x, v.y);
-    const r = BALL.radiusPx;
+    const r = gw.ball.radiusPx;
 
     // Trail sprite, scaled by speed/25 and rotated to the velocity (§9).
     if (speed > 3) {
@@ -641,29 +679,29 @@ export class Renderer {
       const ux = speed > 0 ? v.x / speed : 0;
       const uy = speed > 0 ? v.y / speed : 0;
       ctx.globalAlpha = 0.18 / i;
-      this.ballArt(ctx, { x: pose.x - ux * back, y: pose.y - uy * back, a: pose.a });
+      this.ballArt(ctx, { x: pose.x - ux * back, y: pose.y - uy * back, a: pose.a }, gw.sport);
     }
     ctx.globalAlpha = 1;
-    this.ballArt(ctx, pose);
+    this.ballArt(ctx, pose, gw.sport);
   }
 
-  private ballArt(ctx: CanvasRenderingContext2D, pose: Pose): void {
-    const r = BALL.radiusPx;
+  private ballArt(ctx: CanvasRenderingContext2D, pose: Pose, sport: Sport): void {
+    const r = sport === 'padel' ? PADEL.ballRadiusPx : BALL.radiusPx;
     ctx.save();
     ctx.translate(pose.x, pose.y);
     ctx.rotate(pose.a);
-    ctx.fillStyle = PAL.ball;
+    ctx.fillStyle = sport === 'padel' ? '#d7eb3c' : PAL.ball;
     ctx.beginPath();
     ctx.arc(0, 0, r, 0, Math.PI * 2);
     ctx.fill();
     ctx.save();
     ctx.clip();
     ctx.lineWidth = 3.2;
-    ctx.strokeStyle = PAL.ballPanelA;
+    ctx.strokeStyle = sport === 'padel' ? '#f5ffba' : PAL.ballPanelA;
     ctx.beginPath();
     ctx.arc(-r * 0.9, -r * 0.2, r * 1.05, -0.9, 0.9);
     ctx.stroke();
-    ctx.strokeStyle = PAL.ballPanelB;
+    ctx.strokeStyle = sport === 'padel' ? '#f5ffba' : PAL.ballPanelB;
     ctx.beginPath();
     ctx.arc(r * 0.95, r * 0.35, r * 1.1, Math.PI - 0.8, Math.PI + 0.8);
     ctx.stroke();
@@ -698,26 +736,103 @@ export class Renderer {
       ctx.restore();
       return;
     }
-    ctx.fillStyle = PAL.executerSpike;
-    ctx.beginPath();
-    const spikes = 10;
-    for (let i = 0; i < spikes; i++) {
-      const a = (i / spikes) * Math.PI * 2;
-      const a0 = a - 0.18;
-      const a1 = a + 0.18;
-      ctx.moveTo(Math.cos(a0) * r * 0.85, Math.sin(a0) * r * 0.85);
-      ctx.lineTo(Math.cos(a) * r * 1.55, Math.sin(a) * r * 1.55);
-      ctx.lineTo(Math.cos(a1) * r * 0.85, Math.sin(a1) * r * 0.85);
-    }
-    ctx.fill();
-    const g = ctx.createRadialGradient(-r * 0.35, -r * 0.35, r * 0.1, 0, 0, r);
-    g.addColorStop(0, '#6b6d78');
-    g.addColorStop(1, PAL.executer);
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(0, 0, r, 0, Math.PI * 2);
-    ctx.fill();
+    this.drawExecuterVariant(ctx, e, r);
     ctx.restore();
+  }
+
+  private drawExecuterVariant(ctx: CanvasRenderingContext2D, e: Executer, r: number): void {
+    const disc = (color: string | CanvasGradient, radius = r) => {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(0, 0, radius, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    const polygon = (points: readonly [number, number][], color: string) => {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      points.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+      ctx.closePath();
+      ctx.fill();
+    };
+    switch (e.variant.id) {
+      case 'kettlebell': {
+        ctx.strokeStyle = '#8c929b';
+        ctx.lineWidth = 5;
+        ctx.beginPath(); ctx.arc(0, -r + 2, 8, Math.PI, 0); ctx.stroke();
+        const metal = ctx.createRadialGradient(-6, -7, 1, 0, 0, r);
+        metal.addColorStop(0, '#8a9099'); metal.addColorStop(1, '#292e37');
+        disc(metal);
+        ctx.fillStyle = '#d5d9df'; ctx.font = 'bold 12px system-ui';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('8', 0, 3);
+        break;
+      }
+      case 'magnet': {
+        ctx.strokeStyle = 'rgba(84,184,238,0.35)'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(0, 0, r + 4 + Math.sin(e.age * 0.22) * 2, 0, Math.PI * 2); ctx.stroke();
+        ctx.strokeStyle = '#3c4552'; ctx.lineWidth = 11; ctx.lineCap = 'butt';
+        ctx.beginPath(); ctx.moveTo(-11, -12); ctx.lineTo(-11, 5);
+        ctx.arc(0, 5, 11, Math.PI, 0, true); ctx.lineTo(11, -12); ctx.stroke();
+        ctx.fillStyle = '#e94c47'; ctx.fillRect(-16.5, -15, 11, 9);
+        ctx.fillStyle = '#48a9e9'; ctx.fillRect(5.5, -15, 11, 9);
+        ctx.fillStyle = '#cdd5dc'; ctx.fillRect(-14, 0, 5, 5); ctx.fillRect(9, 0, 5, 5);
+        break;
+      }
+      case 'comet': {
+        polygon([[-9, -12], [-26, -20], [-17, -5], [-29, 1], [-14, 7], [-22, 19], [-4, 12]], '#ff8737');
+        disc('#f6ca54', 16); disc('#fff0a5', 9);
+        break;
+      }
+      case 'anchor': {
+        ctx.strokeStyle = '#425466'; ctx.lineWidth = 6; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(0, -13); ctx.lineTo(0, 13);
+        ctx.moveTo(-10, -3); ctx.lineTo(10, -3);
+        ctx.moveTo(-15, 8); ctx.quadraticCurveTo(0, 27, 15, 8); ctx.stroke();
+        ctx.fillStyle = '#9eb4c4'; ctx.beginPath(); ctx.arc(0, -15, 5, 0, Math.PI * 2); ctx.fill();
+        break;
+      }
+      case 'spring': {
+        ctx.fillStyle = '#644a91'; ctx.fillRect(-14, -16, 28, 32);
+        ctx.strokeStyle = '#dfbaff'; ctx.lineWidth = 4; ctx.lineJoin = 'round';
+        ctx.beginPath(); ctx.moveTo(-10, -13);
+        for (let i = 0; i < 6; i++) ctx.lineTo(i % 2 ? -10 : 10, -9 + i * 4);
+        ctx.lineTo(10, 14); ctx.stroke();
+        break;
+      }
+      case 'saw': {
+        const teeth: [number, number][] = [];
+        for (let i = 0; i < 24; i++) {
+          const a = i * Math.PI / 12;
+          const d = i % 3 === 1 ? 23 : 16;
+          teeth.push([Math.cos(a) * d, Math.sin(a) * d]);
+        }
+        polygon(teeth, '#aebac4'); disc('#566470', 13); disc('#273c48', 5);
+        break;
+      }
+      case 'crystal': {
+        polygon([[0, -22], [16, -10], [13, 13], [0, 23], [-15, 10], [-14, -11]], '#287fba');
+        polygon([[0, -22], [16, -10], [4, 5], [0, 23]], '#69d9f2');
+        polygon([[0, -22], [-14, -11], [-4, 5], [0, 23]], '#b7f5ff');
+        break;
+      }
+      case 'gear': {
+        for (let i = 0; i < 8; i++) {
+          ctx.save(); ctx.rotate(i * Math.PI / 4);
+          ctx.fillStyle = '#be965e'; ctx.fillRect(-4, -23, 8, 11); ctx.restore();
+        }
+        disc('#d9ad70', 16); disc('#756046', 8); disc('#293a45', 4);
+        break;
+      }
+      case 'drone': {
+        ctx.strokeStyle = '#536b8b'; ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.moveTo(-14, -8); ctx.lineTo(14, 8);
+        ctx.moveTo(14, -8); ctx.lineTo(-14, 8); ctx.stroke();
+        for (const x of [-16, 16]) for (const y of [-11, 11]) {
+          ctx.fillStyle = '#8de6ee'; ctx.beginPath(); ctx.ellipse(x, y, 8, 3, 0, 0, Math.PI * 2); ctx.fill();
+        }
+        disc('#345178', 12); disc('#a2eff5', 5);
+        break;
+      }
+    }
   }
 
   private drawHeadExecuter(ctx: CanvasRenderingContext2D, e: Executer): void {
@@ -860,7 +975,7 @@ export class Renderer {
   private drawOffscreenBall(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: Interpolator, alpha: number): void {
     const pose = interp.pose(gw.ball.body, alpha);
     const sy = pose.y * VIEW.scale + VIEW.offsetY;
-    if (sy > -BALL.radiusPx * VIEW.scale) return;
+    if (sy > -gw.ball.radiusPx * VIEW.scale) return;
     const sx = pose.x * VIEW.scale + VIEW.offsetX;
     const heightM = (-sy / VIEW.scale / 30).toFixed(1);
     ctx.fillStyle = 'rgba(20,30,40,0.55)';
@@ -888,7 +1003,9 @@ export class Renderer {
       const p = id === 1 ? gw.p1 : gw.p2;
       const x = id === 1 ? leftX : rightX;
       const align: CanvasTextAlign = id === 1 ? 'left' : 'right';
-      const label = hud.singlePlayer ? (id === 1 ? 'YOU' : `CPU · LV ${g.level}`) : `PLAYER ${id}`;
+      const label = hud.singlePlayer
+        ? (id === 1 ? 'YOU' : gw.sport === 'padel' ? 'CPU' : g.level === OPTIONS.championLevel ? 'CPU · CHAMPION' : `CPU · LV ${g.level}`)
+        : `PLAYER ${id}`;
       ctx.textAlign = align;
       ctx.textBaseline = 'top';
       ctx.fillStyle = 'rgba(15,25,35,0.72)';
@@ -897,6 +1014,12 @@ export class Renderer {
       ctx.fillStyle = PAL.jersey[id];
       ctx.font = '800 30px system-ui, sans-serif';
       ctx.fillText(String(g.score[id]), x, 22);
+      if (gw.sport === 'padel') {
+        ctx.fillStyle = 'rgba(15,25,35,0.8)';
+        ctx.font = '800 13px system-ui, sans-serif';
+        ctx.fillText(`${g.padelPointLabel(id)}${g.padelServer === id ? ' •' : ''}`, x, 58);
+        return;
+      }
 
       // Touch pips. The third lights the warning (§11.3).
       const warn = p.contact >= MAX_TOUCHES;
@@ -927,7 +1050,9 @@ export class Renderer {
     ctx.textBaseline = 'top';
     ctx.fillStyle = 'rgba(15,25,35,0.55)';
     ctx.font = '700 8px system-ui, sans-serif';
-    ctx.fillText(`FIRST TO ${OPTIONS.gameSet}`, midX, 10);
+    ctx.fillText(gw.sport === 'padel'
+      ? (g.padelTieBreak ? 'TIE BREAK · FIRST TO 7' : 'PADEL · ONE SET')
+      : `FIRST TO ${OPTIONS.gameSet}`, midX, 10);
 
     // Serve clock: 6 - count (§11).
     if (g.phase === 'play' && gw.ball.ballOfPlayer !== 0) {
@@ -939,9 +1064,9 @@ export class Renderer {
       ctx.font = '700 8px system-ui, sans-serif';
       ctx.fillStyle = 'rgba(15,25,35,0.6)';
       const who = hud.singlePlayer ? (holder === 1 ? 'YOUR SERVE' : 'CPU SERVE') : `P${holder} SERVE`;
-      ctx.fillText(who, midX, 44);
+      ctx.fillText(gw.sport === 'padel' ? `${who} · ${g.padelServeFaults ? '2ND' : '1ST'}` : who, midX, 44);
       if (hud.showControlsHint && holder === 1) {
-        ctx.fillText('JUMP, THEN TAP TO SERVE', midX, 55);
+        ctx.fillText(gw.sport === 'padel' ? 'TAP FOR UNDERHAND SERVE' : 'JUMP, THEN TAP TO SERVE', midX, 55);
       }
     }
 

@@ -3,6 +3,7 @@ import { BODYTYPE, COLLISION, EXECUTER, GRAVITY, OPTIONS, SPAWN_P1_PX, SWING, TI
 import { FrameTimer, type TimerSet } from './timer';
 import type { Player, PlayerId } from './player';
 import type { BodyUserData } from './types';
+import type { ExecuterVariant } from './executerVariants';
 
 export interface ExecuterTuning {
   mass: number;
@@ -17,8 +18,9 @@ export interface ExecuterOptions {
   timers: TimerSet;
   /** The player it hunts: the one on the side it was launched into. */
   target: Player;
+  players: readonly Player[];
   side: PlayerId;
-  kind?: 'ball' | 'head';
+  variant: ExecuterVariant;
   /** Where it comes out, in metres. */
   origin: Vec2Value;
   speed?: number;
@@ -28,8 +30,8 @@ export interface ExecuterOptions {
 }
 
 /**
- * §13 Executer — a heavy spiked ball that hunts a player, reworked so it rams
- * the doll rather than tearing through it:
+ * §13 Executer — a variant of the hunting hazard, using the same safe steering
+ * and collision rules for all ten appearances:
  *
  * - fired out of the button it came from, straight at its target;
  * - a sensor until it is clear of everything, so it can't spawn inside the
@@ -44,6 +46,7 @@ export interface ExecuterOptions {
 export class Executer {
   readonly body: Body;
   readonly target: Player;
+  readonly variant: ExecuterVariant;
   readonly side: PlayerId;
   readonly kind: 'ball' | 'head';
   dead = false;
@@ -66,6 +69,7 @@ export class Executer {
   private readonly timers: TimerSet;
   private readonly world: World;
   private readonly speed: number;
+  private readonly players: readonly Player[];
   private readonly lifeSeconds: number;
   private readonly tuning: ExecuterTuning;
   private readonly onDeath?: (e: Executer) => void;
@@ -74,15 +78,17 @@ export class Executer {
     this.world = o.world;
     this.timers = o.timers;
     this.target = o.target;
+    this.players = o.players;
+    this.variant = o.variant;
     this.side = o.side;
-    this.kind = o.kind ?? 'ball';
-    this.speed = o.speed ?? OPTIONS.myExSpeed;
+    this.kind = o.variant.kind;
+    this.speed = (o.speed ?? OPTIONS.myExSpeed) * o.variant.speed;
     this.lifeSeconds = o.lifeSeconds ?? OPTIONS.myExLife;
     this.onDeath = o.onDeath;
     this.tuning = {
-      mass: EXECUTER.mass,
-      maxForce: EXECUTER.maxForce,
-      launchSpeed: EXECUTER.launchSpeed,
+      mass: o.variant.mass,
+      maxForce: EXECUTER.maxForce * o.variant.force,
+      launchSpeed: EXECUTER.launchSpeed * o.variant.launch,
       emergeFrames: EXECUTER.emergeFrames,
       bullet: EXECUTER.bullet,
       ...o.tuning,
@@ -100,14 +106,14 @@ export class Executer {
     this.fixture = this.body.createFixture({
       shape: Circle(toM(EXECUTER.radiusPx)),
       density: EXECUTER.density,
-      friction: EXECUTER.friction,
-      restitution: EXECUTER.restitution,
+      friction: o.variant.friction,
+      restitution: o.variant.restitution,
       isSensor: true,
       filterCategoryBits: COLLISION.EXECUTER,
       filterMaskBits: 0xffff,
     });
     this.body.setMassData({ mass: this.tuning.mass, center: Vec2(0, 0), I: EXECUTER.inertia });
-    this.body.setUserData({ e_bodytype: BODYTYPE.EXECUTER, sprite: this.kind === 'head' ? 'ExecuterHead' : 'Executer' } as BodyUserData);
+    this.body.setUserData({ e_bodytype: BODYTYPE.EXECUTER, sprite: `Executer-${o.variant.id}` } as BodyUserData);
 
     // Fire it straight at its target.
     const d = this.toTarget();
@@ -183,6 +189,8 @@ export class Executer {
       return;
     }
 
+    if (this.variant.magnet > 0) this.attractPlayers(dt);
+
     if (this.kind === 'head') {
       this.updateHead(dt);
       return;
@@ -199,6 +207,24 @@ export class Executer {
     this.drive(vd, dt);
     if (this.pinDir) this.spin(this.pinDir, dt);
     if (this.pinDir && this.pinDir.y < 0) this.lift(dt);
+  }
+
+  /** The magnet gives nearby dolls a gentle, distance-limited pull. */
+  private attractPlayers(dt: number): void {
+    const c = this.body.getWorldCenter();
+    const radius = toM(180);
+    for (const player of this.players) {
+      const hips = player.ass.getWorldCenter();
+      const dx = c.x - hips.x;
+      const dy = c.y - hips.y;
+      const distance = Math.hypot(dx, dy);
+      if (distance < toM(EXECUTER.radiusPx) || distance >= radius) continue;
+      const strength = this.variant.magnet * dt * (1 - distance / radius) / distance;
+      const impulse = Vec2(dx * strength, dy * strength);
+      player.ass.applyLinearImpulse(impulse, hips, true);
+      const head = player.head.getWorldCenter();
+      player.head.applyLinearImpulse(Vec2(impulse.x * 0.25, impulse.y * 0.25), head, true);
+    }
   }
 
   /** Keep a fist's length from the player's head and throw alternating blows. */
@@ -246,7 +272,8 @@ export class Executer {
   private huntVelocity(): Vec2 {
     const d = this.toTarget();
     const s = this.speed * this.burst;
-    return Vec2(d.x * s, d.y * s);
+    const wave = this.variant.wave * Math.sin(this.age * 0.12) * s;
+    return Vec2(d.x * s - d.y * wave, d.y * s + d.x * wave);
   }
 
   /**

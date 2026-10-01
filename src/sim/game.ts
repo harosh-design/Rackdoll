@@ -7,16 +7,18 @@ import type { Ball } from './ball';
 import type { ContactFlags } from './contacts';
 import type { Player, PlayerId } from './player';
 import { FrameTimer, type TimerSet } from './timer';
+import type { Sport } from './padel';
 
 export type Phase = 'play' | 'goal' | 'matchOver';
 
 export interface GameEvents {
   onPoint?: (winner: PlayerId, reason: PointReason) => void;
   onNewRound?: () => void;
+  onResetMatch?: () => void;
   onMatchOver?: (winner: PlayerId) => void;
 }
 
-export type PointReason = 'floor' | 'touches' | 'serveClock';
+export type PointReason = 'floor' | 'touches' | 'serveClock' | 'doubleBounce' | 'wall' | 'body' | 'ownCourt' | 'volleyReturn';
 
 /** §11 Game rules. */
 export class Game {
@@ -31,6 +33,19 @@ export class Game {
   campaignScore = 0;
   lastPointReason: PointReason | null = null;
   matchWinner: PlayerId | null = null;
+  readonly sport: Sport;
+  padelPoints: Record<PlayerId, number> = { 1: 0, 2: 0 };
+  padelServer: PlayerId = 1;
+  padelServeFaults = 0;
+  padelTieBreak = false;
+  padelBounceEvents = 0;
+  private padelFirstTieBreakServer: PlayerId = 1;
+  private padelLastHitter: PlayerId | null = null;
+  private padelBounces = 0;
+  private padelServePending = false;
+  private padelServeTouchedNet = false;
+  /** Level-six computer can keep a rally alive after an extra touch. */
+  championDefense = false;
 
   /** The current physics step — the goal replay runs at 0.005 (§3). */
   timeStep = TIME_STEP;
@@ -55,7 +70,9 @@ export class Game {
     ball: Ball,
     flags: ContactFlags,
     events: GameEvents = {},
+    sport: Sport = 'volleyball',
   ) {
+    this.sport = sport;
     this.world = world;
     this.timers = timers;
     this.p1 = p1;
@@ -95,6 +112,7 @@ export class Game {
   /** §11 game.update(), once per frame after the controls. */
   update(): void {
     if (this.phase !== 'play') return;
+    if (this.sport === 'padel') return this.updatePadel();
 
     // 1. Ball in flight with a contact: whose touch was it?
     if (this.ball.ballOfPlayer === 0) {
@@ -104,6 +122,7 @@ export class Game {
         const other = id === 1 ? this.p2 : this.p1;
         if (!who.bContact) {
           who.contact += 1;
+          if (this.championDefense && id === 2 && who.contact > MAX_TOUCHES) who.contact = 1;
           other.contact = 0;
           // Every fresh player touch pops the ball up 10 m/s on a 0.1 kg ball.
           // Rallies are impossible without it (§1.7).
@@ -135,6 +154,72 @@ export class Game {
       return this.awardPoint(winner, 'floor');
     }
   }
+
+  /** The ball must land on the receiving half before a return; after that,
+   * the receiving player may play it off the back wall before its second bounce. */
+  private updatePadel(): void {
+    const { padelFloorHit: floor, padelWallHit: wall, padelNetHit: net, padelBodyHit: body } = this.flags;
+    this.flags.padelFloorHit = this.flags.padelWallHit = false;
+    this.flags.padelNetHit = false;
+    this.flags.padelBodyHit = undefined;
+    if (this.ball.ballOfPlayer !== 0 || this.padelLastHitter == null) return;
+    const hitter = this.padelLastHitter;
+    const receiver: PlayerId = hitter === 1 ? 2 : 1;
+    if (net && this.padelServePending) this.padelServeTouchedNet = true;
+    if (body) return this.awardPoint(body === 1 ? 2 : 1, 'body');
+    if (floor) {
+      this.padelBounceEvents += 1;
+      const landedOn: PlayerId = this.ball.position.x < LANDING_CENTRE_M ? 1 : 2;
+      if (landedOn === hitter) return this.padelFaultOrPoint(receiver, 'ownCourt');
+      if (this.padelServePending && this.padelServeTouchedNet) return this.newRound(true); // service let
+      if (++this.padelBounces >= 2) return this.awardPoint(hitter, 'doubleBounce');
+      this.padelServePending = false;
+    }
+    if (wall && this.padelBounces === 0) this.padelFaultOrPoint(receiver, 'wall');
+  }
+
+  /** The serving player gets a second attempt for a service fault. */
+  private padelFaultOrPoint(winner: PlayerId, reason: PointReason): void {
+    if (this.padelServePending && this.padelServeFaults === 0) {
+      this.padelServeFaults = 1;
+      this.newRound(true);
+    } else {
+      this.awardPoint(winner, reason);
+    }
+  }
+
+  /** Called only by an actual racket stroke or the underhand serve. */
+  registerPadelHit(player: Player, serve = false): boolean {
+    if (this.sport !== 'padel' || this.phase !== 'play') return false;
+    if (!serve && (this.padelLastHitter === player.id ||
+        (this.padelServePending && this.padelLastHitter !== player.id && this.padelBounces === 0))) {
+      if (this.padelServePending && this.padelLastHitter !== player.id) {
+        this.awardPoint(this.padelLastHitter!, 'volleyReturn');
+      }
+      return false;
+    }
+    this.padelLastHitter = player.id;
+    this.padelBounces = 0;
+    this.padelServePending = serve;
+    this.padelServeTouchedNet = false;
+    this.flags.padelBodyHit = undefined;
+    this.flags.padelFloorHit = false;
+    this.flags.padelWallHit = false;
+    this.flags.padelNetHit = false;
+    return true;
+  }
+
+  padelPointLabel(id: PlayerId): string {
+    if (this.padelTieBreak) return String(this.padelPoints[id]);
+    const mine = this.padelPoints[id];
+    const theirs = this.padelPoints[id === 1 ? 2 : 1];
+    if (mine >= 3 && theirs >= 3) return mine === theirs ? '40' : mine > theirs ? 'AD' : '40';
+    return ['0', '15', '30', '40'][Math.min(mine, 3)];
+  }
+
+  get padelReturnNeedsBounce(): boolean { return this.padelServePending && this.padelBounces === 0; }
+
+  notePadelServeBounce(): void { this.padelBounceEvents += 1; }
 
   /**
    * Walks the ball's contacts and reads the other fixture's friction:
@@ -194,6 +279,11 @@ export class Game {
     // Out of time. Drop the ball and hand the point straight over.
     const holder = this.ball.ballOfPlayer;
     if (holder === 0) return;
+    if (this.sport === 'padel') {
+      this.padelServePending = true;
+      this.padelFaultOrPoint(holder === 1 ? 2 : 1, 'serveClock');
+      return;
+    }
     const who = holder === 1 ? this.p1 : this.p2;
     const j = who.holdingJoint;
     if (j) {
@@ -212,7 +302,8 @@ export class Game {
     this.phase = 'goal';
     this.win1 = winner === 1;
     this.lastPointReason = reason;
-    this.score[winner] += 1;
+    if (this.sport === 'padel') this.awardPadelPoint(winner);
+    else this.score[winner] += 1;
     if (winner === 1) this.campaignScore += this.level;
     this.events.onPoint?.(winner, reason);
 
@@ -221,11 +312,36 @@ export class Game {
     this.goalTimer.restart();
   }
 
+  private awardPadelPoint(winner: PlayerId): void {
+    this.padelPoints[winner] += 1;
+    const loser: PlayerId = winner === 1 ? 2 : 1;
+    const needed = this.padelTieBreak ? 7 : 4;
+    if (this.padelPoints[winner] < needed || this.padelPoints[winner] - this.padelPoints[loser] < 2) {
+      if (this.padelTieBreak) {
+        const n = this.padelPoints[1] + this.padelPoints[2];
+        this.padelServer = Math.floor((n + 1) / 2) % 2 === 0
+          ? this.padelFirstTieBreakServer : this.padelFirstTieBreakServer === 1 ? 2 : 1;
+      }
+      return;
+    }
+    this.score[winner] += 1;
+    this.padelPoints = { 1: 0, 2: 0 };
+    if (this.padelTieBreak || (this.score[winner] >= 6 && this.score[winner] - this.score[loser] >= 2)) {
+      this.matchWinner = winner;
+      return;
+    }
+    this.padelServer = this.padelServer === 1 ? 2 : 1;
+    if (this.score[1] === 6 && this.score[2] === 6) {
+      this.padelTieBreak = true;
+      this.padelFirstTieBreakServer = this.padelServer;
+    }
+  }
+
   private afterGoal(): void {
     const winner: PlayerId = this.win1 ? 1 : 2;
-    if (this.score[winner] >= OPTIONS.gameSet) {
+    if (this.matchWinner !== null || (this.sport === 'volleyball' && this.score[winner] >= OPTIONS.gameSet)) {
       this.phase = 'matchOver';
-      this.matchWinner = winner;
+      this.matchWinner ??= winner;
       this.timeStep = TIME_STEP;
       this.events.onMatchOver?.(winner);
       return;
@@ -234,7 +350,7 @@ export class Game {
   }
 
   /** §11 newRound(). */
-  newRound(): void {
+  newRound(retryServe = false): void {
     this.p1.standPlayer(SPAWN_P1_PX.x, SPAWN_P1_PX.y);
     this.p2.standPlayer(SPAWN_P2_PX.x, SPAWN_P2_PX.y);
     this.p1.contact = 0;
@@ -252,10 +368,19 @@ export class Game {
     // that already has a joint, so drop any grip first. Normal play never
     // needs this (points only happen with the ball free); resetMatch() does.
     this.releaseGrips();
-    const server = this.win1 ? this.p1 : this.p2;
+    const server = this.sport === 'padel'
+      ? this.padelServer === 1 ? this.p1 : this.p2
+      : this.win1 ? this.p1 : this.p2;
     this.ball.reset();
     server.takeBall(this.ball.body);
     this.ball.ballOfPlayer = server.id;
+    if (this.sport === 'padel') {
+      this.padelLastHitter = null;
+      this.padelBounces = 0;
+      this.padelServePending = false;
+      this.padelServeTouchedNet = false;
+      if (!retryServe) this.padelServeFaults = 0;
+    }
 
     this.serveSecondsLeft = TIMERS.delayRepeat;
     this.delayTimer.restart();
@@ -276,7 +401,12 @@ export class Game {
 
   /** Start a whole new match at the given campaign level. */
   resetMatch(level = this.level): void {
+    this.events.onResetMatch?.();
     this.score = { 1: 0, 2: 0 };
+    this.padelPoints = { 1: 0, 2: 0 };
+    this.padelServer = 1;
+    this.padelServeFaults = 0;
+    this.padelTieBreak = false;
     this.level = level;
     this.matchWinner = null;
     this.win1 = true;

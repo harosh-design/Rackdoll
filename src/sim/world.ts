@@ -2,22 +2,26 @@ import { Vec2, World } from 'planck';
 import { AI } from './ai';
 import { Ball } from './ball';
 import {
-  CHARGE, EXECUTER, EXECUTER_ITERATIONS, GRAVITY, ITERATIONS, MS_PER_FRAME, OPTIONS, PRIZE_ANIM,
-  NET_X_PX, powerScale, RESCUE, SERVE_CENTRE_M, SPAWN_P1_PX, SPAWN_P2_PX, SWING, toM,
+  BALL, CHAMPION, CHARGE, EXECUTER, EXECUTER_ITERATIONS, GRAVITY, ITERATIONS,
+  LANDING_CENTRE_M, MS_PER_FRAME, OPTIONS, PRIZE_ANIM, NET_X_PX, RIGHT_WALL_INNER_PX, powerScale, RESCUE,
+  SERVE_CENTRE_M, SPAWN_P1_PX, SPAWN_P2_PX, SWING, toM,
 } from './constants';
 import { Control } from './control';
 import { installContactListener, installContactTweaks, type ContactFlags } from './contacts';
 import { Executer, type ExecuterTuning } from './executer';
+import { executerVariantForHit } from './executerVariants';
 import { Game, type GameEvents } from './game';
 import { Ground } from './ground';
-import { Player, type PlayerId } from './player';
+import { Player, type PlayerId, type SwingHand } from './player';
 import type { PrizeButton } from './prizeButton';
 import { FrameTimer, TimerSet } from './timer';
+import { PADEL, type Sport } from './padel';
 
 export interface GameWorldOptions {
+  sport?: Sport;
   /** Single player puts an AI on player 2. */
   singlePlayer?: boolean;
-  /** Campaign level 1..5; scales the points a goal is worth. */
+  /** Campaign level 1..6; level 6 enables the champion opponent. */
   level?: number;
   /** Hazards on/off. Off, a button still clicks but launches nothing. */
   hazards?: boolean;
@@ -33,6 +37,7 @@ export interface GameWorldOptions {
  * imports, so thousands of frames can be run headless and asserted on (§17).
  */
 export class GameWorld {
+  readonly sport: Sport;
   readonly world: World;
   readonly ground: Ground;
   readonly p1: Player;
@@ -44,9 +49,11 @@ export class GameWorld {
   readonly timers = new TimerSet();
   readonly flags: ContactFlags = { onBallDown: false, bYesPrize: false, prizeHits: [], ballPlayerHits: [] };
   readonly executers: Executer[] = [];
-  readonly swingEffects: Record<PlayerId, { frame: number; power: number }> = {
-    1: { frame: -100, power: 0 },
-    2: { frame: -100, power: 0 },
+  /** Total hazard launches this match, shared by both buttons. */
+  executerLaunches = 0;
+  readonly swingEffects: Record<PlayerId, { frame: number; power: number; hand: SwingHand }> = {
+    1: { frame: -100, power: 0, hand: 'outside' },
+    2: { frame: -100, power: 0, hand: 'outside' },
   };
   readonly opponentHitEffects: Record<PlayerId, { frame: number; power: number }> = {
     1: { frame: -100, power: 0 },
@@ -71,16 +78,20 @@ export class GameWorld {
   readonly hazards: boolean;
   private readonly executerTuning?: Partial<ExecuterTuning>;
   private readonly contactIterations: number;
-  private readonly strikes: Record<PlayerId, { frame: number; power: number; ballHit: boolean; opponentHit: boolean; hitExecuters: Set<Executer> } | null> = {
+  private readonly strikes: Record<PlayerId, { frame: number; power: number; hand: SwingHand; ballHit: boolean; opponentHit: boolean; hitExecuters: Set<Executer> } | null> = {
     1: null, 2: null,
   };
   private counter: { framesLeft: number; direction: 1 | -1 } | null = null;
   private readonly rescueActiveUntil: Record<PlayerId, number> = { 1: -1, 2: -1 };
   private aiCounterWindupFrames = 0;
+  private lastChampionSaveFrame = -100;
+  private padelAiLastSwingFrame = -100;
+  private padelServeBounce: { player: Player; stage: 'drop' | 'rise' } | null = null;
 
   constructor(opts: GameWorldOptions = {}) {
+    this.sport = opts.sport ?? 'volleyball';
     this.singlePlayer = opts.singlePlayer ?? true;
-    this.hazards = opts.hazards ?? true;
+    this.hazards = this.sport === 'padel' ? false : opts.hazards ?? true;
     this.executerTuning = opts.executerTuning;
     this.contactIterations = opts.contactIterations ?? EXECUTER_ITERATIONS;
 
@@ -93,39 +104,50 @@ export class GameWorld {
     // that the horizontal rails anchor to.
     const railAnchor = this.world.createBody({ type: 'static', position: Vec2(0, 0) });
 
-    this.ground = new Ground(this.world);
-    this.p1 = new Player(this.world, railAnchor, SPAWN_P1_PX.x, SPAWN_P1_PX.y, 1);
-    this.p2 = new Player(this.world, railAnchor, SPAWN_P2_PX.x, SPAWN_P2_PX.y, 2);
-    this.ball = new Ball(this.world);
+    this.ground = new Ground(this.world, this.sport);
+    this.p1 = new Player(this.world, railAnchor, SPAWN_P1_PX.x, SPAWN_P1_PX.y, 1, this.sport);
+    this.p2 = new Player(this.world, railAnchor, SPAWN_P2_PX.x, SPAWN_P2_PX.y, 2, this.sport);
+    this.ball = new Ball(this.world, undefined, undefined, this.sport);
 
-    installContactListener(this.world, this.flags);
-    installContactTweaks(this.world);
+    installContactListener(this.world, this.flags, this.sport);
+    installContactTweaks(this.world, this.sport);
 
     const events: GameEvents = {
       ...opts.events,
       onPoint: (winner, reason) => {
+        this.padelServeBounce = null;
         this.strikes[1] = this.strikes[2] = null;
         this.counter = null;
         this.rescueActiveUntil[1] = this.rescueActiveUntil[2] = -1;
         opts.events?.onPoint?.(winner, reason);
       },
       onNewRound: () => {
+        this.padelServeBounce = null;
         this.ai?.reset();
         this.strikes[1] = this.strikes[2] = null;
         this.counter = null;
         this.rescueAvailable[1] = this.rescueAvailable[2] = true;
         this.rescueActiveUntil[1] = this.rescueActiveUntil[2] = -1;
         this.aiCounterWindupFrames = 0;
+        this.lastChampionSaveFrame = -100;
+        this.padelAiLastSwingFrame = -100;
         opts.events?.onNewRound?.();
+      },
+      onResetMatch: () => {
+        this.clearExecuters();
+        this.executerLaunches = 0;
+        for (const button of this.ground.prizeButtons) button.launches = 0;
+        opts.events?.onResetMatch?.();
       },
     };
 
     this.game = new Game(
-      this.world, this.timers, this.p1, this.p2, this.ball, this.flags, events,
+      this.world, this.timers, this.p1, this.p2, this.ball, this.flags, events, this.sport,
     );
     if (opts.level != null) this.game.level = opts.level;
+    this.game.championDefense = this.singlePlayer && this.game.level === OPTIONS.championLevel;
 
-    this.ai = this.singlePlayer
+    this.ai = this.singlePlayer && this.sport === 'volleyball'
       ? new AI(this.timers, this.p2, this.ball, (p) => this.serve(p))
       : null;
   }
@@ -135,6 +157,17 @@ export class GameWorld {
    * here so the AI and the keyboard take exactly the same fixed-power path.
    */
   serve = (player: Player): void => {
+    if (this.sport === 'padel') {
+      if (this.ball.ballOfPlayer !== player.id || this.game.phase !== 'play') return;
+      const j = player.holdingJoint;
+      if (!j) return;
+      this.world.destroyJoint(j);
+      player.forgetBallJoint();
+      this.ball.ballOfPlayer = 0;
+      this.padelServeBounce = { player, stage: 'drop' };
+      this.ball.body.setLinearVelocity(Vec2(0, 1));
+      return;
+    }
     const ok = player.pas(this.ball.body, this.ball.ballOfPlayer, SERVE_CENTRE_M);
     if (!ok) return;
     this.ball.ballOfPlayer = 0;
@@ -142,11 +175,11 @@ export class GameWorld {
   };
 
   /** Not in the original: the rally hit, routed the same way as serve(). */
-  swing = (player: Player, power = 1): void => {
-    player.swingArm(power);
-    this.swingEffects[player.id] = { frame: this.frame, power };
+  swing = (player: Player, power = 1, hand: SwingHand = 'outside'): void => {
+    player.swingArm(power, hand);
+    this.swingEffects[player.id] = { frame: this.frame, power, hand };
     if (this.game.phase !== 'play' || this.ball.ballOfPlayer !== 0) return;
-    this.strikes[player.id] = { frame: this.frame, power, ballHit: false, opponentHit: false, hitExecuters: new Set() };
+    this.strikes[player.id] = { frame: this.frame, power, hand, ballHit: false, opponentHit: false, hitExecuters: new Set() };
   };
 
   /** The same eligibility check drives the button hint and the move itself. */
@@ -164,6 +197,7 @@ export class GameWorld {
 
   /** One off-balance dive per rally, only toward a nearby falling ball. */
   rescue = (player: Player): void => {
+    if (this.sport === 'padel') return;
     const state = this.rescueState(player);
     if (state !== 'ready') {
       const reason = {
@@ -185,12 +219,13 @@ export class GameWorld {
    */
   step(): void {
     if (this.paused) return;
+    this.game.championDefense = this.singlePlayer && this.game.level === OPTIONS.championLevel;
     this.p1.tickRecoil();
     this.p2.tickRecoil();
 
     // 1. The physics. 1/28 s once per 30 fps frame (§1.3).
     const dt = this.game.timeStep * (
-      this.game.phase === 'play' && this.control.isChargingSwing() ? CHARGE.windupTimeScale : 1
+      this.sport === 'volleyball' && this.game.phase === 'play' && this.control.isChargingSwing() ? CHARGE.windupTimeScale : 1
     );
     // The original's 10 iterations everywhere, except while an executer is at
     // a doll: a 0.07 kg hand hitting a 6 kg ball is badly conditioned, and at
@@ -207,17 +242,28 @@ export class GameWorld {
     // 3. Controls, both players.
     this.control.update(this.p1, this.serve, this.swing, this.rescue);
     if (!this.singlePlayer) this.control.update(this.p2, this.serve, this.swing, this.rescue);
-    this.resolveStrikes();
-    this.advanceCounter();
-    this.resolveRescueTouches();
-    this.attractBallDuringWindup();
+    if (this.sport === 'padel') {
+      this.resolvePadelServeBounce();
+      this.resolvePadelStrikes();
+    }
+    else {
+      this.resolveStrikes();
+      this.advanceCounter();
+      this.resolveRescueTouches();
+      this.attractBallDuringWindup();
+      this.tryChampionSave();
+    }
 
     // 4. Rules.
     this.game.update();
 
     // 5. AI, single player only.
-    this.ai?.update();
-    this.updateAiCounter();
+    if (this.ai) {
+      this.ai.champion = this.game.level === OPTIONS.championLevel;
+      this.ai.update();
+    }
+    if (this.sport === 'padel' && this.singlePlayer) this.updatePadelAi();
+    else this.updateAiCounter();
 
     // 6. Hazards.
     for (const e of this.executers) e.update(dt);
@@ -227,6 +273,70 @@ export class GameWorld {
 
     this.timers.step();
     this.frame += 1;
+  }
+
+  private resolvePadelServeBounce(): void {
+    const serve = this.padelServeBounce;
+    if (!serve || this.game.phase !== 'play') return;
+    if (serve.stage === 'drop' && this.flags.padelFloorHit) {
+      serve.stage = 'rise';
+      this.flags.padelFloorHit = false;
+      this.game.notePadelServeBounce();
+      this.ball.body.setLinearVelocity(Vec2(0, -8));
+    }
+    if (serve.stage === 'rise' && this.ball.position.y <= serve.player.racketCenter.y + toM(20)) {
+      this.padelServeBounce = null;
+      this.game.registerPadelHit(serve.player, true);
+      serve.player.swingArm(0.45, 'inside');
+      this.swingEffects[serve.player.id] = { frame: this.frame, power: 0.45, hand: 'inside' };
+      const sign = serve.player.id === 1 ? 1 : -1;
+      this.ball.body.setLinearVelocity(Vec2(sign * PADEL.serveSpeedX, PADEL.serveSpeedY));
+    }
+  }
+
+  private resolvePadelStrikes(): void {
+    if (this.game.phase !== 'play' || this.ball.ballOfPlayer !== 0 || this.padelServeBounce) return;
+    for (const p of [this.p1, this.p2]) {
+      const strike = this.strikes[p.id];
+      if (!strike || strike.ballHit) continue;
+      const age = this.frame - strike.frame;
+      if (age >= PADEL.hitFrames) { this.strikes[p.id] = null; continue; }
+      const racket = p.racketCenter;
+      const ball = this.ball.position;
+      if (Math.hypot(racket.x - ball.x, racket.y - ball.y) >
+          toM(PADEL.racketRadiusPx + this.ball.radiusPx + PADEL.hitReachPx)) continue;
+      if (p.id === 1 ? ball.x > toM(NET_X_PX + 10) : ball.x < toM(NET_X_PX - 10)) continue;
+      if (!this.game.registerPadelHit(p)) continue;
+      strike.ballHit = true;
+      const sign = p.id === 1 ? 1 : -1;
+      const powerFactor = 0.65 + 0.6 * powerScale(strike.power);
+      const lob = strike.hand === 'inside';
+      this.ball.body.setLinearVelocity(Vec2(sign * (lob ? PADEL.lobSpeedX : PADEL.hitSpeedX) * powerFactor,
+        (lob ? PADEL.lobSpeedY : PADEL.hitSpeedY) * (0.75 + 0.35 * powerScale(strike.power))));
+      this.perfectEffects[p.id] = { frame: this.frame, power: strike.power };
+    }
+  }
+
+  private updatePadelAi(): void {
+    const p = this.p2;
+    if (this.game.phase !== 'play') return;
+    if (this.ball.ballOfPlayer === 2) {
+      if (this.frame % 30 === 0) this.serve(p);
+      return;
+    }
+    if (this.ball.ballOfPlayer !== 0 || this.padelServeBounce) return;
+    const ball = this.ball.position;
+    const head = p.head.getWorldCenter();
+    const target = this.game.padelReturnNeedsBounce ? toM(815) : ball.x > toM(NET_X_PX)
+      ? Math.max(toM(375), Math.min(toM(760), ball.x + toM(70)))
+      : toM(525);
+    if (head.x < target - toM(12)) p.turnComp(Vec2(5, 0));
+    else if (head.x > target + toM(12)) p.turnComp(Vec2(-5, 0));
+    if (!this.game.padelReturnNeedsBounce && ball.x > toM(NET_X_PX) && this.frame - this.padelAiLastSwingFrame > 15 &&
+        Math.hypot(p.racketCenter.x - ball.x, p.racketCenter.y - ball.y) < toM(75)) {
+      this.swing(p, 0.65, 'outside');
+      this.padelAiLastSwingFrame = this.frame;
+    }
   }
 
   /** Resolve simultaneous counters before individual ball and player hits. */
@@ -247,7 +357,7 @@ export class GameWorld {
     for (const contact of contacts ?? []) {
       const strike = this.strikes[contact.playerId];
       if (!strike || strike.ballHit || this.ball.ballOfPlayer !== 0) continue;
-      const strikingSide = contact.playerId === 1 ? 'Left' : 'Right';
+      const strikingSide = (contact.playerId === 1 ? this.p1 : this.p2).swingSide(strike.hand);
       if (contact.part !== `Finger${strikingSide}` && contact.part !== `Hand${strikingSide}`) continue;
       const age = this.frame - strike.frame;
       if (age < 0 || age >= SWING.opponentHitFrames) continue;
@@ -283,11 +393,12 @@ export class GameWorld {
   /** A swing must meet an executer with the striking hand to knock it back. */
   private hitExecuters(
     attackerId: PlayerId,
-    strike: { power: number; hitExecuters: Set<Executer> },
+    strike: { power: number; hand: SwingHand; hitExecuters: Set<Executer> },
   ): void {
     const attacker = attackerId === 1 ? this.p1 : this.p2;
-    const finger = attacker.strikingFinger;
-    const hand = attacker.part(attackerId === 1 ? 'HandLeft' : 'HandRight');
+    const side = attacker.swingSide(strike.hand);
+    const finger = attacker.part(`Finger${side}`);
+    const hand = attacker.part(`Hand${side}`);
     const origin = attacker.head.getWorldCenter();
     for (const e of this.executers) {
       if (e.dead || !e.solid || e.target !== attacker || strike.hitExecuters.has(e)) continue;
@@ -397,6 +508,40 @@ export class GameWorld {
     }
   }
 
+  /** The final opponent can dash to a falling ball and turn a desperate save into a return. */
+  private tryChampionSave(): void {
+    if (!this.singlePlayer || this.game.level !== OPTIONS.championLevel ||
+        this.game.phase !== 'play' || this.ball.ballOfPlayer !== 0 || this.ball.held) return;
+    const ball = this.ball.position;
+    if (ball.x < LANDING_CENTRE_M || (this.ball.velocity.y <= 0 && !this.flags.onBallDown) ||
+        (ball.y < toM(CHAMPION.saveYpx) && !this.flags.onBallDown) ||
+        this.frame - this.lastChampionSaveFrame < CHAMPION.saveCooldownFrames) return;
+
+    const ballX = Math.max(toM(NET_X_PX + BALL.radiusPx + 5),
+      Math.min(ball.x, toM(RIGHT_WALL_INNER_PX - BALL.radiusPx - 5)));
+    const headX = Math.max(toM(CHAMPION.minHeadXpx),
+      Math.min(ballX + toM(45), toM(CHAMPION.maxHeadXpx)));
+    const dx = headX - this.p2.head.getWorldCenter().x;
+    for (const body of [...this.p2.bodies, this.p2.prismBody]) {
+      const position = body.getPosition();
+      body.setTransform(Vec2(position.x + dx, position.y), body.getAngle());
+      body.setLinearVelocity(Vec2(0, body.getLinearVelocity().y));
+    }
+
+    // A champion save also forgives an exhausted touch count and a floor contact
+    // already reported by the physics step that brought the ball into range.
+    this.p2.contact = 0;
+    this.game.registerRescueTouch(this.p2);
+    this.flags.onBallDown = false;
+    const saveY = ballX < toM(CHAMPION.nearNetXpx)
+      ? toM(CHAMPION.nearNetSaveYpx)
+      : Math.min(ball.y, toM(CHAMPION.saveYpx));
+    this.ball.body.setTransform(Vec2(ballX, saveY), this.ball.body.getAngle());
+    this.ball.body.setLinearVelocity(Vec2(CHAMPION.returnSpeedX, CHAMPION.returnSpeedY));
+    this.swing(this.p2, 0.8, ballX <= headX ? 'inside' : 'outside');
+    this.lastChampionSaveFrame = this.frame;
+  }
+
   /** A near, forward-facing opponent receives one charge-scaled knockback. */
   private hitOpponent(attackerId: PlayerId, power: number): boolean {
     const attacker = attackerId === 1 ? this.p1 : this.p2;
@@ -421,13 +566,13 @@ export class GameWorld {
     if (this.game.phase !== 'play' || this.ball.ballOfPlayer !== 0 || this.ball.held || this.counter) return;
     const radius = toM(CHARGE.attractRadiusPx);
     for (const player of [this.p1, this.p2]) {
-      const power = this.control.chargeLevel(player.id)?.power ?? 0;
-      if (power <= 0 || power >= 1) continue;
+      const charge = this.control.chargeLevel(player.id);
+      if (!charge || charge.power <= 0 || charge.power >= 1) continue;
       const ballPos = this.ball.position;
-      const delta = Vec2.sub(player.strikingFinger.getWorldCenter(), ballPos);
+      const delta = Vec2.sub(player.swingFinger(charge.hand).getWorldCenter(), ballPos);
       const distance = delta.length();
       if (distance < 0.001 || distance >= radius) continue;
-      const impulse = CHARGE.attractImpulse * power * (1 - distance / radius) / distance;
+      const impulse = CHARGE.attractImpulse * charge.power * (1 - distance / radius) / distance;
       this.ball.body.applyLinearImpulse(Vec2.mul(delta, impulse), ballPos, true);
     }
   }
@@ -474,14 +619,16 @@ export class GameWorld {
       return;
     }
     const target = button.side === 1 ? this.p1 : this.p2;
+    const variant = executerVariantForHit(this.executerLaunches);
     // "my" is the executer player 1 earned (it lands on player 2), "comp" the other.
     const mine = button.side === 2;
     const ex = new Executer({
       world: this.world,
       timers: this.timers,
       target,
+      players: [this.p1, this.p2],
       side: button.side,
-      kind: button.launches === 0 ? 'head' : 'ball',
+      variant,
       origin: button.launchPoint(),
       speed: mine ? OPTIONS.myExSpeed : OPTIONS.compExSpeed,
       lifeSeconds: mine ? OPTIONS.myExLife : OPTIONS.compExLife,
@@ -490,6 +637,7 @@ export class GameWorld {
       onDeath: (e) => button.executerDied(e, this.frame),
     });
     button.launches += 1;
+    this.executerLaunches += 1;
     button.executers.push(ex);
     this.executers.push(ex);
   }

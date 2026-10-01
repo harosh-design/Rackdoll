@@ -1,26 +1,27 @@
 import { Vec2 } from 'planck';
 import { ACTIONS, CHARGE } from './constants';
-import type { Player, PlayerId } from './player';
+import type { Player, PlayerId, SwingHand } from './player';
 
 /** §7 Controls — raw key codes, exactly as the original tabled them. */
-export const KEYS: Record<PlayerId, { left: number; right: number; jump: number; down: number; serve: number; rescue: number }> = {
-  1: { left: 37, right: 39, jump: 38, down: 40, serve: 32, rescue: 67 }, // arrows + Space + C
-  2: { left: 65, right: 68, jump: 87, down: 83, serve: 82, rescue: 70 }, // A D W S R + F
+export const KEYS: Record<PlayerId, { left: number; right: number; jump: number; down: number; serve: number; otherHit: number; rescue: number }> = {
+  1: { left: 37, right: 39, jump: 38, down: 40, serve: 32, otherHit: 16, rescue: 67 }, // arrows + Space / Shift + C
+  2: { left: 65, right: 68, jump: 87, down: 83, serve: 82, otherHit: 69, rescue: 70 }, // A D W S R / E + F
 };
 
 export interface ChargeInfo {
   /** 0..1, how far into the swing charge we are right now. */
   power: number;
+  hand: SwingHand;
 }
 
 /**
  * Controls run once per frame after the world step. A press while holding the
  * ball serves at fixed power immediately. A press during a rally begins a
- * swing charge, and releasing it strikes with the outside arm.
+ * swing charge, and releasing it strikes with the chosen arm.
  */
 export class Control {
   private readonly down = new Map<number, boolean>();
-  private readonly active = new Map<PlayerId, 'serve' | 'swing'>();
+  private readonly active = new Map<PlayerId, { kind: 'serve' | 'swing'; key: number; hand: SwingHand }>();
   private readonly chargeFrames = new Map<PlayerId, number>();
 
   press(code: number): void { this.down.set(code, true); }
@@ -33,17 +34,17 @@ export class Control {
   }
 
   isChargingSwing(): boolean {
-    return ([1, 2] as const).some((id) =>
-      this.active.get(id) === 'swing' &&
-      this.isDown(KEYS[id].serve) &&
-      (this.chargeFrames.get(id) ?? 0) < CHARGE.maxFrames,
-    );
+    return ([1, 2] as const).some((id) => {
+      const action = this.active.get(id);
+      return action?.kind === 'swing' && this.isDown(action.key) &&
+        (this.chargeFrames.get(id) ?? 0) < CHARGE.maxFrames;
+    });
   }
 
   update(
     player: Player,
     serve: (p: Player) => void,
-    swing: (p: Player, power: number) => void,
+    swing: (p: Player, power: number, hand: SwingHand) => void,
     rescue: (p: Player) => void = () => {},
   ): void {
     const k = KEYS[player.id];
@@ -60,28 +61,31 @@ export class Control {
     if (this.isDown(k.left)) player.turn(Vec2(-ACTIONS.turnImpulse, 0));
     if (this.isDown(k.right)) player.turn(Vec2(ACTIONS.turnImpulse, 0));
 
-    const held = this.isDown(k.serve);
-    const action = this.active.get(player.id);
-    if (held && action == null) {
+    let action = this.active.get(player.id);
+    if (action == null && this.isDown(k.serve)) {
       if (player.holdingJoint != null) {
-        this.active.set(player.id, 'serve');
+        this.active.set(player.id, { kind: 'serve', key: k.serve, hand: 'outside' });
         serve(player);
       } else {
-        this.active.set(player.id, 'swing');
+        this.active.set(player.id, { kind: 'swing', key: k.serve, hand: 'outside' });
       }
+    } else if (action == null && this.isDown(k.otherHit) && player.holdingJoint == null) {
+      this.active.set(player.id, { kind: 'swing', key: k.otherHit, hand: 'inside' });
     }
+    action = this.active.get(player.id);
+    if (action == null) return;
 
-    if (held && this.active.get(player.id) === 'swing') {
+    if (this.isDown(action.key) && action.kind === 'swing') {
       const previous = this.chargeFrames.get(player.id) ?? 0;
       const frames = Math.min(previous + 1, CHARGE.maxFrames);
       this.chargeFrames.set(player.id, frames);
-      if (previous < CHARGE.maxFrames) player.windUpArm(frames / CHARGE.maxFrames);
+      if (previous < CHARGE.maxFrames) player.windUpArm(frames / CHARGE.maxFrames, action.hand);
     }
 
-    if (!held && action != null) {
-      if (action === 'swing') {
+    if (!this.isDown(action.key)) {
+      if (action.kind === 'swing') {
         const power = (this.chargeFrames.get(player.id) ?? 0) / CHARGE.maxFrames;
-        swing(player, power);
+        swing(player, power, action.hand);
       }
       this.chargeFrames.delete(player.id);
       this.active.delete(player.id);
@@ -90,9 +94,10 @@ export class Control {
 
   /** Only rally swings have a power meter. */
   chargeLevel(id: PlayerId): ChargeInfo | null {
-    if (!this.isDown(KEYS[id].serve) || this.active.get(id) !== 'swing') {
+    const action = this.active.get(id);
+    if (!action || action.kind !== 'swing' || !this.isDown(action.key)) {
       return null;
     }
-    return { power: (this.chargeFrames.get(id) ?? 0) / CHARGE.maxFrames };
+    return { power: (this.chargeFrames.get(id) ?? 0) / CHARGE.maxFrames, hand: action.hand };
   }
 }

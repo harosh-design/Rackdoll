@@ -169,14 +169,22 @@
   </head>
   <body>
     <main class="stage" id="stage">
-      <canvas id="game" aria-label="Ragdoll Volleyball court"></canvas>
+      <canvas id="game" aria-label="Ragdoll sports court"></canvas>
 
       <section class="overlay show" id="menu" aria-label="Main menu">
         <div class="card wide">
-          <h1>Ragdoll Volleyball</h1>
-          <p class="sub">One-on-one volleyball with hazards.</p>
+          <h1 id="menu-title">Ragdoll Volleyball</h1>
+          <p class="sub" id="menu-sub">One-on-one volleyball with hazards.</p>
           <div class="cols">
           <div class="col-a">
+
+          <div class="field">
+            <span class="label">Sport</span>
+            <div class="row" role="group" aria-label="Sport">
+              <button class="seg" data-sport="volleyball" aria-pressed="true">Volleyball</button>
+              <button class="seg" data-sport="padel" aria-pressed="false">Padel</button>
+            </div>
+          </div>
 
           <div class="field">
             <span class="label">Mode</span>
@@ -194,10 +202,12 @@
               <button class="seg" data-level="3" aria-pressed="false">3</button>
               <button class="seg" data-level="4" aria-pressed="false">4</button>
               <button class="seg" data-level="5" aria-pressed="false">5</button>
+              <button class="seg" data-level="6" aria-pressed="false" aria-label="Level 6 Champion">6 ★</button>
             </div>
+            <small>Level 6: champion opponent with extraordinary saves.</small>
           </div>
 
-          <div class="field">
+          <div class="field" id="hazards-field">
             <span class="label">Hazards</span>
             <div class="row" role="group" aria-label="Hazards">
               <button class="seg" data-hazards="on" aria-pressed="true">On</button>
@@ -217,14 +227,16 @@
               <span>Move</span><span><kbd>←</kbd> <kbd>→</kbd></span><span class="p2"><kbd>A</kbd> <kbd>D</kbd></span>
               <span>Jump</span><span><kbd>↑</kbd></span><span class="p2"><kbd>W</kbd></span>
               <span>Down</span><span><kbd>↓</kbd></span><span class="p2"><kbd>S</kbd></span>
-              <span>Serve / hit</span><span><kbd>Space</kbd></span><span class="p2"><kbd>R</kbd></span>
-              <span>Dive</span><span><kbd>C</kbd></span><span class="p2"><kbd>F</kbd></span>
+              <span>Serve / racket hit</span><span><kbd>Space</kbd></span><span class="p2"><kbd>R</kbd></span>
+              <span>Other hand / lob</span><span><kbd>Shift</kbd></span><span class="p2"><kbd>E</kbd></span>
+              <span class="dive-control">Dive</span><span class="dive-control"><kbd>C</kbd></span><span class="p2 dive-control"><kbd>F</kbd></span>
             </div>
           </div>
 
-          <div class="tip">
-            <b>Tap to serve. Hold during a rally, then release to hit.</b> The outside arm
-            winds up while play briefly slows, drawing a nearby ball toward the striking hand.
+          <div class="tip" id="volley-tip">
+            <b>Tap Space or R to serve. Hold during a rally, then release to hit.</b>
+            Use Shift or E to swing the other hand. The chosen arm winds up while
+            play briefly slows, drawing a nearby ball toward that hand.
             Release for a powerful hit; more charge knocks back a nearby opponent
             or an executer your hand connects with. Release as your hand meets the ball for a perfect hit.
             Two simultaneous hits by the net clash and redirect the ball.
@@ -233,9 +245,19 @@
             You get one dive per rally.
             You can charge another hit immediately.
             Jump first for a serve that clears the net. Three touches
-            max, and six seconds to serve. The first hit on each yellow wall button
-            launches a punching head into that half; later hits launch executer balls.
-            Aim for your opponent’s button. The balls pin you to the wall or ceiling.
+            max, and six seconds to serve. Both yellow wall buttons share a ten-object
+            sequence: first a kettlebell, then a player-attracting magnet, then a punching
+            boxer, followed by seven more hazards. Aim for your opponent’s button. Most
+            objects can pin you to the wall or ceiling.
+          </div>
+          <div class="tip" id="padel-tip" style="display:none">
+            <b>Tap Space or R for an underhand serve. Hold and release to swing the racket; Shift or E lobs.</b>
+            The ball must land in the opposite court before touching a wall. After its first bounce,
+            you can return it off the back glass before the second bounce. Body touches and a volley
+            on the serve lose the point. A service fault gets one retry; a legal net touch replays the serve.
+            Games use 15, 30, 40 and
+            advantage; win six games by two, with a tie break at 6–6. This side-view court has no
+            diagonal service boxes.
           </div>
           </div>
           </div>
@@ -268,7 +290,7 @@
     </main>
 
     <footer>
-      <kbd>P</kbd> pause · <kbd>M</kbd> sound · rebuilt from the 2009 original’s own bytecode numbers
+      <kbd>P</kbd> pause · <kbd>M</kbd> sound · volleyball rebuilt from the 2009 original’s bytecode
     </footer>
 
     <script type="module" src="/src/main.ts"></script>

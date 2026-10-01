@@ -10,6 +10,7 @@ import {
   BALL, CHARGE, GRAVITY, ITERATIONS, JOINTS, NET_TOP_PX, PARTS, PLAYER_FRICTION, SWING, TIME_STEP, toM,
 } from '../src/sim/constants';
 import { installContactListener } from '../src/sim/contacts';
+import { EXECUTER_VARIANTS } from '../src/sim/executerVariants';
 import { Ground } from '../src/sim/ground';
 import {
   fireAtButton, hazardWorld, jointErrPx, jumpServe, px, ramScenario, rng, run, SCRIPTS, untilPoint, world,
@@ -340,6 +341,37 @@ describe('fixed serve and charged outside-arm swing', () => {
     }
   });
 
+  it('charges and strikes with the near hand on the second hit key', () => {
+    for (const id of [1, 2] as const) {
+      const gw = hazardWorld({ hazards: false });
+      const player = id === 1 ? gw.p1 : gw.p2;
+      const key = id === 1 ? 16 : 69;
+      const near = player.part(id === 1 ? 'ArmRight' : 'ArmLeft');
+      const far = player.part(id === 1 ? 'ArmLeft' : 'ArmRight');
+      const forward = id === 1 ? 1 : -1;
+      gw.control.press(key);
+      run(gw, CHARGE.maxFrames);
+      expect(gw.control.chargeLevel(id)).toEqual({ power: 1, hand: 'inside' });
+      const nearBefore = near.getLinearVelocity().x;
+      const farBefore = far.getLinearVelocity().x;
+      gw.control.release(key);
+      gw.step();
+      expect((near.getLinearVelocity().x - nearBefore) * forward).toBeGreaterThan(3);
+      expect(Math.abs(far.getLinearVelocity().x - farBefore)).toBeLessThan(2);
+      expect(gw.swingEffects[id].hand).toBe('inside');
+    }
+  });
+
+  it('does not use the second hit key to serve a held ball', () => {
+    const gw = world();
+    gw.control.press(16);
+    run(gw, 5);
+    gw.control.release(16);
+    gw.step();
+    expect(gw.ball.held).toBe(true);
+    expect(gw.control.chargeLevel(1)).toBeNull();
+  });
+
   it('a full swing is stronger than a tap, and the windup pulls the outside arm back', () => {
     const tap = hazardWorld({ hazards: false });
     const tapArm = tap.p1.part('ArmLeft');
@@ -384,7 +416,7 @@ describe('fixed serve and charged outside-arm swing', () => {
     gw.control.release(32);
     gw.step();
     expect(swing).toHaveBeenCalledTimes(2);
-    expect(swing).toHaveBeenLastCalledWith(1);
+    expect(swing).toHaveBeenLastCalledWith(1, 'outside');
   });
 
   it('gently pulls a nearby free ball toward the striking hand while charging', () => {
@@ -435,6 +467,33 @@ describe('fixed serve and charged outside-arm swing', () => {
     }
   });
 
+  it('connects with an opponent near the edge of the longer punch reach', () => {
+    const gw = hazardWorld({ hazards: false });
+    gw.control.press(39);
+    gw.control.press(65);
+    run(gw, 90);
+    gw.control.release(39);
+    gw.control.release(65);
+
+    const from = gw.p1.head.getWorldCenter();
+    const target = gw.p2.tors.getWorldCenter();
+    const shift = toM(170) - (target.x - from.x);
+    for (const body of [...gw.p2.bodies, gw.p2.prismBody]) {
+      const position = body.getPosition();
+      body.setTransform(Vec2(position.x + shift, position.y), body.getAngle());
+      body.setLinearVelocity(Vec2(0, 0));
+      body.setAngularVelocity(0);
+    }
+    for (const body of [...gw.p1.bodies, gw.p1.prismBody]) {
+      body.setLinearVelocity(Vec2(0, 0));
+      body.setAngularVelocity(0);
+    }
+
+    gw.swing(gw.p1, 1);
+    run(gw, 3);
+    expect(gw.opponentHitEffects[2].frame).toBe(gw.frame - 1);
+  });
+
   it('does not hit an opponent across the court', () => {
     const gw = hazardWorld({ hazards: false });
     const before = gw.p2.head.getLinearVelocity().x;
@@ -445,6 +504,19 @@ describe('fixed serve and charged outside-arm swing', () => {
 });
 
 describe('perfect contact, net counter, and desperate save', () => {
+  it('counts only the selected hand for a perfect hit', () => {
+    const gw = hazardWorld({ hazards: false });
+    gw.ball.body.setTransform(Vec2(toM(150), toM(120)), 0);
+    gw.ball.body.setLinearVelocity(Vec2(0, 0));
+    gw.swing(gw.p1, 1, 'inside');
+    gw.flags.ballPlayerHits!.push({ playerId: 1, part: 'FingerLeft' });
+    gw.step();
+    expect(gw.perfectEffects[1].frame).toBe(-100);
+    gw.flags.ballPlayerHits!.push({ playerId: 1, part: 'FingerRight' });
+    gw.step();
+    expect(gw.perfectEffects[1].frame).toBe(gw.frame - 1);
+  });
+
   it('boosts the ball only for a timely outside-hand contact', () => {
     const timely = hazardWorld({ hazards: false });
     const finger = timely.p1.strikingFinger.getWorldCenter();
@@ -587,42 +659,133 @@ describe('§9 ball clamps', () => {
 
 describe('§17.5 AI + hazards', () => {
   it('the AI serves on its own, well before the clock runs out', () => {
-    const gw = world({ singlePlayer: true });
-    gw.game.win1 = false;
-    gw.game.newRound();
-    expect(gw.ball.ballOfPlayer).toBe(2);
-    let released = -1;
-    for (let i = 0; i < 30 * 6 && released < 0; i++) {
-      gw.step();
-      if (gw.ball.ballOfPlayer === 0) released = i;
+    for (const level of [1, 6]) {
+      const gw = world({ singlePlayer: true, level });
+      gw.game.win1 = false;
+      gw.game.newRound();
+      expect(gw.ball.ballOfPlayer).toBe(2);
+      let released = -1;
+      for (let i = 0; i < 30 * 6 && released < 0; i++) {
+        gw.step();
+        if (gw.ball.ballOfPlayer === 0) released = i;
+      }
+      expect(released).toBeGreaterThan(0);
+      expect(released).toBeLessThan(30 * 3);
+      expect(gw.game.lastPointReason).not.toBe('serveClock');
     }
-    expect(released).toBeGreaterThan(0);
-    expect(released).toBeLessThan(30 * 3);
-    expect(gw.game.lastPointReason).not.toBe('serveClock');
   });
 
 });
 
+describe('champion opponent', () => {
+  const fallingBall = (level: number, xPx: number, singlePlayer = true, vx = 0) => {
+    const gw = world({ singlePlayer, level, hazards: false });
+    gw.world.destroyJoint(gw.p1.holdingJoint!);
+    gw.p1.forgetBallJoint();
+    gw.ball.ballOfPlayer = 0;
+    gw.ball.body.setTransform(Vec2(toM(xPx), toM(330)), 0);
+    gw.ball.body.setLinearVelocity(Vec2(vx, 12));
+    return gw;
+  };
+
+  it('saves fast drops across its half, including beside the net and wall', () => {
+    for (const [x, vx] of [[330, 0], [400, -12], [400, 12], [700, -15], [700, 15], [820, 0]]) {
+      const gw = fallingBall(6, x, true, vx);
+      gw.p2.contact = 3;
+      gw.step();
+      expect(gw.game.phase, `drop at x=${x}, vx=${vx}`).toBe('play');
+      expect(gw.game.score[1]).toBe(0);
+      expect(gw.ball.velocity.x).toBeLessThan(-10);
+      expect(gw.ball.velocity.y).toBeLessThan(-10);
+      expect(gw.p2.contact).toBeLessThan(4);
+      expect(gw.swingEffects[2].frame).toBe(gw.frame - 1);
+      expect(Math.abs(px(gw.p2.head.getWorldCenter().x) - x)).toBeLessThan(100);
+      run(gw, 90);
+      expect(gw.game.score[1], `drop at x=${x}, vx=${vx}`).toBe(0);
+    }
+  });
+
+  it('keeps the extraordinary save exclusive to the single-player champion level', () => {
+    for (const gw of [fallingBall(5, 700), fallingBall(6, 700, false)]) {
+      run(gw, 3);
+      expect(gw.swingEffects[2].frame).toBe(-100);
+      expect(gw.game.score[1]).toBe(1);
+    }
+    const humanSide = fallingBall(6, 300);
+    humanSide.step();
+    expect(humanSide.swingEffects[2].frame).toBe(-100);
+  });
+
+  it('can continue a rally after a fourth touch', () => {
+    const gw = world({ singlePlayer: true, level: 6, hazards: false });
+    run(gw, 60);
+    jumpServe(gw);
+    gw.p2.contact = 3;
+    gw.p2.bContact = false;
+    const head = gw.p2.head.getWorldCenter();
+    gw.ball.body.setTransform(Vec2(head.x, head.y - toM(40)), 0);
+    gw.ball.body.setLinearVelocity(Vec2(0, 3));
+    for (let i = 0; i < 30 && gw.p2.contact === 3; i++) gw.step();
+    expect(gw.p2.contact).toBe(1);
+    expect(gw.game.score[1]).toBe(0);
+  });
+});
+
 describe('hazards (reworked §13)', () => {
-  it('each button launches a punching head first, then the normal ball', () => {
+  it('shares one ten-object sequence across both buttons and repeats after ten', () => {
     const gw = hazardWorld();
-    for (const side of [1, 2] as const) {
+    for (let i = 0; i < 11; i++) {
+      const side = i % 2 === 0 ? 1 : 2;
       const button = gw.ground.prizeButtons.find((b) => b.side === side)!;
       fireAtButton(gw, side);
-      expect(gw.executers.at(-1)?.kind).toBe('head');
-      expect(button.launches).toBe(1);
-      gw.executers.at(-1)!.destroy();
+      const e = gw.executers.at(-1)!;
+      const variant = EXECUTER_VARIANTS[i % 10];
+      expect(e.variant.id).toBe(variant.id);
+      expect(e.kind).toBe(variant.kind);
+      expect(e.body.getMass()).toBeCloseTo(variant.mass, 4);
+      expect(e.body.getFixtureList()!.getFriction()).toBe(variant.friction);
+      expect(button.launches).toBe(Math.floor(i / 2) + 1);
+      e.destroy();
       gw.reap();
       run(gw, 20);
       expect(button.armed).toBe(true);
-      fireAtButton(gw, side);
-      expect(gw.executers.at(-1)?.kind).toBe('ball');
-      expect(button.launches).toBe(2);
     }
+    expect(gw.executerLaunches).toBe(11);
+    expect(new Set(EXECUTER_VARIANTS.map((v) => v.id)).size).toBe(10);
+  });
+
+  it('the second object is a slower magnet that pulls a nearby player', () => {
+    const gw = hazardWorld();
+    fireAtButton(gw, 1);
+    const first = gw.executers[0];
+    const firstLaunchSpeed = first.body.getLinearVelocity().length();
+    first.destroy(); gw.reap(); run(gw, 20);
+    fireAtButton(gw, 2);
+    const magnet = gw.executers[0];
+    expect(magnet.variant.id).toBe('magnet');
+    expect(magnet.body.getLinearVelocity().length()).toBeLessThan(firstLaunchSpeed);
+    run(gw, 20);
+    const hips = gw.p2.ass.getWorldCenter();
+    magnet.body.setTransform(Vec2(hips.x - toM(100), hips.y), 0);
+    const spy = vi.spyOn(gw.p2.ass, 'applyLinearImpulse');
+    magnet.update(TIME_STEP);
+    expect(spy).toHaveBeenCalled();
+    expect(spy.mock.calls.at(-1)![0].x).toBeLessThan(0);
+  });
+
+  it('starts the shared sequence over for a new match', () => {
+    const gw = hazardWorld();
+    fireAtButton(gw, 1);
+    expect(gw.executerLaunches).toBe(1);
+    gw.game.resetMatch();
+    expect(gw.executerLaunches).toBe(0);
+    expect(gw.executers.every((e) => e.dead)).toBe(true);
+    expect(gw.ground.prizeButtons[0].launches).toBe(0);
   });
 
   it('the head closes to punching range and hits the target head', () => {
     const gw = hazardWorld();
+    gw.executerLaunches = 2;
     fireAtButton(gw, 1);
     const e = gw.executers[0];
     run(gw, 20);
@@ -639,6 +802,7 @@ describe('hazards (reworked §13)', () => {
   it('a head punch nudges the player away during ordinary play', () => {
     for (const side of [1, 2] as const) {
       const gw = hazardWorld();
+      gw.executerLaunches = 2;
       fireAtButton(gw, side);
       const e = gw.executers[0];
       const p = side === 1 ? gw.p1 : gw.p2;
@@ -656,24 +820,26 @@ describe('hazards (reworked §13)', () => {
     }
   });
 
-  it('a swing that meets an executer with the striking hand throws it away', () => {
+  it('a swing that meets an executer with either selected hand throws it away', () => {
     for (const side of [1, 2] as const) {
       for (const kind of ['head', 'ball'] as const) {
-        const gw = hazardWorld();
-        if (kind === 'ball') gw.ground.prizeButtons.find((b) => b.side === side)!.launches = 1;
-        fireAtButton(gw, side);
-        const e = gw.executers[0];
-        const player = side === 1 ? gw.p1 : gw.p2;
-        run(gw, 20);
-        const finger = player.strikingFinger.getWorldCenter();
-        const sign = side === 1 ? 1 : -1;
-        e.body.setTransform(Vec2(finger.x + toM(sign * 21), finger.y), 0);
-        e.body.setLinearVelocity(Vec2(0, 0));
-        gw.swing(player, 1);
-        run(gw, 5);
-        expect(e.knockbackFrames).toBeGreaterThan(0);
-        const away = e.body.getWorldCenter().x - player.head.getWorldCenter().x;
-        expect(e.body.getLinearVelocity().x * away).toBeGreaterThan(0);
+        for (const hand of ['outside', 'inside'] as const) {
+          const gw = hazardWorld();
+          if (kind === 'head') gw.executerLaunches = 2;
+          fireAtButton(gw, side);
+          const e = gw.executers[0];
+          const player = side === 1 ? gw.p1 : gw.p2;
+          run(gw, 20);
+          const finger = player.swingFinger(hand).getWorldCenter();
+          const sign = side === 1 ? 1 : -1;
+          e.body.setTransform(Vec2(finger.x + toM(sign * 21), finger.y), 0);
+          e.body.setLinearVelocity(Vec2(0, 0));
+          gw.swing(player, 1, hand);
+          run(gw, 5);
+          expect(e.knockbackFrames).toBeGreaterThan(0);
+          const away = e.body.getWorldCenter().x - player.head.getWorldCenter().x;
+          expect(e.body.getLinearVelocity().x * away).toBeGreaterThan(0);
+        }
       }
     }
   });
@@ -733,7 +899,6 @@ describe('hazards (reworked §13)', () => {
   it('close to its player it spins and pins them against their half’s outer wall', () => {
     for (const side of [1, 2] as const) {
       const gw = hazardWorld();
-      gw.ground.prizeButtons.find((b) => b.side === side)!.launches = 1;
       fireAtButton(gw, side);
       const p = side === 1 ? gw.p1 : gw.p2;
       const e = gw.executers[0];
@@ -757,7 +922,6 @@ describe('hazards (reworked §13)', () => {
 
   it('from below the shoulders it carries its player to the ceiling, then sets them down gently', () => {
     const gw = hazardWorld();
-    gw.ground.prizeButtons[0].launches = 1;
     fireAtButton(gw, 1);
     const e = gw.executers[0];
     run(gw, 20);
@@ -813,6 +977,7 @@ describe('hazards (reworked §13)', () => {
     fireAtButton(gw, 1);
     const button = gw.ground.prizeButtons[0];
     expect(gw.executers).toHaveLength(0);
+    expect(gw.executerLaunches).toBe(0);
     expect(button.armed).toBe(false);
     run(gw, 20);
     expect(button.armed).toBe(true);
