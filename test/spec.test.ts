@@ -4,10 +4,10 @@
  * targets to tune toward — so these assert ranges around them.
  */
 import { Vec2, World } from 'planck';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Ball } from '../src/sim/ball';
 import {
-  BALL, GRAVITY, ITERATIONS, JOINTS, NET_TOP_PX, PARTS, PLAYER_FRICTION, TIME_STEP, toM,
+  BALL, CHARGE, GRAVITY, ITERATIONS, JOINTS, NET_TOP_PX, PARTS, PLAYER_FRICTION, SWING, TIME_STEP, toM,
 } from '../src/sim/constants';
 import { installContactListener } from '../src/sim/contacts';
 import { Ground } from '../src/sim/ground';
@@ -304,6 +304,244 @@ describe('§17.4 serve + rally rules', () => {
   });
 });
 
+describe('fixed serve and charged outside-arm swing', () => {
+  it('serves on press at fixed power, with no serve charge or swing on release', () => {
+    const gw = world();
+    run(gw, 90);
+    gw.control.press(32);
+    gw.step();
+    expect(gw.ball.held).toBe(false);
+    expect(gw.control.chargeLevel(1)).toBeNull();
+    const swing = vi.spyOn(gw.p1, 'swingArm');
+    run(gw, CHARGE.maxFrames);
+    gw.control.release(32);
+    gw.step();
+    expect(swing).not.toHaveBeenCalled();
+  });
+
+  it('charges only a rally swing, then strikes with the arm farther from the opponent', () => {
+    for (const id of [1, 2] as const) {
+      const gw = hazardWorld({ hazards: false });
+      const p = id === 1 ? gw.p1 : gw.p2;
+      const key = id === 1 ? 32 : 82;
+      const far = p.part(id === 1 ? 'ArmLeft' : 'ArmRight');
+      const near = p.part(id === 1 ? 'ArmRight' : 'ArmLeft');
+      const forward = id === 1 ? 1 : -1;
+      gw.control.press(key);
+      run(gw, CHARGE.maxFrames);
+      expect(gw.control.chargeLevel(id)?.power).toBe(1);
+      const before = far.getLinearVelocity().x;
+      const nearBefore = near.getLinearVelocity().x;
+      gw.control.release(key);
+      gw.step();
+      expect((far.getLinearVelocity().x - before) * forward).toBeGreaterThan(3);
+      expect(Math.abs(near.getLinearVelocity().x - nearBefore)).toBeLessThan(2);
+      expect(gw.swingEffects[id].power).toBe(1);
+    }
+  });
+
+  it('a full swing is stronger than a tap, and the windup pulls the outside arm back', () => {
+    const tap = hazardWorld({ hazards: false });
+    const tapArm = tap.p1.part('ArmLeft');
+    const tapBefore = tapArm.getLinearVelocity().x;
+    tap.p1.swingArm(0);
+    const tapDelta = tapArm.getLinearVelocity().x - tapBefore;
+
+    const full = hazardWorld({ hazards: false });
+    const arm = full.p1.part('ArmLeft');
+    const before = arm.getLinearVelocity().x;
+    full.p1.windUpArm(1);
+    expect(arm.getLinearVelocity().x).toBeLessThan(before);
+    full.p1.swingArm(1);
+    const fullDelta = arm.getLinearVelocity().x - before;
+    expect(fullDelta).toBeGreaterThan(tapDelta * 2);
+  });
+
+  it('slows physics only while charging', () => {
+    const gw = hazardWorld({ hazards: false });
+    const step = vi.spyOn(gw.world, 'step');
+    gw.control.press(32);
+    gw.step();
+    gw.step();
+    expect(step.mock.lastCall?.[0]).toBeCloseTo(TIME_STEP * CHARGE.windupTimeScale);
+    run(gw, CHARGE.maxFrames);
+    expect(step.mock.lastCall?.[0]).toBeCloseTo(TIME_STEP);
+    gw.control.release(32);
+    gw.step();
+    expect(step.mock.lastCall?.[0]).toBeCloseTo(TIME_STEP);
+  });
+
+  it('allows consecutive fully charged hits without a cooldown', () => {
+    const gw = hazardWorld({ hazards: false });
+    const swing = vi.spyOn(gw.p1, 'swingArm');
+    gw.control.press(32);
+    run(gw, CHARGE.maxFrames);
+    gw.control.release(32);
+    gw.step();
+    gw.control.press(32);
+    run(gw, CHARGE.maxFrames);
+    expect(gw.control.chargeLevel(1)?.power).toBe(1);
+    gw.control.release(32);
+    gw.step();
+    expect(swing).toHaveBeenCalledTimes(2);
+    expect(swing).toHaveBeenLastCalledWith(1);
+  });
+
+  it('gently pulls a nearby free ball toward the striking hand while charging', () => {
+    const near = hazardWorld({ hazards: false });
+    const idle = hazardWorld({ hazards: false });
+    for (const gw of [near, idle]) {
+      const hand = gw.p1.strikingFinger.getWorldCenter();
+      gw.ball.body.setTransform(Vec2(hand.x, hand.y - toM(50)), 0);
+      gw.ball.body.setLinearVelocity(Vec2(0, 0));
+    }
+    near.control.press(32);
+    near.step();
+    idle.step();
+    expect(near.ball.velocity.y).toBeGreaterThan(idle.ball.velocity.y + 0.001);
+  });
+
+  it('knocks back a nearby opponent in proportion to swing charge', () => {
+    const strike = (id: 1 | 2, power: number) => {
+      const gw = hazardWorld({ hazards: false });
+      gw.control.press(39);
+      gw.control.press(65);
+      run(gw, 90);
+      gw.control.release(39);
+      gw.control.release(65);
+      const attacker = id === 1 ? gw.p1 : gw.p2;
+      const defender = id === 1 ? gw.p2 : gw.p1;
+      const sign = id === 1 ? 1 : -1;
+      expect(Math.abs(px(defender.head.getWorldCenter().x - attacker.head.getWorldCenter().x)))
+        .toBeLessThan(155);
+      const before = defender.head.getLinearVelocity().x;
+      const position = defender.head.getWorldCenter().x;
+      gw.swing(attacker, power);
+      run(gw, 3);
+      expect(gw.opponentHitEffects[defender.id].frame).toBe(gw.frame - 1);
+      const speed = (defender.head.getLinearVelocity().x - before) * sign;
+      run(gw, 4);
+      expect(gw.opponentHitEffects[defender.id].frame).toBe(gw.frame - 5);
+      const displacement = px(defender.head.getWorldCenter().x - position) * sign;
+      return { speed, displacement };
+    };
+
+    for (const id of [1, 2] as const) {
+      const tap = strike(id, 0);
+      const full = strike(id, 1);
+      expect(tap.speed).toBeGreaterThan(0);
+      expect(full.speed).toBeGreaterThan(tap.speed * 2);
+      expect(full.displacement).toBeGreaterThan(tap.displacement + 2);
+    }
+  });
+
+  it('does not hit an opponent across the court', () => {
+    const gw = hazardWorld({ hazards: false });
+    const before = gw.p2.head.getLinearVelocity().x;
+    gw.swing(gw.p1, 1);
+    expect(gw.p2.head.getLinearVelocity().x).toBe(before);
+    expect(gw.opponentHitEffects[2].frame).toBe(-100);
+  });
+});
+
+describe('perfect contact, net counter, and desperate save', () => {
+  it('boosts the ball only for a timely outside-hand contact', () => {
+    const timely = hazardWorld({ hazards: false });
+    const finger = timely.p1.strikingFinger.getWorldCenter();
+    timely.ball.body.setTransform(Vec2(finger.x, finger.y - toM(20)), 0);
+    timely.ball.body.setLinearVelocity(Vec2(0, 0));
+    timely.swing(timely.p1, 1);
+    timely.step();
+    expect(timely.perfectEffects[1].frame).toBe(timely.frame - 1);
+    expect(timely.ball.velocity.x).toBeGreaterThan(8);
+
+    const late = hazardWorld({ hazards: false });
+    late.ball.body.setTransform(Vec2(toM(150), toM(120)), 0);
+    late.ball.body.setLinearVelocity(Vec2(0, 0));
+    late.swing(late.p1, 1);
+    run(late, SWING.perfectFrames + 1);
+    late.flags.ballPlayerHits!.push({ playerId: 1, part: 'FingerLeft' });
+    late.step();
+    expect(late.perfectEffects[1].frame).toBe(-100);
+  });
+
+  it('counters two close swings by the net and sends the ball toward the weaker side', () => {
+    const gw = hazardWorld({ hazards: false });
+    gw.control.press(39);
+    gw.control.press(65);
+    run(gw, 90);
+    gw.control.release(39);
+    gw.control.release(65);
+    const y = (gw.p1.head.getWorldCenter().y + gw.p2.head.getWorldCenter().y) / 2 - toM(70);
+    gw.ball.body.setTransform(Vec2(toM(320), y), 0);
+    gw.ball.body.setLinearVelocity(Vec2(0, 0));
+    gw.swing(gw.p1, 1);
+    gw.swing(gw.p2, 0.5);
+    gw.step();
+    expect(gw.counterEffect.frame).toBe(gw.frame - 1);
+    expect(gw.ball.velocity.x).toBe(0);
+    run(gw, SWING.counterHoldFrames - 1);
+    expect(gw.ball.velocity.x).toBeGreaterThan(0);
+    expect(gw.opponentHitEffects[1].frame).toBe(-100);
+    expect(gw.opponentHitEffects[2].frame).toBe(-100);
+  });
+
+  it('lets the computer prepare and answer a visible charge by the net', () => {
+    const gw = hazardWorld({ singlePlayer: true, hazards: false });
+    gw.ai!.update = () => {};
+    gw.control.press(39);
+    for (let i = 0; i < 90; i++) {
+      gw.p2.turnComp(Vec2(-7, 0));
+      gw.step();
+    }
+    gw.control.release(39);
+    const y = (gw.p1.head.getWorldCenter().y + gw.p2.head.getWorldCenter().y) / 2 - toM(70);
+    gw.ball.body.setTransform(Vec2(toM(320), y), 0);
+    gw.ball.body.setLinearVelocity(Vec2(0, 0));
+    gw.flags.onBallDown = false;
+    gw.control.press(32);
+    run(gw, 6);
+    gw.control.release(32);
+    gw.step();
+    expect(gw.swingEffects[2].frame).toBe(gw.frame - 1);
+    gw.step();
+    expect(gw.counterEffect.frame).toBe(gw.frame - 1);
+  });
+
+  it('dives toward a falling ball, saves it once, and rearms next rally', () => {
+    for (const id of [1, 2] as const) {
+      const gw = hazardWorld({ hazards: false });
+      const player = id === 1 ? gw.p1 : gw.p2;
+      const key = id === 1 ? 67 : 70;
+      const direction = id === 1 ? 1 : -1;
+      const head = player.head.getWorldCenter();
+      gw.ball.body.setTransform(Vec2(head.x + direction * toM(50), head.y + toM(60)), 0);
+      gw.ball.body.setLinearVelocity(Vec2(0, 3));
+      gw.flags.onBallDown = false;
+      expect(gw.rescueState(player)).toBe('ready');
+      gw.control.press(key);
+      gw.step();
+      expect(gw.rescueAvailable[id]).toBe(false);
+      expect(gw.rescueEffects[id].success).toBe(true);
+      expect(player.contact).toBe(1);
+      const effectFrame = gw.rescueEffects[id].frame;
+      gw.control.press(key);
+      gw.step();
+      expect(gw.rescueEffects[id].frame).toBe(effectFrame);
+      gw.game.newRound();
+      expect(gw.rescueAvailable[id]).toBe(true);
+    }
+  });
+
+  it('does not spend a dive while the ball is held', () => {
+    const gw = world();
+    gw.control.press(67);
+    gw.step();
+    expect(gw.rescueAvailable[1]).toBe(true);
+    expect(gw.rescueFeedback[1].text).toBe('WAIT FOR RALLY');
+  });
+});
+
 describe('ball off the body (not in the original)', () => {
   it('bounces 30% less elastic off every body part except the head', () => {
     const restitutionOff = (part: 'Head' | 'Tors' | 'ArmRight') => {
@@ -366,6 +604,80 @@ describe('§17.5 AI + hazards', () => {
 });
 
 describe('hazards (reworked §13)', () => {
+  it('each button launches a punching head first, then the normal ball', () => {
+    const gw = hazardWorld();
+    for (const side of [1, 2] as const) {
+      const button = gw.ground.prizeButtons.find((b) => b.side === side)!;
+      fireAtButton(gw, side);
+      expect(gw.executers.at(-1)?.kind).toBe('head');
+      expect(button.launches).toBe(1);
+      gw.executers.at(-1)!.destroy();
+      gw.reap();
+      run(gw, 20);
+      expect(button.armed).toBe(true);
+      fireAtButton(gw, side);
+      expect(gw.executers.at(-1)?.kind).toBe('ball');
+      expect(button.launches).toBe(2);
+    }
+  });
+
+  it('the head closes to punching range and hits the target head', () => {
+    const gw = hazardWorld();
+    fireAtButton(gw, 1);
+    const e = gw.executers[0];
+    run(gw, 20);
+    const h = gw.p1.head.getWorldCenter();
+    e.body.setTransform(Vec2(h.x + toM(45), h.y), 0);
+    e.body.setLinearVelocity(Vec2(0, 0));
+    const hit = vi.spyOn(gw.p1.head, 'applyLinearImpulse');
+    run(gw, 60);
+    expect(e.punches).toBeGreaterThan(0);
+    expect(hit).toHaveBeenCalled();
+    expect(e.pinDir).toBeNull();
+  });
+
+  it('a head punch nudges the player away during ordinary play', () => {
+    for (const side of [1, 2] as const) {
+      const gw = hazardWorld();
+      fireAtButton(gw, side);
+      const e = gw.executers[0];
+      const p = side === 1 ? gw.p1 : gw.p2;
+      for (let i = 0; i < 30 * 20 && e.punches === 0; i++) {
+        gw.step();
+      }
+      expect(e.punches).toBeGreaterThan(0);
+      const direction = e.body.getWorldCenter().x < p.head.getWorldCenter().x ? 1 : -1;
+      const before = px(p.head.getWorldCenter().x);
+      gw.control.press(side === 1 ? 37 : 68);
+      run(gw, 8);
+      const recoilPx = (px(p.head.getWorldCenter().x) - before) * direction;
+      expect(recoilPx).toBeGreaterThan(8);
+      expect(recoilPx).toBeLessThan(40);
+    }
+  });
+
+  it('a swing that meets an executer with the striking hand throws it away', () => {
+    for (const side of [1, 2] as const) {
+      for (const kind of ['head', 'ball'] as const) {
+        const gw = hazardWorld();
+        if (kind === 'ball') gw.ground.prizeButtons.find((b) => b.side === side)!.launches = 1;
+        fireAtButton(gw, side);
+        const e = gw.executers[0];
+        const player = side === 1 ? gw.p1 : gw.p2;
+        run(gw, 20);
+        const finger = player.strikingFinger.getWorldCenter();
+        const sign = side === 1 ? 1 : -1;
+        e.body.setTransform(Vec2(finger.x + toM(sign * 21), finger.y), 0);
+        e.body.setLinearVelocity(Vec2(0, 0));
+        gw.swing(player, 1);
+        run(gw, 5);
+        expect(e.knockbackFrames).toBeGreaterThan(0);
+        const away = e.body.getWorldCenter().x - player.head.getWorldCenter().x;
+        expect(e.body.getLinearVelocity().x * away).toBeGreaterThan(0);
+      }
+    }
+  });
+
   it('a ball on a button launches an executer out of it at once, into that button’s half', () => {
     for (const side of [1, 2] as const) {
       const gw = hazardWorld();
@@ -421,6 +733,7 @@ describe('hazards (reworked §13)', () => {
   it('close to its player it spins and pins them against their half’s outer wall', () => {
     for (const side of [1, 2] as const) {
       const gw = hazardWorld();
+      gw.ground.prizeButtons.find((b) => b.side === side)!.launches = 1;
       fireAtButton(gw, side);
       const p = side === 1 ? gw.p1 : gw.p2;
       const e = gw.executers[0];
@@ -444,6 +757,7 @@ describe('hazards (reworked §13)', () => {
 
   it('from below the shoulders it carries its player to the ceiling, then sets them down gently', () => {
     const gw = hazardWorld();
+    gw.ground.prizeButtons[0].launches = 1;
     fireAtButton(gw, 1);
     const e = gw.executers[0];
     run(gw, 20);
@@ -536,7 +850,8 @@ describe('hazards (reworked §13)', () => {
 describe('§17 soak', () => {
   it('90 s of random input: points on both sides, never a non-finite position', () => {
     const r = rng(12345);
-    const gw = world({ hazards: true });
+    let points = 0;
+    const gw = world({ hazards: true, events: { onPoint: () => { points++; } } });
     const codes = [37, 39, 38, 40, 32, 65, 68, 87, 83, 82];
     for (let i = 0; i < 30 * 90; i++) {
       for (const c of codes) (r() < 0.12 ? gw.control.press(c) : gw.control.release(c));
@@ -548,8 +863,7 @@ describe('§17 soak', () => {
       }
       if (gw.game.phase === 'matchOver') gw.game.resetMatch();
     }
-    const total = gw.game.score;
-    expect(total[1] + total[2]).toBeGreaterThan(0);
+    expect(points).toBeGreaterThan(0);
   });
 
   it('scores on both sides across seeds', () => {

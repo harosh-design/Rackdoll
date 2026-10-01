@@ -1,5 +1,5 @@
 import {
-  ART, BALL, COURT, EXECUTER, FLOOR_TOP_PX, MAX_TOUCHES, OPTIONS, PARTS, PRIZE_ANIM, PRIZE_BUTTONS,
+  ART, BALL, CHARGE, COURT, EXECUTER, FLOOR_TOP_PX, MAX_TOUCHES, OPTIONS, PARTS, PRIZE_ANIM, PRIZE_BUTTONS,
   RIGHT_WALL_INNER_PX, VIEW, toPx, type PartName,
 } from '../sim/constants';
 import type { Executer } from '../sim/executer';
@@ -222,7 +222,11 @@ export class Renderer {
     this.drawPrizeButtons(ctx, gw, now);
     for (const p of [gw.p1, gw.p2]) this.drawDoll(ctx, p, interp, alpha);
     this.drawBall(ctx, gw, interp, alpha);
+    this.drawSwingEffects(ctx, gw, interp, alpha);
+    this.drawOpponentHitEffects(ctx, gw, interp, alpha);
+    this.drawSpecialEffects(ctx, gw, interp, alpha);
     for (const e of gw.executers) if (!e.dead) this.drawExecuter(ctx, e, interp, alpha);
+    this.drawChargeMeters(ctx, gw, interp, alpha);
 
     this.stageSpace(ctx);
     this.drawOffscreenBall(ctx, gw, interp, alpha);
@@ -267,6 +271,175 @@ export class Renderer {
   private drawDoll(ctx: CanvasRenderingContext2D, p: Player, interp: Interpolator, alpha: number): void {
     for (const name of DRAW_ORDER) {
       this.withPose(ctx, interp.pose(p.part(name), alpha), () => this.partArt(ctx, name, p.id));
+    }
+  }
+
+  /**
+   * A red bar and glow on the striking hand show the windup. A faint line
+   * shows when the nearby ball is in attraction range.
+   */
+  private drawChargeMeters(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: Interpolator, alpha: number): void {
+    for (const p of [gw.p1, gw.p2]) {
+      const info = gw.control.chargeLevel(p.id);
+      if (!info) continue;
+      const pose = interp.pose(p.head, alpha);
+      const finger = interp.pose(p.strikingFinger, alpha);
+      if (!gw.ball.held && info.power < 1) {
+        const ball = interp.pose(gw.ball.body, alpha);
+        const distance = Math.hypot(ball.x - finger.x, ball.y - finger.y);
+        if (distance < CHARGE.attractRadiusPx) {
+          ctx.beginPath();
+          ctx.moveTo(finger.x, finger.y);
+          ctx.lineTo(ball.x, ball.y);
+          ctx.strokeStyle = `rgba(255,77,46,${0.15 + 0.35 * info.power * (1 - distance / CHARGE.attractRadiusPx)})`;
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        }
+      }
+      ctx.beginPath();
+      ctx.arc(finger.x, finger.y, 9 + 9 * info.power, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(255,77,46,${0.35 + 0.5 * info.power})`;
+      ctx.lineWidth = 2 + 2 * info.power;
+      ctx.stroke();
+      const w = 32;
+      const h = 5;
+      const x = pose.x - w / 2;
+      const y = pose.y - 26;
+      ctx.fillStyle = 'rgba(15,25,35,0.55)';
+      roundRect(ctx, x, y, w, h, 2.5);
+      ctx.fill();
+      ctx.fillStyle = PAL.prizeLive;
+      roundRect(ctx, x, y, Math.max(w * clamp01(info.power), 2), h, 2.5);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+      ctx.lineWidth = 0.8;
+      roundRect(ctx, x, y, w, h, 2.5);
+      ctx.stroke();
+    }
+  }
+
+  /** A short slash around the striking hand makes the release readable. */
+  private drawSwingEffects(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: Interpolator, alpha: number): void {
+    const now = gw.frame - 1 + alpha;
+    for (const p of [gw.p1, gw.p2]) {
+      const effect = gw.swingEffects[p.id];
+      const age = now - effect.frame;
+      if (age < 0 || age >= 8) continue;
+      const finger = interp.pose(p.strikingFinger, alpha);
+      const fade = 1 - age / 8;
+      const radius = 16 + effect.power * 12 + age * 2;
+      const start = p.id === 1 ? -Math.PI * 0.7 : Math.PI * 0.3;
+      const end = start + Math.PI * 0.9;
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = `rgba(255,245,190,${0.85 * fade})`;
+      ctx.lineWidth = 3 + 3 * effect.power;
+      ctx.beginPath();
+      ctx.arc(finger.x, finger.y, radius, start, end);
+      ctx.stroke();
+      ctx.strokeStyle = `rgba(255,77,46,${0.7 * fade})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(finger.x, finger.y, radius + 8, start + 0.2, end - 0.2);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  /** A brief impact ring makes the opponent knockback clear. */
+  private drawOpponentHitEffects(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: Interpolator, alpha: number): void {
+    const now = gw.frame - 1 + alpha;
+    for (const p of [gw.p1, gw.p2]) {
+      const effect = gw.opponentHitEffects[p.id];
+      const age = now - effect.frame;
+      if (age < 0 || age >= 10) continue;
+      const pose = interp.pose(p.tors, alpha);
+      const fade = 1 - age / 10;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(pose.x, pose.y, 18 + effect.power * 8 + age * 2.5, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(255,245,190,${0.8 * fade})`;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  /** Callouts for the three timing-based moves. */
+  private drawSpecialEffects(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: Interpolator, alpha: number): void {
+    const now = gw.frame - 1 + alpha;
+    const ball = interp.pose(gw.ball.body, alpha);
+    for (const p of [gw.p1, gw.p2]) {
+      const pose = interp.pose(p.head, alpha);
+      if (gw.rescueState(p) === 'ready' && (!gw.singlePlayer || p.id === 1)) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(10,110,140,0.9)';
+        ctx.font = 'bold 17px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(`${p.id === 1 ? 'C' : 'F'} DIVE!`, pose.x, pose.y - 42);
+        ctx.restore();
+      }
+      const feedback = gw.rescueFeedback[p.id];
+      const feedbackAge = now - feedback.frame;
+      if (feedbackAge >= 0 && feedbackAge < 30) {
+        ctx.save();
+        ctx.fillStyle = `rgba(30,45,55,${1 - feedbackAge / 30})`;
+        ctx.font = 'bold 13px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(feedback.text, pose.x, pose.y - 62);
+        ctx.restore();
+      }
+      const perfect = gw.perfectEffects[p.id];
+      const perfectAge = now - perfect.frame;
+      if (perfectAge >= 0 && perfectAge < 12) {
+        const fade = 1 - perfectAge / 12;
+        ctx.save();
+        ctx.strokeStyle = `rgba(255,210,40,${fade})`;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(ball.x, ball.y, 22 + perfectAge * 2, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = `rgba(120,55,0,${fade})`;
+        ctx.font = 'bold 16px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('PERFECT!', ball.x, ball.y - 30 - perfectAge);
+        ctx.restore();
+      }
+
+      const rescue = gw.rescueEffects[p.id];
+      const rescueAge = now - rescue.frame;
+      if (rescueAge >= 0 && rescueAge < 12) {
+        const fade = 1 - rescueAge / 12;
+        ctx.save();
+        ctx.strokeStyle = `rgba(70,210,245,${fade})`;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(pose.x, pose.y, 20 + rescueAge * 2, Math.PI * 0.2, Math.PI * 1.3);
+        ctx.stroke();
+        if (rescue.success) {
+          ctx.fillStyle = `rgba(10,95,125,${fade})`;
+          ctx.font = 'bold 16px system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText('SAVE!', pose.x, pose.y - 32 - rescueAge);
+        }
+        ctx.restore();
+      }
+    }
+
+    const age = now - gw.counterEffect.frame;
+    if (age >= 0 && age < 14) {
+      const fade = 1 - age / 14;
+      ctx.save();
+      ctx.strokeStyle = `rgba(255,245,190,${fade})`;
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, 24 + age * 3, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = `rgba(30,35,55,${fade})`;
+      ctx.font = 'bold 18px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('CLASH!', ball.x, ball.y - 38 - age);
+      ctx.restore();
     }
   }
 
@@ -520,6 +693,11 @@ export class Renderer {
       const k = 0.45 + 0.55 * easeOutCubic(p);
       ctx.scale(k, k);
     }
+    if (e.kind === 'head') {
+      this.drawHeadExecuter(ctx, e);
+      ctx.restore();
+      return;
+    }
     ctx.fillStyle = PAL.executerSpike;
     ctx.beginPath();
     const spikes = 10;
@@ -540,6 +718,63 @@ export class Renderer {
     ctx.arc(0, 0, r, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
+  }
+
+  private drawHeadExecuter(ctx: CanvasRenderingContext2D, e: Executer): void {
+    const r = EXECUTER.radiusPx;
+    const facing = e.target.head.getWorldCenter().x >= e.body.getWorldCenter().x ? 1 : -1;
+    ctx.scale(facing, 1);
+    const frame = e.punchFrame;
+    const reach = frame < 0 ? 0 : frame <= EXECUTER.headImpactFrame
+      ? frame / EXECUTER.headImpactFrame
+      : Math.max(0, 1 - (frame - EXECUTER.headImpactFrame) / 8);
+    const active = (e.punches + (frame >= EXECUTER.headImpactFrame ? 1 : 0)) % 2;
+
+    // One longer arm jabs while the other guards.
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    for (let i = 0; i < 2; i++) {
+      const y = i === 0 ? -9 : 9;
+      const extension = i === active ? reach * EXECUTER.headArmExtensionPx : 0;
+      ctx.strokeStyle = '#934b48';
+      ctx.lineWidth = 7;
+      ctx.beginPath();
+      ctx.moveTo(10, y);
+      ctx.lineTo(21, y + (i === 0 ? -3 : 3));
+      ctx.lineTo(EXECUTER.headArmRestPx - 1 + extension, y - (i === 0 ? -2 : 2));
+      ctx.stroke();
+      ctx.fillStyle = '#eab18f';
+      ctx.beginPath();
+      ctx.arc(EXECUTER.headArmRestPx + extension, y - (i === 0 ? -2 : 2), 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    const skin = ctx.createRadialGradient(-6, -7, 1, 0, 0, r);
+    skin.addColorStop(0, '#f4c39e');
+    skin.addColorStop(1, '#bf7265');
+    ctx.fillStyle = skin;
+    ctx.strokeStyle = '#663c40';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    // A sharp brow, narrowed eyes and clenched teeth read even at game scale.
+    ctx.strokeStyle = '#392b32';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(1, -8); ctx.lineTo(9, -5);
+    ctx.moveTo(1, 0); ctx.lineTo(9, -2);
+    ctx.stroke();
+    ctx.fillStyle = '#392b32';
+    ctx.beginPath();
+    ctx.arc(9, -2, 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fff0d9';
+    ctx.fillRect(5, 7, 8, 4);
+    ctx.strokeStyle = '#6b3537';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(5, 7, 8, 4);
   }
 
   /**
@@ -673,6 +908,17 @@ export class Renderer {
         ctx.fillStyle = on ? (warn ? '#e63b2e' : 'rgba(15,25,35,0.75)') : 'rgba(15,25,35,0.16)';
         ctx.fill();
       }
+      if (!hud.singlePlayer || id === 1) {
+        const state = gw.rescueState(p);
+        const hint = {
+          ready: 'DIVE NOW', used: 'DIVE USED', held: 'WAIT FOR RALLY',
+          otherSide: 'OPPONENT SIDE', rising: 'WAIT FOR FALL',
+          far: 'GET CLOSER', high: 'BALL TOO HIGH',
+        }[state];
+        ctx.fillStyle = state === 'ready' ? 'rgba(10,110,140,0.95)' : 'rgba(15,25,35,0.45)';
+        ctx.font = '700 8px system-ui, sans-serif';
+        ctx.fillText(`${id === 1 ? 'C' : 'F'}: ${hint}`, x, 86);
+      }
     };
     side(1);
     side(2);
@@ -695,7 +941,7 @@ export class Renderer {
       const who = hud.singlePlayer ? (holder === 1 ? 'YOUR SERVE' : 'CPU SERVE') : `P${holder} SERVE`;
       ctx.fillText(who, midX, 44);
       if (hud.showControlsHint && holder === 1) {
-        ctx.fillText('JUMP, THEN SERVE IN THE AIR', midX, 55);
+        ctx.fillText('JUMP, THEN TAP TO SERVE', midX, 55);
       }
     }
 

@@ -228,12 +228,101 @@ export const SERVE = {
   /** Ball joint limits, set but NOT enabled. Degrees. */
   ballJointLower: -40,
   ballJointUpper: 40,
-  /** The flick that does the real work: (sign * 1, -1.5) on the hand. */
+  /** Fixed underhand flick for every serve. */
   handImpulseX: 1,
   handImpulseY: -1.5,
   /** The ball's own impulse is tiny: dv = (sign * 7, -5) m/s on a 0.1 kg ball. */
   ballImpulseX: 0.7,
   ballImpulseY: -0.5,
+} as const;
+
+/**
+ * The button serves immediately while the ball is held. During a rally, a
+ * held button winds up an arm swing; release fires it.
+ */
+export const CHARGE = {
+  /** Frames of hold to reach full power. 24 @ 30 fps ≈ 0.8 s. */
+  maxFrames: 24,
+  /** Power fraction delivered by a bare tap; scales up to 1 at full charge. */
+  minPower: 0.35,
+  /** Physics runs at 60% speed while a swing is charging. */
+  windupTimeScale: 0.6,
+  /** Free balls inside this radius drift toward the striking hand during charge. */
+  attractRadiusPx: 110,
+  /** Maximum per-frame ball impulse at full charge, faded by distance. */
+  attractImpulse: 0.014,
+} as const;
+
+export const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+/** Maps a 0..1 charge fraction to the 0..1 impulse scale actually applied. */
+export const powerScale = (power: number): number =>
+  CHARGE.minPower + (1 - CHARGE.minPower) * clamp01(power);
+
+/**
+ * The rally arm swing uses the side farther from the opponent, flinging its
+ * Arm/Hand/Finger together so the whole limb whips forward. At full charge
+ * this is a hard smash — enough to knock back an opponent or an executer it
+ * connects with; at minimum charge (a tap) it's a light dab.
+ */
+export const SWING = {
+  fingerImpulseX: 3.4,
+  fingerImpulseY: -2.1,
+  handImpulseX: 5.8,
+  handImpulseY: -3.6,
+  armImpulseX: 5.8,
+  armImpulseY: -3.6,
+  /** Short frontal hit zone, measured from the attacker's head. */
+  opponentReachPx: 155,
+  opponentHeightPx: 95,
+  opponentHitFrames: 8,
+  /** Split the knockback between the head rail and hips to protect joints. */
+  opponentImpulseX: 5,
+  opponentImpulseY: -0.7,
+  /** Release within two frames of a hand-ball contact for a perfect hit. */
+  perfectFrames: 2,
+  perfectBallImpulseX: 0.85,
+  perfectBallImpulseY: -0.65,
+  /** A hand contact during a swing throws an executer away from the player. */
+  executerKnockSpeed: 7,
+  executerKnockFrames: 14,
+  /** Counter window when both players swing beside the net. */
+  counterWindowFrames: 2,
+  counterNetRangePx: 100,
+  counterBallRangePx: 85,
+  counterBallHeightPx: 100,
+  counterHoldFrames: 3,
+  counterBallSpeedX: 12,
+  counterBallSpeedY: -9,
+} as const;
+
+/** One desperate dive toward a falling ball per rally. */
+export const RESCUE = {
+  reachPx: 220,
+  maxAboveHeadPx: 100,
+  headImpulseX: 3.6,
+  headImpulseY: 1.2,
+  hipsImpulseX: 2.4,
+  hipsImpulseY: 0.8,
+  torsoAngularImpulse: 0.4,
+  activeFrames: 10,
+} as const;
+
+/**
+ * Not in the original. While charging a SWING (never a serve), a small tug
+ * away from the opponent and upward, reapplied every held frame and scaled
+ * by the charge fraction — so the arm visibly winds up (cocks back) instead
+ * of sitting still while the power builds. Tiny relative to SWING: over a
+ * full charge it settles the limb back against its joint limits rather than
+ * flinging it.
+ */
+export const WINDUP = {
+  fingerImpulseX: 0.18,
+  fingerImpulseY: 0.1,
+  handImpulseX: 0.14,
+  handImpulseY: 0.08,
+  armImpulseX: 0.1,
+  armImpulseY: 0.06,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -370,6 +459,18 @@ export const EXECUTER = {
   /** Spin while pinning, rad/s, and the torque cap spinning it up, N·m. */
   spinRate: 14,
   spinTorque: 4,
+  /** Head variant: hover beside the target and land a short punch each cycle. */
+  headStandOffPx: 50,
+  headChaseSpeed: 3.8,
+  headPunchReachPx: 62,
+  headImpactReachPx: 55,
+  headPunchFrames: 24,
+  headImpactFrame: 8,
+  /** Each punch nudges both the rail-mounted head and the hips. */
+  headPunchImpulse: 1.0,
+  headPunchRecoilFrames: 10,
+  headArmRestPx: 31,
+  headArmExtensionPx: 12,
 } as const;
 
 /**

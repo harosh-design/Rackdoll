@@ -3,10 +3,10 @@ import {
   type Body, type RevoluteJoint as RevoluteJointT, type Vec2Value, type World,
 } from 'planck';
 import {
-  ACTIONS, BODYTYPE, DEG, JOINTS, PARTS, PLAYER_FRICTION,
+  ACTIONS, BODYTYPE, clamp01, DEG, JOINTS, PARTS, PLAYER_FRICTION, powerScale,
   PRISM_DENSITY, PRISM_FRICTION, PRISM_HALF_PX, PRISM_RESTITUTION, PRISM_Y_PX,
   RAIL_H_LIMITS, RAIL_V_LIMITS, SERVE, SPAWN_P1_PX, SPAWN_P2_PX, STAND_POSE,
-  toM, type PartName,
+  RESCUE, SWING, toM, type PartName, WINDUP,
 } from './constants';
 import type { BodyUserData } from './types';
 
@@ -36,6 +36,8 @@ export class Player {
   contact = 0;
   /** Debounce flag, cleared by a 200 ms timer (§11). */
   bContact = false;
+  /** A short lateral stumble after an executer-head punch. */
+  recoilFrames = 0;
 
   private readonly world: World;
   private ballJoint: RevoluteJointT | null = null;
@@ -183,6 +185,10 @@ export class Player {
   get servingFinger(): Body {
     return this.id === 1 ? this.part('FingerRight') : this.part('FingerLeft');
   }
+  /** The outside hand winds up and swings across the body. */
+  get strikingFinger(): Body {
+    return this.id === 1 ? this.part('FingerLeft') : this.part('FingerRight');
+  }
 
   // -------------------------------------------------------------------------
   // §8 Player actions. Exact, in the original's order.
@@ -215,6 +221,7 @@ export class Player {
    * what gives the game its twitchy feel (§1.6).
    */
   turn(impulse: Vec2Value): void {
+    if (this.recoilFrames > 0) return;
     const ass = this.ass;
     const head = this.head;
     ass.setLinearVelocity(Vec2(0, 0));
@@ -227,6 +234,7 @@ export class Player {
 
   /** The AI's softer variant. Note the inverted grounded/airborne branches. */
   turnComp(impulse: Vec2Value): void {
+    if (this.recoilFrames > 0) return;
     const ass = this.ass;
     const head = this.head;
     ass.setLinearVelocity(Vec2(0, 0));
@@ -269,8 +277,20 @@ export class Player {
     this.prismBody.setLinearVelocity(Vec2(0, 0));
   }
 
+  /** Apply a small whole-doll recoil without locking out jump or swing. */
+  receiveHeadPunch(impulse: Vec2Value, frames: number): void {
+    this.head.applyLinearImpulse(impulse, this.head.getWorldCenter(), true);
+    this.ass.applyLinearImpulse(impulse, this.ass.getWorldCenter(), true);
+    this.recoilFrames = Math.max(this.recoilFrames, frames);
+  }
+
+  tickRecoil(): void {
+    if (this.recoilFrames > 0) this.recoilFrames -= 1;
+  }
+
   /** §8 standPlayer(x, y) — the round reset. */
   standPlayer(xPx: number, yPx: number): void {
+    this.recoilFrames = 0;
     this.setLinVelZero();
     for (const p of STAND_POSE) {
       this.part(p.name).setTransform(Vec2(toM(xPx + p.dx), toM(yPx + p.dy)), 0);
@@ -317,6 +337,7 @@ export class Player {
   /**
    * §8 pas() — the serve. Most of it is the hand being flung and hitting the
    * ball; the ball's own impulse is tiny (dv = 7, -5 m/s).
+   * Every serve gets the same impulse, regardless of button hold time.
    * Returns true if the serve actually happened.
    */
   pas(ballBody: Body, ballOfPlayer: number, serveCentreM: number): boolean {
@@ -343,6 +364,83 @@ export class Player {
       true,
     );
     return true;
+  }
+
+  /**
+   * The rally hit uses the arm farther from the opponent. Arm/Hand/Finger
+   * are all flung together so the
+   * whole limb whips forward instead of just the fingertip. `power` is the
+   * 0..1 charge fraction the button was held for, scaled via powerScale() —
+   * a fully charged swing hits hard enough to knock back anything it connects
+   * with (the opponent, an executer).
+   */
+  swingArm(power = 1): void {
+    const sign = this.id === 1 ? 1 : -1;
+    const scale = powerScale(power);
+    const finger = this.strikingFinger;
+    const hand = this.id === 1 ? this.part('HandLeft') : this.part('HandRight');
+    const arm = this.id === 1 ? this.part('ArmLeft') : this.part('ArmRight');
+
+    finger.applyLinearImpulse(
+      Vec2(sign * SWING.fingerImpulseX * scale, SWING.fingerImpulseY * scale),
+      finger.getWorldCenter(),
+      true,
+    );
+    hand.applyLinearImpulse(
+      Vec2(sign * SWING.handImpulseX * scale, SWING.handImpulseY * scale),
+      hand.getWorldCenter(),
+      true,
+    );
+    arm.applyLinearImpulse(
+      Vec2(sign * SWING.armImpulseX * scale, SWING.armImpulseY * scale),
+      arm.getWorldCenter(),
+      true,
+    );
+  }
+
+  /**
+   * Not in the original, and never called for a serve charge — only while
+   * charging a swing. A small tug away from the opponent and upward, meant to
+   * be called every held frame with the current 0..1 charge fraction: the arm
+   * visibly winds up (cocks back) as the power builds, settling against its
+   * joint limits rather than flying anywhere.
+   */
+  windUpArm(power: number): void {
+    const sign = this.id === 1 ? 1 : -1; // the swing's forward direction
+    const k = clamp01(power);
+    const finger = this.strikingFinger;
+    const hand = this.id === 1 ? this.part('HandLeft') : this.part('HandRight');
+    const arm = this.id === 1 ? this.part('ArmLeft') : this.part('ArmRight');
+
+    finger.applyLinearImpulse(
+      Vec2(-sign * WINDUP.fingerImpulseX * k, -WINDUP.fingerImpulseY * k),
+      finger.getWorldCenter(),
+      true,
+    );
+    hand.applyLinearImpulse(
+      Vec2(-sign * WINDUP.handImpulseX * k, -WINDUP.handImpulseY * k),
+      hand.getWorldCenter(),
+      true,
+    );
+    arm.applyLinearImpulse(
+      Vec2(-sign * WINDUP.armImpulseX * k, -WINDUP.armImpulseY * k),
+      arm.getWorldCenter(),
+      true,
+    );
+  }
+
+  /** A low, off-balance lunge toward the falling ball. */
+  diveToward(ball: Body): void {
+    const head = this.head;
+    const hips = this.ass;
+    const sign = Math.sign(ball.getWorldCenter().x - head.getWorldCenter().x) || (this.id === 1 ? 1 : -1);
+    head.applyLinearImpulse(
+      Vec2(sign * RESCUE.headImpulseX, RESCUE.headImpulseY), head.getWorldCenter(), true,
+    );
+    hips.applyLinearImpulse(
+      Vec2(sign * RESCUE.hipsImpulseX, RESCUE.hipsImpulseY), hips.getWorldCenter(), true,
+    );
+    this.tors.applyAngularImpulse(sign * RESCUE.torsoAngularImpulse, true);
   }
 }
 

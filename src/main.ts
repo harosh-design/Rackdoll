@@ -203,6 +203,10 @@ function simFrame(): void {
   const wasDown = gw.flags.onBallDown;
   const executers = gw.executers.length;
   const buttons = gw.ground.prizeButtons.map((b) => [b.pressedAt, b.releasedAt]);
+  const opponentHits = { 1: gw.opponentHitEffects[1].frame, 2: gw.opponentHitEffects[2].frame };
+  const perfects = { 1: gw.perfectEffects[1].frame, 2: gw.perfectEffects[2].frame };
+  const rescues = { 1: gw.rescueEffects[1].frame, 2: gw.rescueEffects[2].frame };
+  const counter = gw.counterEffect.frame;
   pendingHit = null;
 
   gw.step();
@@ -221,6 +225,14 @@ function simFrame(): void {
   }
   if (!wasDown && gw.flags.onBallDown) sfx.thud();
   if (gw.executers.length > executers) sfx.executer();
+  for (const id of [1, 2] as const) {
+    const effect = gw.opponentHitEffects[id];
+    if (effect.frame !== opponentHits[id]) sfx.bump(0.4 + 1.1 * effect.power);
+    if (gw.perfectEffects[id].frame !== perfects[id]) sfx.perfect();
+    const rescue = gw.rescueEffects[id];
+    if (rescue.frame !== rescues[id]) sfx.rescue(rescue.success);
+  }
+  if (gw.counterEffect.frame !== counter) sfx.counter();
   const hit = pendingHit as { kind: HitKind; strength: number } | null;
   if (hit) (hit.kind === 'doll' ? sfx.bump(hit.strength) : sfx.clack(hit.strength));
 }

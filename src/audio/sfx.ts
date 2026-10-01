@@ -76,6 +76,20 @@ export class Sfx {
     this.tone(300, 0.12, 'triangle', 0.4, 620);
   }
 
+  perfect(): void {
+    this.tone(720, 0.13, 'sine', 0.4, 1120);
+    this.tone(1440, 0.08, 'triangle', 0.16);
+  }
+
+  counter(): void {
+    this.noise(0.09, 0.45, 1600);
+    this.tone(180, 0.2, 'square', 0.35, 520);
+  }
+
+  rescue(success: boolean): void {
+    this.tone(success ? 540 : 240, 0.12, 'triangle', 0.32, success ? 900 : 160);
+  }
+
   point(): void {
     this.tone(660, 0.12, 'sine', 0.3);
     setTimeout(() => this.tone(880, 0.18, 'sine', 0.3), 110);

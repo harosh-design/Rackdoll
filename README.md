@@ -64,11 +64,20 @@ original.
 
 ## How to play it
 
-**Serve in the air.** The held ball hangs at your feet, and the serve is an
-underhand flick of the hand through it (§8). A standing serve just scoops the
-ball into your own shins. Jump, then serve on the way up: from about four
-frames into the jump the ball clears the net easily. The original's own AI does
-exactly this, jumping first and serving 700 ms later (§12).
+**Serve in the air.** The held ball hangs at your feet. Tap Space (or R for
+player 2) to serve with a fixed underhand flick. Jump first to clear the net.
+Once the ball is free, hold the same key to wind up the outside arm and release
+to hit. The windup briefly slows the physics and gently draws a nearby free
+ball toward the striking hand. A full charge delivers a stronger hit, and you
+can charge the next one immediately. A swing that reaches a nearby opponent
+also knocks them back, with force set by the charge.
+
+Releasing a swing within two frames of contact between the outside hand and
+ball adds a perfect-hit boost. Nearly simultaneous swings by the net trap the
+ball briefly before the stronger side sends it across. Press C (player 1) or F
+(player 2) when the on-screen DIVE prompt appears: the free ball must be
+falling nearby on that player's half. The doll lunges toward it; a head or hand
+within reach pops the ball back up. Each player gets one dive per rally.
 
 Holding jump bunny-hops. That is deliberate: Flash re-fired key-down on OS key
 repeat, which re-armed the consumed jump flag.
@@ -126,12 +135,18 @@ changes that on purpose:
   that side, so aim for your opponent's button. An executer-only barrier above
   the net (collision-filtered, so nothing else ever meets it) keeps it on its
   half.
+- **Two types.** The first hazard launched by each button is a hovering head
+  with reaching arms. It quickly closes to the player's head and throws
+  alternating punches that briefly knock the player back. Every later hit on
+  that button launches the original spiked executer ball. A player's swinging
+  hand can knock either type away, briefly interrupting its pursuit. Starting
+  a new match creates fresh buttons.
 - **The button** sinks into the wall with a flash and a shockwave. It stays
   pressed and glowing red while any of its executers lives, with a column that
   drains with the longest-lived one, and springs back out when the last dies.
   Every hit replays the press. With hazards off, a button still clicks and
   pops back, but launches nothing.
-- **Pinning.** Within 45 px of its player an executer stops hunting, spins up
+- **Pinning.** Within 45 px of its player a ball executer stops hunting, spins up
   to 14 rad/s, and tries to pin them:
   - *Against their half's outer wall* (the usual case). It gets round to the
     far side of the player — over the top if needed — and pushes their torso
@@ -169,9 +184,9 @@ changes that on purpose:
   on its own (e.g. pacing: 21.6 px max against 30.4 alone). Penetration stays
   under 3.5 px. The test suite pins this, alongside a negative control proving
   the 400 kg original still tears.
-- **Unchanged from §13:** its size, the aim point (target's torso x, head y),
-  the 1.3 m/s hunting speed with ×2 bursts, and the 25 s life. At that speed
-  it takes ~8–9 s to drift from a wall button to a player.
+- **Ball behaviour retained from §13:** its size, the aim point (target's torso
+  x, head y), the 1.3 m/s hunting speed with ×2 bursts, and the 25 s life. At
+  that speed it takes ~8–9 s to drift from a wall button to a player.
 
 ## The ball off a body
 

@@ -1,5 +1,5 @@
 import { Vec2 } from 'planck';
-import { toM, toPx } from '../src/sim/constants';
+import { CHARGE, toM, toPx } from '../src/sim/constants';
 import type { ExecuterTuning } from '../src/sim/executer';
 import type { Player } from '../src/sim/player';
 import { GameWorld, type GameWorldOptions } from '../src/sim/world';
@@ -28,14 +28,19 @@ export function untilPoint(gw: GameWorld, cap = 30 * 30): number {
   return f;
 }
 
-/** The real serving technique — the original's AI does exactly this. */
+/**
+ * Jump, then tap once airborne. Keep the prior flight time so the rally
+ * physics checks see the ball released from the same part of the jump.
+ */
 export function jumpServe(gw: GameWorld, jumpKey = 38, serveKey = 32, delay = 4): void {
   gw.control.press(jumpKey);
   run(gw, delay);
   gw.control.release(jumpKey);
+  run(gw, CHARGE.maxFrames);
   gw.control.press(serveKey);
   gw.step();
   gw.control.release(serveKey);
+  gw.step();
 }
 
 /** Seeded LCG so soak tests are reproducible. */
@@ -131,6 +136,7 @@ export function ramScenario(
   longestTear: number;
 } {
   const gw = hazardWorld({ hazards: withExecuter, executerTuning: tuning, contactIterations });
+  if (withExecuter) gw.ground.prizeButtons[0].launches = 1; // exercise the original ball variant
   fireAtButton(gw, 1);
   let maxJointPx = 0;
   let maxPenetrationPx = 0;

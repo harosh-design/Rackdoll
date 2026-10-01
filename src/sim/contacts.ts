@@ -1,8 +1,9 @@
 import { Vec2, type Body, type Contact, type World } from 'planck';
 import {
   BALL, BALL_BODY_RESTITUTION, BALL_VX_SCALE_PRIZE, BALL_VX_SCALE_WALL, BODYTYPE, EXECUTER_DOLL_FRICTION,
+  type PartName,
 } from './constants';
-import { bodyTypeOf } from './types';
+import { bodyTypeOf, ud } from './types';
 
 /**
  * §10 MyContactListener::Result — a post-solve callback.
@@ -22,6 +23,8 @@ export interface ContactFlags {
    * after the step.
    */
   prizeHits: Body[];
+  /** Player parts that met the ball during the physics step. */
+  ballPlayerHits?: Array<{ playerId: 1 | 2; part: PartName }>;
 }
 
 export function installContactListener(world: World, flags: ContactFlags): void {
@@ -40,6 +43,13 @@ export function installContactListener(world: World, flags: ContactFlags): void 
     const v = ballBody.getLinearVelocity();
 
     switch (type) {
+      case BODYTYPE.PLAYER: {
+        const data = ud(other.getBody());
+        if (data.playerId && data.part) {
+          flags.ballPlayerHits?.push({ playerId: data.playerId, part: data.part });
+        }
+        break;
+      }
       case BODYTYPE.PRIZE:
         ballBody.setLinearVelocity(Vec2(v.x * BALL_VX_SCALE_PRIZE, v.y));
         flags.bYesPrize = true;

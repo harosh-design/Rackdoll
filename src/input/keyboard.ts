@@ -15,6 +15,8 @@ const CODE_TO_KEYCODE: Record<string, number> = {
   KeyW: 87,
   KeyS: 83,
   KeyR: 82,
+  KeyC: 67,
+  KeyF: 70,
 };
 
 export type KeySink = Pick<Control, 'press' | 'release' | 'clear'>;

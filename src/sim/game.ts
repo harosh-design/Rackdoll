@@ -172,6 +172,21 @@ export class Game {
     t.start();
   }
 
+  /** Count a last-second dive as one touch, even if its extended reach misses a fixture. */
+  registerRescueTouch(player: Player): boolean {
+    if (this.phase !== 'play' || this.ball.ballOfPlayer !== 0 || this.ball.held) return false;
+    const other = player.id === 1 ? this.p2 : this.p1;
+    player.contact += 1;
+    other.contact = 0;
+    player.bContact = true;
+    this.contactTimers[player.id].restart();
+    const sign = player.id === 1 ? 1 : -1;
+    this.ball.body.applyLinearImpulse(
+      Vec2(sign * 0.2, TOUCH_IMPULSE.y), this.ball.body.getWorldCenter(), true,
+    );
+    return true;
+  }
+
   /** §11 serve clock: ticks once a second, shows 6 - count. */
   private onServeTick(t: FrameTimer): void {
     this.serveSecondsLeft = TIMERS.delayRepeat - t.currentCount;
@@ -231,6 +246,7 @@ export class Game {
 
     this.flags.onBallDown = false;
     this.flags.bYesPrize = false;
+    if (this.flags.ballPlayerHits) this.flags.ballPlayerHits.length = 0;
 
     // The winner of the last point takes the ball. takeBall() refuses a ball
     // that already has a joint, so drop any grip first. Normal play never

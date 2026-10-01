@@ -1,5 +1,5 @@
 import { Circle, Vec2, type Body, type Fixture, type Vec2Value, type World } from 'planck';
-import { BODYTYPE, COLLISION, EXECUTER, GRAVITY, OPTIONS, SPAWN_P1_PX, TIMERS, toM, toPx } from './constants';
+import { BODYTYPE, COLLISION, EXECUTER, GRAVITY, OPTIONS, SPAWN_P1_PX, SWING, TIMERS, toM, toPx } from './constants';
 import { FrameTimer, type TimerSet } from './timer';
 import type { Player, PlayerId } from './player';
 import type { BodyUserData } from './types';
@@ -18,6 +18,7 @@ export interface ExecuterOptions {
   /** The player it hunts: the one on the side it was launched into. */
   target: Player;
   side: PlayerId;
+  kind?: 'ball' | 'head';
   /** Where it comes out, in metres. */
   origin: Vec2Value;
   speed?: number;
@@ -44,6 +45,7 @@ export class Executer {
   readonly body: Body;
   readonly target: Player;
   readonly side: PlayerId;
+  readonly kind: 'ball' | 'head';
   dead = false;
   /** Frames since launch. */
   age = 0;
@@ -53,6 +55,11 @@ export class Executer {
   pinDir: Vec2 | null = null;
   /** Ceiling pin: carrying its player up (or back down). */
   carrying = false;
+  /** Head variant: -1 outside punching range, otherwise its swing frame. */
+  punchFrame = -1;
+  punches = 0;
+  /** Steering pauses briefly after a player's hit so the knockback carries. */
+  knockbackFrames = 0;
 
   private readonly fixture: Fixture;
   private readonly timer: FrameTimer;
@@ -68,6 +75,7 @@ export class Executer {
     this.timers = o.timers;
     this.target = o.target;
     this.side = o.side;
+    this.kind = o.kind ?? 'ball';
     this.speed = o.speed ?? OPTIONS.myExSpeed;
     this.lifeSeconds = o.lifeSeconds ?? OPTIONS.myExLife;
     this.onDeath = o.onDeath;
@@ -87,6 +95,7 @@ export class Executer {
       linearDamping: 0,
       gravityScale: 0,
       bullet: this.tuning.bullet,
+      fixedRotation: this.kind === 'head',
     });
     this.fixture = this.body.createFixture({
       shape: Circle(toM(EXECUTER.radiusPx)),
@@ -98,7 +107,7 @@ export class Executer {
       filterMaskBits: 0xffff,
     });
     this.body.setMassData({ mass: this.tuning.mass, center: Vec2(0, 0), I: EXECUTER.inertia });
-    this.body.setUserData({ e_bodytype: BODYTYPE.EXECUTER, sprite: 'Executer' } as BodyUserData);
+    this.body.setUserData({ e_bodytype: BODYTYPE.EXECUTER, sprite: this.kind === 'head' ? 'ExecuterHead' : 'Executer' } as BodyUserData);
 
     // Fire it straight at its target.
     const d = this.toTarget();
@@ -169,6 +178,16 @@ export class Executer {
       this.solid = true;
     }
 
+    if (this.knockbackFrames > 0) {
+      this.knockbackFrames -= 1;
+      return;
+    }
+
+    if (this.kind === 'head') {
+      this.updateHead(dt);
+      return;
+    }
+
     const near = this.nearestPartPx();
     if (!this.pinDir && near < EXECUTER.radiusPx + EXECUTER.engagePx) this.pinDir = this.choosePin();
     else if (this.pinDir && near > EXECUTER.radiusPx + EXECUTER.releasePx) {
@@ -180,6 +199,47 @@ export class Executer {
     this.drive(vd, dt);
     if (this.pinDir) this.spin(this.pinDir, dt);
     if (this.pinDir && this.pinDir.y < 0) this.lift(dt);
+  }
+
+  /** Keep a fist's length from the player's head and throw alternating blows. */
+  private updateHead(dt: number): void {
+    const c = this.body.getWorldCenter();
+    const h = this.target.head.getWorldCenter();
+    const dx = h.x - c.x;
+    const dy = h.y - c.y;
+    const distance = toPx(Math.hypot(dx, dy));
+    const facing = dx >= 0 ? 1 : -1;
+    const standX = h.x - facing * toM(EXECUTER.headStandOffPx);
+    const standY = h.y;
+    const mx = standX - c.x;
+    const my = standY - c.y;
+    const m = Math.hypot(mx, my);
+    const speed = Math.max(this.speed * 1.5, EXECUTER.headChaseSpeed);
+    this.drive(m < toM(3) ? Vec2(0, 0) : Vec2(mx / m * Math.min(speed, m * 5), my / m * Math.min(speed, m * 5)), dt);
+
+    if (distance > EXECUTER.headPunchReachPx) {
+      this.punchFrame = -1;
+      return;
+    }
+    this.punchFrame = (this.punchFrame + 1) % EXECUTER.headPunchFrames;
+    if (this.punchFrame !== EXECUTER.headImpactFrame || distance > EXECUTER.headImpactReachPx) return;
+
+    // The head rides a rail, so pushing it alone barely moves the doll. Share
+    // the blow with the hips to give the whole player a small sideways recoil.
+    const impulse = Vec2(facing * EXECUTER.headPunchImpulse, -EXECUTER.headPunchImpulse * 0.15);
+    this.target.receiveHeadPunch(impulse, EXECUTER.headPunchRecoilFrames);
+    this.body.applyLinearImpulse(Vec2(-impulse.x * 2, -impulse.y * 2), c, true);
+    this.punches += 1;
+  }
+
+  /** An active player swing pushes this body away and interrupts its attack. */
+  hitByPlayer(impulse: Vec2): void {
+    if (this.dead || !this.solid) return;
+    this.pinDir = null;
+    this.carrying = false;
+    this.punchFrame = -1;
+    this.knockbackFrames = SWING.executerKnockFrames;
+    this.body.applyLinearImpulse(impulse, this.body.getWorldCenter(), true);
   }
 
   /** §13: straight at the aim point at its speed, x2 in a burst. */

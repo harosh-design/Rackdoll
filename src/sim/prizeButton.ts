@@ -29,6 +29,8 @@ export class PrizeButton {
   releasedAt = -Infinity;
   /** Every live executer this button launched. */
   readonly executers: Executer[] = [];
+  /** The first hazard launch from each button is the punching head. */
+  launches = 0;
 
   constructor(world: World, def: ButtonDef) {
     this.def = def;
