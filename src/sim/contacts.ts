@@ -59,7 +59,9 @@ export function installContactListener(world: World, flags: ContactFlags): void 
         ballBody.setLinearVelocity(Vec2(v.x * BALL_VX_SCALE_WALL, v.y));
         break;
       case BODYTYPE.GROUND:
-        flags.onBallDown = true;
+        // Only a free ball lands. A held ball brushing the floor would leave
+        // the flag set, and game.update would score it the moment it is served.
+        if (ballBody.getJointList() == null) flags.onBallDown = true;
         break;
       default:
         break;

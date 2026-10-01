@@ -8,8 +8,6 @@ export class Ball {
   /** 0 while in flight, otherwise the id of whoever holds it. */
   ballOfPlayer: 0 | 1 | 2 = 0;
   readonly radiusPx: number;
-  /** Temporary higher speed cap for a super shot. */
-  boostFrames = 0;
 
   constructor(world: World, xPx = SPAWN_BALL_PX.x, yPx = SPAWN_BALL_PX.y) {
     this.radiusPx = BALL.radiusPx;
@@ -40,13 +38,11 @@ export class Ball {
   update(): void {
     const v = this.body.getLinearVelocity();
     let { x, y } = v;
-    const boost = this.boostFrames > 0 ? 1.5 : 1;
-    if (y > BALL.maxVy * boost) y = BALL.maxVy * boost;
-    if (y < -BALL.maxVy * boost) y = -BALL.maxVy * boost;
-    if (x > BALL.maxVx * boost) x = BALL.maxVx * boost;
-    if (x < -BALL.maxVx * boost) x = -BALL.maxVx * boost;
+    if (y > BALL.maxVy) y = BALL.maxVy;
+    if (y < -BALL.maxVy) y = -BALL.maxVy;
+    if (x > BALL.maxVx) x = BALL.maxVx;
+    if (x < -BALL.maxVx) x = -BALL.maxVx;
     if (x !== v.x || y !== v.y) this.body.setLinearVelocity(Vec2(x, y));
-    if (this.boostFrames > 0) this.boostFrames--;
   }
 
   get position(): Vec2 { return this.body.getWorldCenter(); }
@@ -58,6 +54,6 @@ export class Ball {
     this.body.setLinearVelocity(Vec2(0, 0));
     this.body.setAngularVelocity(0);
     this.ballOfPlayer = 0;
-    this.boostFrames = 0;
+    this.body.setGravityScale(1);
   }
 }

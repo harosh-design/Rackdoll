@@ -385,9 +385,17 @@ export const GIFT = {
   pickupRadiusPx: 24,
 } as const;
 
+/** Feather ball: over its holder's half, the free ball falls at this fraction of gravity. */
+export const FEATHER = { gravityScale: 0.4 } as const;
+
 /** Giant and tiny resize the doll this much per frame: 1 → 1.5 takes 13 frames. */
 export const SIZE = {
   stepPerFrame: 0.04,
+  /**
+   * Extra jump lift per unit of shrink. At ⅔ size that is ×1.2, which brings
+   * the smaller doll's head to the same peak as a full-size jump.
+   */
+  shrunkJumpBoost: 0.6,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -538,14 +546,50 @@ export const OPTIONS = {
   championLevel: 6,
 } as const;
 
-/** The champion reads the ball's trajectory and moves before it arrives. */
+/**
+ * The champion (level 6). It reads the ball's flight, chooses where on its head
+ * to take it so the rebound lands away from the opponent, and gets there first.
+ * Distances are px, in its own frame (itself on the right of the net).
+ */
 export const CHAMPION = {
-  chaseImpulse: 11,
-  aimGain: 3,
-  swingReachPx: 85,
-  jumpCooldownFrames: 18,
-  minHeadXpx: 375,
-  maxHeadXpx: 790,
+  /** Where it waits while the ball is on the other side. */
+  readyXpx: 520,
+  /** Its rail stops the head this close to the net. */
+  minHeadXpx: 372,
+  /** Head centre at rest at full size, and the head's radius. */
+  headRestPx: 258,
+  headRadiusPx: 10,
+  /** How far ahead the flight forecast looks, frames. */
+  horizonFrames: 120,
+  /** Contact angles tried; positive is the net side of the head. Past ~45° the arm takes it. */
+  minAngleDeg: -30,
+  maxAngleDeg: 46,
+  /**
+   * Fitted to real head contacts in play (median error 1.7 m/s): the head
+   * rides a soft rail and gives way, so the ball comes off it at about
+   * restitution 0.8, not the fixtures' 1.2.
+   */
+  headBounce: 0.8,
+  /** Box2D mixes friction as sqrt(ball 0.05 × doll 0.5). */
+  headFriction: Math.sqrt(0.05 * 0.5),
+  /** A return must land at least this far past the net, and clear its top by this much. */
+  netMarginPx: 25,
+  netClearancePx: 30,
+  /** No head reaches a ball this close to the net on the far side. */
+  deadZonePx: 45,
+  deadZoneBonus: 120,
+  /** Scoring of candidate returns. */
+  aimCapPx: 260,
+  timeBias: 0.6,
+  anglePenalty: 1.2,
+  latePenalty: 4,
+  /** Steering: turnComp moves the head ~1.4 px per frame per unit impulse. */
+  pxPerImpulse: 1.4,
+  maxStepPx: 13,
+  deadbandPx: 3,
+  /** With three touches spent, keep this far from where the ball comes down. */
+  dodgePx: 90,
+  swingPower: 0.8,
 } as const;
 
 // ---------------------------------------------------------------------------

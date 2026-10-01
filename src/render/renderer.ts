@@ -990,9 +990,10 @@ export class Renderer {
       const p = id === 1 ? gw.p1 : gw.p2;
       const x = id === 1 ? leftX : rightX;
       const align: CanvasTextAlign = id === 1 ? 'left' : 'right';
-      const label = hud.singlePlayer
-        ? (id === 1 ? 'YOU' : g.level === OPTIONS.championLevel ? 'CPU · CHAMPION' : `CPU · LV ${g.level}`)
-        : `PLAYER ${id}`;
+      const level = gw.levelOf(id);
+      const label = gw.isCpu(id)
+        ? (level === OPTIONS.championLevel ? 'CPU · CHAMPION' : `CPU · LV ${level}`)
+        : hud.singlePlayer ? 'YOU' : `PLAYER ${id}`;
       ctx.textAlign = align;
       ctx.textBaseline = 'top';
       ctx.fillStyle = 'rgba(15,25,35,0.72)';

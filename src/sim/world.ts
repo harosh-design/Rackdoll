@@ -2,7 +2,7 @@ import { Vec2, World } from 'planck';
 import { AI } from './ai';
 import { Ball } from './ball';
 import {
-  CHARGE, EXECUTER, EXECUTER_ITERATIONS, GRAVITY, ITERATIONS,
+  CHARGE, EXECUTER, EXECUTER_ITERATIONS, FEATHER, GRAVITY, ITERATIONS, LANDING_CENTRE_M,
   MS_PER_FRAME, OPTIONS, PRIZE_ANIM, NET_X_PX, powerScale,
   SERVE_CENTRE_M, SPAWN_P1_PX, SPAWN_P2_PX, SWING, toM,
 } from './constants';
@@ -20,8 +20,12 @@ import { FrameTimer, TimerSet } from './timer';
 export interface GameWorldOptions {
   /** Single player puts an AI on player 2. */
   singlePlayer?: boolean;
+  /** Both sides are driven by the AI; the keyboard only pauses. */
+  botVsBot?: boolean;
   /** Campaign level 1..6; level 6 enables the champion opponent. */
   level?: number;
+  /** Bot vs bot: player 1's level. Player 2 plays at `level`. */
+  p1Level?: number;
   /** Hazards on/off. Off, a button still clicks but launches nothing. */
   hazards?: boolean;
   /** Override executer physics, for tuning and tests. */
@@ -48,7 +52,8 @@ export class GameWorld {
   readonly powerUps: PowerUps;
   readonly game: Game;
   readonly control: Control;
-  readonly ai: AI | null;
+  /** The AI driving each side, or null for a human. */
+  readonly ais: Record<PlayerId, AI | null>;
   readonly timers = new TimerSet();
   readonly flags: ContactFlags = { onBallDown: false, bYesPrize: false, prizeHits: [], ballPlayerHits: [] };
   readonly executers: Executer[] = [];
@@ -71,6 +76,9 @@ export class GameWorld {
   frame = 0;
   paused = false;
   readonly singlePlayer: boolean;
+  readonly botVsBot: boolean;
+  /** Bot vs bot: player 1's level (player 2's is game.level). */
+  readonly p1Level: number;
   readonly hazards: boolean;
   private readonly executerTuning?: Partial<ExecuterTuning>;
   private readonly contactIterations: number;
@@ -78,12 +86,14 @@ export class GameWorld {
     1: null, 2: null,
   };
   private counter: { framesLeft: number; direction: 1 | -1 } | null = null;
-  private aiCounterWindupFrames = 0;
+  private readonly aiCounterWindupFrames: Record<PlayerId, number> = { 1: 0, 2: 0 };
   private readonly nextSwingFrame: Record<PlayerId, number> = { 1: 0, 2: 0 };
 
   constructor(opts: GameWorldOptions = {}) {
     this.control = new Control(opts.bindings);
-    this.singlePlayer = opts.singlePlayer ?? true;
+    this.botVsBot = opts.botVsBot ?? false;
+    this.singlePlayer = !this.botVsBot && (opts.singlePlayer ?? true);
+    this.p1Level = opts.p1Level ?? opts.level ?? OPTIONS.currentLevel;
     this.hazards = opts.hazards ?? true;
     this.executerTuning = opts.executerTuning;
     this.contactIterations = opts.contactIterations ?? EXECUTER_ITERATIONS;
@@ -116,14 +126,16 @@ export class GameWorld {
       },
       onNewRound: () => {
         this.powerUps.onNewRound(this.frame);
-        this.ai?.reset();
+        this.ais[1]?.reset();
+        this.ais[2]?.reset();
         this.strikes[1] = this.strikes[2] = null;
         this.counter = null;
-        this.aiCounterWindupFrames = 0;
+        this.aiCounterWindupFrames[1] = this.aiCounterWindupFrames[2] = 0;
+        // Every round starts with both hands' swing ready.
+        this.nextSwingFrame[1] = this.nextSwingFrame[2] = 0;
         opts.events?.onNewRound?.();
       },
       onResetMatch: () => {
-        this.nextSwingFrame[1] = this.nextSwingFrame[2] = 0;
         this.powerUps.reset();
         this.clearExecuters();
         this.executerLaunches = 0;
@@ -137,10 +149,27 @@ export class GameWorld {
     );
     if (opts.level != null) this.game.level = opts.level;
 
-    this.ai = this.singlePlayer
-      ? new AI(this.timers, this.p2, this.ball,
-        (p) => this.serve(p), (p, power, hand) => this.swing(p, power, hand), this.canSwing)
-      : null;
+    const bot = (p: Player) => new AI(this.timers, p, this.ball,
+      (q) => this.serve(q), (q, power, hand) => this.swing(q, power, hand), this.canSwing,
+      p === this.p1 ? this.p2 : this.p1);
+    this.ais = {
+      1: this.botVsBot ? bot(this.p1) : null,
+      2: this.botVsBot || this.singlePlayer ? bot(this.p2) : null,
+    };
+  }
+
+  /** The single-player opponent, i.e. player 2's AI. */
+  get ai(): AI | null {
+    return this.ais[2];
+  }
+
+  isCpu(id: PlayerId): boolean {
+    return this.ais[id] !== null;
+  }
+
+  /** The campaign level a side's AI plays at. */
+  levelOf(id: PlayerId): number {
+    return id === 1 && this.botVsBot ? this.p1Level : this.game.level;
   }
 
   /**
@@ -151,7 +180,6 @@ export class GameWorld {
     const ok = player.pas(this.ball.body, this.ball.ballOfPlayer, SERVE_CENTRE_M);
     if (!ok) return;
     this.ball.ballOfPlayer = 0;
-    if (player.power === 'smash') this.ball.boostFrames = 18;
     this.game.registerServe(player);
   };
 
@@ -165,7 +193,6 @@ export class GameWorld {
   swing = (player: Player, power = 1, hand: SwingHand = 'outside'): boolean => {
     if (!this.canSwing(player) || this.game.phase !== 'play' || this.ball.ballOfPlayer !== 0) return false;
     player.swingArm(power, hand);
-    if (player.power === 'smash') this.ball.boostFrames = 18;
     this.swingEffects[player.id] = { frame: this.frame, power, hand };
     this.strikes[player.id] = { frame: this.frame, power, hand, ballHit: false, opponentHit: false, hitExecuters: new Set() };
     this.nextSwingFrame[player.id] = this.frame + SWING.cooldownFrames;
@@ -188,6 +215,7 @@ export class GameWorld {
     const dt = this.game.timeStep * (
       this.game.phase === 'play' && this.control.isChargingSwing() ? CHARGE.windupTimeScale : 1
     );
+    this.applyFeather();
     // The original's 10 iterations everywhere, except while an executer is at
     // a doll: a 0.07 kg hand hitting a 6 kg ball is badly conditioned, and at
     // 10 iterations the joints visibly stretch.
@@ -200,9 +228,10 @@ export class GameWorld {
 
     // 2. (The renderer syncs sprites here; it reads bodies directly instead.)
 
-    // 3. Controls, both players.
-    this.control.update(this.p1, this.serve, this.swing, this.canSwing);
-    if (!this.singlePlayer) this.control.update(this.p2, this.serve, this.swing, this.canSwing);
+    // 3. Controls, for each human player.
+    for (const p of [this.p1, this.p2]) {
+      if (!this.isCpu(p.id)) this.control.update(p, this.serve, this.swing, this.canSwing);
+    }
     this.resolveStrikes();
     this.advanceCounter();
     this.attractBallDuringWindup();
@@ -212,12 +241,14 @@ export class GameWorld {
     this.powerUps.tick(this.frame, this.game.phase === 'play');
     this.applyMagnetPower();
 
-    // 5. AI, single player only.
-    if (this.ai) {
-      this.ai.champion = this.game.level === OPTIONS.championLevel;
-      this.ai.update();
+    // 5. AI, on every CPU side.
+    for (const id of [1, 2] as const) {
+      const ai = this.ais[id];
+      if (!ai) continue;
+      ai.champion = this.levelOf(id) === OPTIONS.championLevel;
+      ai.update();
+      this.updateAiCounter(id);
     }
-    this.updateAiCounter();
 
     // 6. Hazards.
     for (const e of this.executers) e.update(dt);
@@ -254,7 +285,7 @@ export class GameWorld {
       strike.ballHit = true;
       if (age <= SWING.perfectFrames) {
         const sign = contact.playerId === 1 ? 1 : -1;
-        const scale = powerScale(strike.power) * (contact.playerId === 1 ? this.p1 : this.p2).attackFactor;
+        const scale = powerScale(strike.power);
         this.ball.body.applyLinearImpulse(
           Vec2(sign * SWING.perfectBallImpulseX * scale, SWING.perfectBallImpulseY * scale),
           this.ball.position,
@@ -351,11 +382,14 @@ export class GameWorld {
     }
   }
 
-  /** The CPU visibly answers a charge near the net if it had time to prepare. */
-  private updateAiCounter(): void {
-    if (!this.ai || this.ai.DisableAI || !this.canSwing(this.p2) ||
+  /** The CPU visibly answers a human's charge near the net if it had time to prepare. */
+  private updateAiCounter(id: PlayerId): void {
+    const ai = this.ais[id];
+    const cpu = id === 1 ? this.p1 : this.p2;
+    const humanId: PlayerId = id === 1 ? 2 : 1;
+    if (!ai || ai.DisableAI || this.isCpu(humanId) || !this.canSwing(cpu) ||
         this.game.phase !== 'play' || this.ball.ballOfPlayer !== 0) {
-      this.aiCounterWindupFrames = 0;
+      this.aiCounterWindupFrames[id] = 0;
       return;
     }
     const net = toM(NET_X_PX);
@@ -365,20 +399,20 @@ export class GameWorld {
       && Math.abs(this.ball.position.x - net) < toM(SWING.counterBallRangePx)
       && Math.abs(this.ball.position.y - midY) < toM(SWING.counterBallHeightPx);
     if (!nearNet) {
-      this.aiCounterWindupFrames = 0;
+      this.aiCounterWindupFrames[id] = 0;
       return;
     }
-    const humanCharge = this.control.chargeLevel(1);
+    const humanCharge = this.control.chargeLevel(humanId);
     if (humanCharge) {
-      this.aiCounterWindupFrames = Math.min(this.aiCounterWindupFrames + 1, CHARGE.maxFrames);
-      this.p2.windUpArm(Math.min(humanCharge.power, 0.8));
+      this.aiCounterWindupFrames[id] = Math.min(this.aiCounterWindupFrames[id] + 1, CHARGE.maxFrames);
+      cpu.windUpArm(Math.min(humanCharge.power, 0.8));
       return;
     }
-    const humanStrike = this.strikes[1];
-    if (humanStrike?.frame === this.frame && this.aiCounterWindupFrames >= 4) {
-      this.swing(this.p2, Math.min(0.8, this.aiCounterWindupFrames / CHARGE.maxFrames));
+    const humanStrike = this.strikes[humanId];
+    if (humanStrike?.frame === this.frame && this.aiCounterWindupFrames[id] >= 4) {
+      this.swing(cpu, Math.min(0.8, this.aiCounterWindupFrames[id] / CHARGE.maxFrames));
     }
-    this.aiCounterWindupFrames = 0;
+    this.aiCounterWindupFrames[id] = 0;
   }
 
   /** A near, forward-facing opponent receives one charge-scaled knockback. */
@@ -415,6 +449,25 @@ export class GameWorld {
       const impulse = CHARGE.attractImpulse * charge.power * (1 - distance / radius) / distance;
       this.ball.body.applyLinearImpulse(Vec2.mul(delta, impulse), ballPos, true);
     }
+  }
+
+  /**
+   * Feather ball: a free ball over a feathered player's half falls at a
+   * fraction of gravity, giving them longer to reach it. Set before the step.
+   */
+  private applyFeather(): void {
+    let scale = 1;
+    if (this.game.phase === 'play' && this.ball.ballOfPlayer === 0 && !this.ball.held) {
+      const owner = this.ball.position.x < LANDING_CENTRE_M ? this.p1 : this.p2;
+      if (owner.power === 'feather') scale = FEATHER.gravityScale;
+    }
+    this.ball.body.setGravityScale(scale);
+  }
+
+  /** Who the feather ball is slowing right now, for the renderer. */
+  get featherSide(): PlayerId | null {
+    if (this.ball.body.getGravityScale() === 1) return null;
+    return this.ball.position.x < LANDING_CENTRE_M ? 1 : 2;
   }
 
   /** The magnet pulls a free ball toward the player's hands within 140 px. */

@@ -6,7 +6,7 @@ import {
   ACTIONS, BODYTYPE, clamp01, DEG, FLOOR_TOP_PX, JOINTS, PARTS, PLAYER_FRICTION, powerScale,
   PRISM_DENSITY, PRISM_FRICTION, PRISM_HALF_PX, PRISM_RESTITUTION, PRISM_Y_PX,
   RAIL_H_LIMITS, RAIL_V_LIMITS, SERVE, SIZE, SPAWN_P1_PX, SPAWN_P2_PX, STAND_POSE,
-  SWING, toM, type JointDef, type PartName, WINDUP,
+  SWING, toM, toPx, type JointDef, type PartName, WINDUP,
 } from './constants';
 import type { BodyUserData } from './types';
 import type { PowerId } from './powerUps';
@@ -15,6 +15,24 @@ export type PlayerId = 1 | 2;
 export type SwingHand = 'outside' | 'inside';
 
 const PART_DEFS = new Map(PARTS.map((p) => [p.name, p]));
+
+/** Head centre to sole at full size, px: the Head part's dy 2 to the Foot's 90 + 11. */
+const HEAD_TO_SOLE_PX = 99;
+/**
+ * At full size the rail's limit hangs the soles this far above the floor, and
+ * the doll's weight sags it the rest of the way down onto its feet.
+ */
+const RAIL_SOLE_GAP_PX = 4;
+
+/**
+ * The vertical rail's lower limit is where the head hangs, so it decides how
+ * far the feet reach. It moves with the doll's height, and the gap shrinks
+ * with its weight (scale²), since a lighter doll sags less into the limit.
+ * With the full-size limit a ⅔-size doll dangled ~17 px up, too high for
+ * jump() to see it as grounded.
+ */
+const railLowerFor = (scale: number): number =>
+  RAIL_V_LIMITS.lower + toM(HEAD_TO_SOLE_PX * (scale - 1) + RAIL_SOLE_GAP_PX * (scale * scale - 1));
 
 const norm = (v: Vec2): Vec2 => {
   const len = Math.sqrt(v.x * v.x + v.y * v.y);
@@ -189,8 +207,22 @@ export class Player {
   get head(): Body { return this.part('Head'); }
   get tors(): Body { return this.part('Tors'); }
   get ass(): Body { return this.part('Ass'); }
-  get attackFactor(): number { return this.power === 'smash' ? 1.8 : 1; }
   private get massFactor(): number { return this.sizeScale * this.sizeScale; }
+  /**
+   * A shrunken doll's head starts lower, so it gets extra lift to peak at a
+   * full-size doll's height. A giant keeps its natural, higher peak.
+   */
+  private get jumpBoost(): number {
+    return this.sizeScale < 1 ? 1 + SIZE.shrunkJumpBoost * (1 - this.sizeScale) : 1;
+  }
+  /** Height-based checks scale toward the floor with the doll. */
+  private scaledFromFloor(px: number): number {
+    return FLOOR_TOP_PX - (FLOOR_TOP_PX - px) * this.sizeScale;
+  }
+  /** turn() and turnComp() push the hips on the ground and the head in the air. */
+  get grounded(): boolean {
+    return toPx(this.head.getWorldCenter().y) > this.scaledFromFloor(ACTIONS.groundedHeadPx);
+  }
 
   /**
    * Set the size the doll grows or shrinks toward. `immediate` snaps instead,
@@ -268,6 +300,7 @@ export class Player {
       }))!);
     });
     this.sizeScale = scale;
+    this.railV.setLimits(railLowerFor(scale), RAIL_V_LIMITS.upper);
     if (this.ballJoint) {
       this.ballJoint.getBodyB().setTransform(this.servingFinger.getWorldCenter(), 0);
     }
@@ -300,15 +333,14 @@ export class Player {
   jump(): void {
     const ass = this.ass;
     // Only when the hips are low, i.e. grounded.
-    const threshold = FLOOR_TOP_PX - (FLOOR_TOP_PX - ACTIONS.jumpHipsBelowPx) * this.sizeScale;
-    if (!(ass.getWorldCenter().y > toM(threshold))) return;
+    if (!(ass.getWorldCenter().y > toM(this.scaledFromFloor(ACTIONS.jumpHipsBelowPx)))) return;
 
     const head = this.head;
     const d = Vec2.sub(head.getWorldCenter(), this.tors.getWorldCenter());
     const v = Vec2.mul(norm(d), ACTIONS.jumpLeanImpulse * this.massFactor);
     // The rail and ragdoll joints absorb much of the extra impulse. A 2x
     // launch impulse produces about 1.5x measured head height.
-    const lift = ACTIONS.jumpLift * this.massFactor * (this.power === 'highJump' ? 2 : 1);
+    const lift = ACTIONS.jumpLift * this.massFactor * this.jumpBoost * (this.power === 'highJump' ? 2 : 1);
 
     ass.setLinearVelocity(Vec2(0, 0));
     head.setLinearVelocity(Vec2(0, 0));
@@ -330,7 +362,7 @@ export class Player {
     ass.setLinearVelocity(Vec2(0, 0));
     const boost = this.massFactor * (this.power === 'speed' ? 1.5 : 1);
     const moved = Vec2(impulse.x * boost, impulse.y * boost);
-    if (head.getWorldCenter().y * 30 > ACTIONS.groundedHeadPx) {
+    if (this.grounded) {
       ass.applyLinearImpulse(moved, ass.getWorldCenter(), true); // grounded
     } else {
       head.applyLinearImpulse(moved, head.getWorldCenter(), true); // airborne
@@ -346,7 +378,7 @@ export class Player {
     head.setLinearVelocity(Vec2(0, 0));
     const boost = this.massFactor * (this.power === 'speed' ? 1.5 : 1);
     const moved = Vec2(impulse.x * boost, impulse.y * boost);
-    if (head.getWorldCenter().y * 30 > ACTIONS.groundedHeadPx) {
+    if (this.grounded) {
       const half = Vec2(moved.x * 0.5, moved.y * 0.5);
       head.applyLinearImpulse(half, head.getWorldCenter(), true);
       ass.applyLinearImpulse(half, ass.getWorldCenter(), true);
@@ -366,8 +398,9 @@ export class Player {
   turnDown(): void {
     const fl = this.part('FootLeft');
     const fr = this.part('FootRight');
-    fl.applyLinearImpulse(Vec2(0, ACTIONS.turnDownImpulse), fl.getWorldCenter(), true);
-    fr.applyLinearImpulse(Vec2(0, ACTIONS.turnDownImpulse), fr.getWorldCenter(), true);
+    const impulse = ACTIONS.turnDownImpulse * this.massFactor;
+    fl.applyLinearImpulse(Vec2(0, impulse), fl.getWorldCenter(), true);
+    fr.applyLinearImpulse(Vec2(0, impulse), fr.getWorldCenter(), true);
   }
 
   /** AI only, lean toward a body. Applied twice, identically. */
@@ -466,13 +499,12 @@ export class Player {
 
     const hand = this.servingFinger;
     hand.applyLinearImpulse(
-      Vec2(sign * SERVE.handImpulseX * this.massFactor * this.attackFactor,
-        SERVE.handImpulseY * this.massFactor * this.attackFactor),
+      Vec2(sign * SERVE.handImpulseX * this.massFactor, SERVE.handImpulseY * this.massFactor),
       hand.getWorldCenter(),
       true,
     );
     ballBody.applyLinearImpulse(
-      Vec2(sign * SERVE.ballImpulseX * this.attackFactor, SERVE.ballImpulseY * this.attackFactor),
+      Vec2(sign * SERVE.ballImpulseX, SERVE.ballImpulseY),
       ballBody.getWorldCenter(),
       true,
     );
@@ -489,7 +521,7 @@ export class Player {
    */
   swingArm(power = 1, swingHand: SwingHand = 'outside'): void {
     const sign = this.id === 1 ? 1 : -1;
-    const scale = powerScale(power) * this.massFactor * this.attackFactor;
+    const scale = powerScale(power) * this.massFactor;
     const side = this.swingSide(swingHand);
     const finger = this.part(`Finger${side}`);
     const hand = this.part(`Hand${side}`);
@@ -521,7 +553,8 @@ export class Player {
    */
   windUpArm(power: number, swingHand: SwingHand = 'outside'): void {
     const sign = this.id === 1 ? 1 : -1; // the swing's forward direction
-    const k = clamp01(power);
+    // Scaled with the limb's mass, so a giant's or tiny's arm cocks back as far.
+    const k = clamp01(power) * this.massFactor;
     const side = this.swingSide(swingHand);
     const finger = this.part(`Finger${side}`);
     const hand = this.part(`Hand${side}`);

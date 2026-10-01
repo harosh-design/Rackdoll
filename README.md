@@ -77,7 +77,8 @@ Once the ball is free, hold the same key to wind up the outside arm and release
 to hit. Hold Shift (or E for player 2) to hit with the other arm instead.
 The windup briefly slows the physics and gently draws a nearby free
 ball toward the striking hand. A full charge delivers a stronger hit. Both hands
-share a 45-second cooldown after each swing; serving remains available. A swing that reaches a nearby opponent
+share a 45-second cooldown after each swing, which resets at the start of every
+round; serving remains available. A swing that reaches a nearby opponent
 also knocks them back, with force set by the charge.
 
 Releasing a swing within two frames of contact between the selected hand and
@@ -92,9 +93,9 @@ repeat, which re-armed the consumed jump flag.
 Every third point, however it was scored, produces a gift in the next round.
 Gifts alternate between player 1's and player 2's side, stay for 10 seconds,
 and can be collected only by the player on that side. Pickup grants one random
-ability for 30 seconds: 1.5× body size, ⅔ body size, stronger shots, 1.5× jump,
-faster movement, a nearby-ball magnet, or protection against opponent and boxer
-knockback. The player then returns to normal. The HUD shows the ability and its
+ability for 30 seconds: 1.5× body size, ⅔ body size, feather ball (a free ball
+over your half falls at 40% gravity), 1.5× jump, faster movement, a nearby-ball
+magnet, or protection against opponent and boxer knockback. The player then returns to normal. The HUD shows the ability and its
 remaining time.
 
 Size changes affect the ragdoll's actual collision shapes. The doll grows or
@@ -103,6 +104,12 @@ shrinks over about 13 frames. An instant ×1.5 would teleport a hand through the
 table rather than the current pose, so a stretched joint never becomes
 permanent. A new pickup replaces any existing ability outright. Every ability
 is just `player.power` plus a target size, so nothing can stack.
+
+The doll hangs from its head on the vertical rail, so the rail's lower limit
+moves with the size: otherwise a ⅔-size doll dangles ~17 px above the floor and
+`jump()` never sees it as grounded. A shrunken doll also gets extra jump lift
+so its head peaks as high as a full-size jump. Crouch, arm wind-up and the
+grounded checks scale with the doll as well.
 
 ## Fidelity notes
 
@@ -138,10 +145,19 @@ code where it happens.
 - **The executer's ×2 burst** fires every third second of its life. The spec
   marks the cadence as its least certain detail.
 - **Campaign levels** scale the points a goal is worth. Levels 1–5 use the
-  spec's AI defaults (`AImaxSpeed` 7). **Level 6** is a champion challenge: the bot
-  predicts the ball's landing spot, moves early, and times its jump and hand
-  swing. It follows the same physics and touch rules as the other levels.
+  spec's AI defaults (`AImaxSpeed` 7). **Level 6** is a champion challenge. It
+  forecasts the ball's flight (walls, net, feather ball), finds where the ball
+  will meet its head, and picks the contact angle whose rebound lands farthest
+  from the opponent. It does this with a bounce model fitted to real head
+  contacts: restitution 0.8, friction and spin. With its swing ready it lines
+  the ball up in the measured strike zone instead. In bot-vs-bot play it beats
+  level 1 about 85% of points from either side. It follows the same physics
+  and touch rules as the other levels.
+- **Bot vs bot** puts the AI on both sides, each at its own level. The AI is
+  written for player 2; on player 1 it sees the court mirrored about the net.
 - **Pause** freezes the physics and every timer, serve clock included.
+- **A held ball can't land.** Only a free ball sets the floor flag. Otherwise a
+  held ball brushing the floor would be scored the moment it was served.
 - **Sounds** use short Stable Audio 3 samples for hits, serves, points, buttons,
   and special moves. Procedural cues cover the first moments while samples load
   or if a file is unavailable. Press M to mute. **Render interpolation** blends

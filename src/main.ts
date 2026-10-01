@@ -28,7 +28,15 @@ const renderer = new Renderer(canvas);
 const interp = new Interpolator();
 const sfx = new Sfx();
 
-const settings = { mode: '1p' as '1p' | '2p', level: OPTIONS.currentLevel as number, hazards: true, bindings: loadBindings() };
+type Mode = '1p' | '2p' | 'cpu';
+const settings = {
+  mode: '1p' as Mode,
+  level: OPTIONS.currentLevel as number,
+  /** Bot vs bot: the left CPU's level. */
+  p1Level: OPTIONS.championLevel as number,
+  hazards: true,
+  bindings: loadBindings(),
+};
 let screen: Screen = 'menu';
 let capturing: { player: PlayerId; action: ControlAction } | null = null;
 let gw = createWorld(true);
@@ -42,7 +50,9 @@ let servesSeen = 0;
 function createWorld(demo = false): GameWorld {
   const w = new GameWorld({
     singlePlayer: demo ? true : settings.mode === '1p',
+    botVsBot: !demo && settings.mode === 'cpu',
     level: settings.level,
+    p1Level: settings.p1Level,
     hazards: settings.hazards,
     bindings: toKeyBindings(settings.bindings),
     powerSeed: Math.floor(Math.random() * 0x100000000),
@@ -104,7 +114,9 @@ function hookSounds(w: GameWorld): void {
 
 function onPoint(winner: PlayerId, reason: PointReason): void {
   const single = gw.singlePlayer;
-  const who = single ? (winner === 1 ? 'POINT!' : 'CPU POINT') : `PLAYER ${winner} POINT`;
+  const who = gw.botVsBot
+    ? `${winner === 1 ? 'LEFT' : 'RIGHT'} CPU POINT`
+    : single ? (winner === 1 ? 'POINT!' : 'CPU POINT') : `PLAYER ${winner} POINT`;
   const why = reason === 'touches' ? ' · 4 TOUCHES' : reason === 'serveClock' ? ' · TOO SLOW' : '';
   message = who + why;
   if (single && winner === 2) sfx.lose();
@@ -126,6 +138,11 @@ function onMatchOver(winner: PlayerId): void {
         : `Opponent ${g.level} down. Points this match: ${g.campaignScore}.`
       : `Opponent ${g.level} takes it. Have another go.`;
     next.style.display = won && !last ? '' : 'none';
+  } else if (gw.botVsBot) {
+    const name = (id: PlayerId) => (gw.levelOf(id) === OPTIONS.championLevel ? 'the champion' : `level ${gw.levelOf(id)}`);
+    $('over-title').textContent = `${winner === 1 ? 'Left' : 'Right'} CPU wins`;
+    $('over-sub').textContent = `${name(winner)} beat ${name(winner === 1 ? 2 : 1)}.`.replace(/^./, (c) => c.toUpperCase());
+    next.style.display = 'none';
   } else {
     $('over-title').textContent = `Player ${winner} wins`;
     $('over-sub').textContent = 'First to 10.';
@@ -261,10 +278,13 @@ function wireMenu(): void {
     }
   };
   group('mode', (v) => {
-    settings.mode = v as '1p' | '2p';
-    $('level-field').style.display = v === '1p' ? '' : 'none';
+    settings.mode = v as Mode;
+    $('level-field').style.display = v === '2p' ? 'none' : '';
+    $('p1-level-field').style.display = v === 'cpu' ? '' : 'none';
+    $('level-label').textContent = v === 'cpu' ? 'Right CPU' : 'Opponent';
   });
   group('level', (v) => { settings.level = Number(v); });
+  group('p1level', (v) => { settings.p1Level = Number(v); });
   group('hazards', (v) => { settings.hazards = v === 'on'; });
 
   $('play').addEventListener('click', startMatch);
@@ -373,7 +393,7 @@ function tick(now: number): void {
   renderer.draw(gw, interp, running ? acc / FRAME : 1, {
     singlePlayer: gw.singlePlayer,
     message: screen === 'playing' || screen === 'paused' ? message : null,
-    showControlsHint: screen === 'playing' && servesSeen < 2,
+    showControlsHint: screen === 'playing' && servesSeen < 2 && !gw.isCpu(1),
   });
   requestAnimationFrame(tick);
 }

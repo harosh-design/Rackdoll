@@ -286,6 +286,18 @@ describe('§17.4 serve + rally rules', () => {
     expect(gw.game.score[1]).toBe(1);
   });
 
+  it('a held ball brushing the floor is not scored when it is served', () => {
+    const gw = world();
+    run(gw, 30);
+    // Drag the held ball along the floor, as a fast walk with it can.
+    gw.ball.body.setTransform(Vec2(gw.ball.position.x, toM(345)), 0);
+    gw.step();
+    expect(gw.flags.onBallDown).toBe(false);
+    jumpServe(gw);
+    run(gw, 3);
+    expect(gw.game.phase).toBe('play');
+  });
+
   it('the six-second serve clock gives the point away', () => {
     const gw = world();
     const frames = untilPoint(gw, 30 * 10);
@@ -435,20 +447,26 @@ describe('fixed serve and charged outside-arm swing', () => {
     expect(swing).toHaveBeenLastCalledWith(1 / CHARGE.maxFrames, 'inside');
   });
 
-  it('keeps the hit cooldown across rounds while allowing a serve', () => {
+  it('holds the hit cooldown through a pause and resets it every round', () => {
     const gw = hazardWorld({ hazards: false });
     expect(gw.swing(gw.p1, 1)).toBe(true);
+    expect(gw.swing(gw.p2, 1)).toBe(true);
     const remaining = gw.swingCooldownFramesLeft(1);
     gw.paused = true;
     run(gw, 30);
     expect(gw.swingCooldownFramesLeft(1)).toBe(remaining);
     gw.paused = false;
+    run(gw, 30);
+    expect(gw.swingCooldownFramesLeft(1)).toBe(remaining - 30);
     gw.game.newRound();
-    expect(gw.swingCooldownFramesLeft(1)).toBe(remaining);
+    expect(gw.swingCooldownFramesLeft(1)).toBe(0);
+    expect(gw.swingCooldownFramesLeft(2)).toBe(0);
     gw.control.press(32);
     gw.step();
+    gw.control.release(32);
     expect(gw.ball.held).toBe(false);
-    expect(gw.swingCooldownFramesLeft(1)).toBe(remaining - 1);
+    gw.step();
+    expect(gw.swing(gw.p1, 1)).toBe(true);
   });
 
   it('gently pulls a nearby free ball toward the striking hand while charging', () => {
@@ -697,14 +715,33 @@ describe('champion opponent', () => {
     expect(clear.seconds).toBeGreaterThan(1);
   });
 
-  it('moves toward the predicted landing while the ball is still across the net', () => {
-    const champion = freeBall(6, 200, 100, 8, 0);
-    const ordinary = freeBall(5, 200, 100, 8, 0);
-    run(champion, 12);
-    run(ordinary, 12);
-    expect(px(champion.ball.position.x)).toBeLessThan(320);
-    expect(px(champion.p2.head.getWorldCenter().x - ordinary.p2.head.getWorldCenter().x))
-      .toBeGreaterThan(25);
+  it('plans where the ball meets its head and sends a lob back over the net', () => {
+    for (const [x, y, vx, vy] of [[200, 100, 8, 0], [150, 60, 6, -6], [260, 150, 4, -4]]) {
+      const gw = freeBall(6, x, y, vx, vy);
+      run(gw, 2);
+      expect(gw.ai!.plan).not.toBeNull();
+      let wasRight = false;
+      let returned = false;
+      for (let f = 0; f < 30 * 6 && gw.game.phase === 'play'; f++) {
+        gw.step();
+        const bx = px(gw.ball.position.x);
+        if (bx > 340) wasRight = true;
+        if (wasRight && bx < 300) returned = true;
+      }
+      expect(returned).toBe(true);
+      expect(gw.game.score[1]).toBe(0);
+    }
+  });
+
+  it('plays player 1 just as well, mirrored, in bot vs bot', () => {
+    const gw = world({ botVsBot: true, level: 1, p1Level: 6, hazards: false });
+    expect(gw.isCpu(1) && gw.isCpu(2)).toBe(true);
+    while (gw.game.phase !== 'matchOver' && gw.frame < 30 * 60 * 5) {
+      gw.step();
+      gw.reap();
+    }
+    expect(gw.game.matchWinner ?? (gw.game.score[1] > gw.game.score[2] ? 1 : 2)).toBe(1);
+    expect(gw.game.score[1]).toBeGreaterThan(gw.game.score[2] * 2);
   });
 
   it('still loses a point when the ball lands out of reach', () => {

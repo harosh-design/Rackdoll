@@ -183,11 +183,24 @@
             <div class="row" role="group" aria-label="Mode">
               <button class="seg" data-mode="1p" aria-pressed="true">1 player</button>
               <button class="seg" data-mode="2p" aria-pressed="false">2 players</button>
+              <button class="seg" data-mode="cpu" aria-pressed="false">Bot vs bot</button>
+            </div>
+          </div>
+
+          <div class="field" id="p1-level-field" style="display: none">
+            <span class="label">Left CPU</span>
+            <div class="row" role="group" aria-label="Left CPU level">
+              <button class="seg" data-p1level="1" aria-pressed="false">1</button>
+              <button class="seg" data-p1level="2" aria-pressed="false">2</button>
+              <button class="seg" data-p1level="3" aria-pressed="false">3</button>
+              <button class="seg" data-p1level="4" aria-pressed="false">4</button>
+              <button class="seg" data-p1level="5" aria-pressed="false">5</button>
+              <button class="seg" data-p1level="6" aria-pressed="true" aria-label="Level 6 Champion">6 ★</button>
             </div>
           </div>
 
           <div class="field" id="level-field">
-            <span class="label">Opponent</span>
+            <span class="label" id="level-label">Opponent</span>
             <div class="row" role="group" aria-label="Opponent level">
               <button class="seg" data-level="1" aria-pressed="true">1</button>
               <button class="seg" data-level="2" aria-pressed="false">2</button>
@@ -196,7 +209,7 @@
               <button class="seg" data-level="5" aria-pressed="false">5</button>
               <button class="seg" data-level="6" aria-pressed="false" aria-label="Level 6 Champion">6 ★</button>
             </div>
-            <small>Level 6: predicts where the ball will land and moves early. Same rules for both players.</small>
+            <small>Level 6, the champion, reads the ball's flight, aims its returns away from you and lines up its swing. Same rules for both players.</small>
           </div>
 
           <div class="field" id="hazards-field">
@@ -228,15 +241,15 @@
             Release for a powerful hit; more charge knocks back a nearby opponent
             or an executer your hand connects with. Release as your hand meets the ball for a perfect hit.
             Two simultaneous hits by the net clash and redirect the ball.
-            After a hit, both hands share a 45-second cooldown. Serving remains available.
+            After a hit, both hands share a 45-second cooldown that resets every round. Serving remains available.
             Jump first for a serve that clears the net. Three touches
             max, and six seconds to serve. Both yellow wall buttons share a ten-object
             sequence: first a kettlebell, then a player-attracting magnet, then a punching
             boxer, followed by seven more hazards. Aim for your opponent’s button. Most
             objects can pin you to the wall or ceiling.
             Every third floor goal spawns a gift, alternating sides. Reach it within
-            10 seconds for a random 30-second power: giant, tiny, super shot,
-            high jump, speed, magnet hands, or a shield against punches.
+            10 seconds for a random 30-second power: giant, tiny, feather ball (the ball
+            falls slowly over your half), high jump, speed, magnet hands, or a shield against punches.
           </div>
           </div>
           </div>

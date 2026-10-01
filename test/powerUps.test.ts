@@ -1,6 +1,6 @@
 import { Vec2 } from 'planck';
 import { describe, expect, it } from 'vitest';
-import { GIFT, JOINTS, MAX_TOUCHES, NET_X_PX, PARTS, toM, toPx } from '../src/sim/constants';
+import { FEATHER, GIFT, JOINTS, MAX_TOUCHES, NET_X_PX, PARTS, toM, toPx } from '../src/sim/constants';
 import type { Player } from '../src/sim/player';
 import { POWERS, type PowerId } from '../src/sim/powerUps';
 import { jointErrPx, rng, run, world } from './helpers';
@@ -117,14 +117,13 @@ describe('goal gifts', () => {
       return { bodies, fixtures, joints };
     };
     const before = counts();
-    const sequence: PowerId[] = ['giant', 'smash', 'tiny', 'giant', 'highJump', 'shield', 'tiny', 'speed', 'magnet'];
+    const sequence: PowerId[] = ['giant', 'feather', 'tiny', 'giant', 'highJump', 'shield', 'tiny', 'speed', 'magnet'];
     for (const kind of sequence) {
       gw.powerUps.activate(1, kind, gw.frame);
       // Swap again before the resize has finished, as well as after.
       run(gw, kind === 'giant' ? 5 : 25);
       expect(gw.p1.power).toBe(kind);
       expect(gw.powerUps.active[1]).toMatchObject({ kind, expiresAt: gw.frame - (kind === 'giant' ? 5 : 25) + GIFT.powerFrames });
-      expect(gw.p1.attackFactor).toBe(kind === 'smash' ? 1.8 : 1);
       expect(gw.p1.targetScale).toBe(kind === 'giant' ? 1.5 : kind === 'tiny' ? 1 / 1.5 : 1);
       expect(counts()).toEqual(before);
     }
@@ -190,14 +189,8 @@ describe('goal gifts', () => {
     }
   });
 
-  it('gives super shots a stronger serve and shield blocks a head punch', () => {
-    const normal = world();
+  it('shield blocks a head punch', () => {
     const powered = world();
-    powered.powerUps.activate(1, 'smash', 0);
-    normal.serve(normal.p1);
-    powered.serve(powered.p1);
-    expect(powered.ball.velocity.x).toBeGreaterThan(normal.ball.velocity.x * 1.5);
-    expect(powered.ball.boostFrames).toBeGreaterThan(0);
     powered.powerUps.activate(2, 'shield', 0);
     powered.p2.receiveHeadPunch(Vec2(2, -1), 10);
     expect(powered.p2.recoilFrames).toBe(0);
@@ -231,6 +224,50 @@ describe('goal gifts', () => {
     gw.powerUps.activate(1, 'magnet', gw.frame);
     gw.step();
     expect(gw.ball.velocity.x).toBeLessThan(0);
+  });
+
+  it('a shrunken doll stands on the floor and its jump peaks as high as a full-size one', () => {
+    const measure = (kind: PowerId | null) => {
+      const gw = world();
+      gw.game.update = () => {};
+      if (kind) gw.powerUps.activate(1, kind, 0);
+      run(gw, 120);
+      const p = gw.p1;
+      const sole = Math.max(...(['FootLeft', 'FootRight'] as const)
+        .map((n) => toPx(p.part(n).getWorldCenter().y) + 11 * p.sizeScale));
+      const start = p.head.getWorldCenter().y;
+      p.jump();
+      let peak = start;
+      for (let i = 0; i < 60; i++) {
+        gw.step();
+        peak = Math.min(peak, p.head.getWorldCenter().y);
+      }
+      return { sole, lift: toPx(start - peak), apex: toPx(peak) };
+    };
+    const normal = measure(null);
+    const tiny = measure('tiny');
+    const giant = measure('giant');
+    // It used to hang ~11 px above the floor, too high for jump() to fire.
+    for (const m of [normal, tiny, giant]) expect(m.sole).toBeGreaterThan(351);
+    expect(tiny.lift).toBeGreaterThan(150);
+    expect(Math.abs(tiny.apex - normal.apex)).toBeLessThan(12);
+  });
+
+  it('feather ball falls slower only over the feathered player\'s half', () => {
+    const drop = (kind: PowerId | null, xPx: number) => {
+      const gw = world();
+      gw.game.update = () => {};
+      gw.world.destroyJoint(gw.p1.holdingJoint!);
+      gw.p1.forgetBallJoint();
+      gw.ball.ballOfPlayer = 0;
+      if (kind) gw.powerUps.activate(1, kind, 0);
+      gw.ball.body.setTransform(Vec2(toM(xPx), toM(-100)), 0);
+      gw.ball.body.setLinearVelocity(Vec2(0, 0));
+      run(gw, 10);
+      return gw.ball.velocity.y;
+    };
+    expect(drop('feather', 100)).toBeCloseTo(drop(null, 100) * FEATHER.gravityScale, 3);
+    expect(drop('feather', 500)).toBeCloseTo(drop(null, 500), 6);
   });
 
   it('speed increases lateral movement impulse for either player', () => {
