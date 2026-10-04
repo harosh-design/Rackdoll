@@ -58,7 +58,7 @@ export class Player {
   contact = 0;
   /** Debounce flag, cleared by a 200 ms timer (§11). */
   bContact = false;
-  /** A short lateral stumble after an executer-head punch. */
+  /** A short stumble after a hazard's blow: steering is locked while it runs. */
   recoilFrames = 0;
   power: PowerId | null = null;
   /** Current collision scale. Eases toward targetScale in tickSize(). */
@@ -417,12 +417,26 @@ export class Player {
     this.prismBody.setLinearVelocity(Vec2(0, 0));
   }
 
-  /** Apply a small whole-doll recoil without locking out jump or swing. */
-  receiveHeadPunch(impulse: Vec2Value, frames: number): void {
-    if (this.power === 'shield') return;
-    this.head.applyLinearImpulse(impulse, this.head.getWorldCenter(), true);
-    this.ass.applyLinearImpulse(impulse, this.ass.getWorldCenter(), true);
+  /**
+   * A hazard's blow. `dv` is a change of velocity given to every part alike,
+   * so the whole doll is thrown with nothing in it stretched; `jolt` is an
+   * extra change to the part it landed on, so a leg is swept or the head
+   * snaps back. Both in m/s. Steering is locked for `frames` so the throw
+   * carries (turn() would zero it); jump and swing stay free. The shield
+   * ignores it. Returns whether it landed.
+   */
+  knock(dv: Vec2Value, frames: number, part?: Body, jolt?: Vec2Value): boolean {
+    if (this.power === 'shield') return false;
+    for (const b of [...this.bodies, this.prismBody]) {
+      const m = b.getMass();
+      b.applyLinearImpulse(Vec2(dv.x * m, dv.y * m), b.getWorldCenter(), true);
+    }
+    if (part && jolt) {
+      const m = part.getMass();
+      part.applyLinearImpulse(Vec2(jolt.x * m, jolt.y * m), part.getWorldCenter(), true);
+    }
     this.recoilFrames = Math.max(this.recoilFrames, frames);
+    return true;
   }
 
   tickRecoil(): void {

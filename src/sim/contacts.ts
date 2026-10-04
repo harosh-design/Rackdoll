@@ -97,8 +97,8 @@ export function installContactTweaks(world: World): void {
       (tb === BODYTYPE.EXECUTER && ta === BODYTYPE.PLAYER)
     ) {
       contact.setRestitution(0);
-      // Nearly frictionless too: it spins fast while pinning (a 8 m/s surface),
-      // and with ordinary friction that spin whips the doll's light limbs.
+      // Nearly frictionless too: a comet or spring grazing a light limb at
+      // 10–16 m/s would otherwise drag it along and whip it.
       contact.setFriction(EXECUTER_DOLL_FRICTION);
     }
   });

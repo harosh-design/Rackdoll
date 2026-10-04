@@ -9,7 +9,7 @@ import {
 import { Control, type KeyBindings } from './control';
 import { installContactListener, installContactTweaks, type ContactFlags } from './contacts';
 import { Executer, type ExecuterTuning } from './executer';
-import { executerVariantForHit } from './executerVariants';
+import { ExecuterQueue, seededRandom, type ExecuterId, type ExecuterVariant } from './executerVariants';
 import { Game, type GameEvents } from './game';
 import { Ground } from './ground';
 import { Player, type PlayerId, type SwingHand } from './player';
@@ -32,6 +32,10 @@ export interface GameWorldOptions {
   executerTuning?: Partial<ExecuterTuning>;
   /** Solver iterations on frames where an executer is touching a doll. */
   contactIterations?: number;
+  /** Seed for the hazard order and the boxer's aim. */
+  executerSeed?: number;
+  /** A fixed, repeating hazard order instead of the shuffle, for tuning and tests. */
+  executerOrder?: readonly ExecuterId[];
   /** Physical keyboard bindings for each human player. */
   bindings?: KeyBindings;
   /** Optional random seed for reproducible gift abilities. */
@@ -59,6 +63,10 @@ export class GameWorld {
   readonly executers: Executer[] = [];
   /** Total hazard launches this match, shared by both buttons. */
   executerLaunches = 0;
+  /** What comes out of the next button hit, and after it: one order for both buttons. */
+  readonly executerQueue: ExecuterQueue;
+  /** The last launch, for the HUD's queue animation. */
+  executerLaunchEffect: { frame: number; variant: ExecuterVariant | null } = { frame: -100, variant: null };
   readonly swingEffects: Record<PlayerId, { frame: number; power: number; hand: SwingHand }> = {
     1: { frame: -100, power: 0, hand: 'outside' },
     2: { frame: -100, power: 0, hand: 'outside' },
@@ -82,6 +90,7 @@ export class GameWorld {
   readonly hazards: boolean;
   private readonly executerTuning?: Partial<ExecuterTuning>;
   private readonly contactIterations: number;
+  private readonly executerRandom: () => number;
   private readonly strikes: Record<PlayerId, { frame: number; power: number; hand: SwingHand; ballHit: boolean; opponentHit: boolean; hitExecuters: Set<Executer> } | null> = {
     1: null, 2: null,
   };
@@ -97,6 +106,8 @@ export class GameWorld {
     this.hazards = opts.hazards ?? true;
     this.executerTuning = opts.executerTuning;
     this.contactIterations = opts.contactIterations ?? EXECUTER_ITERATIONS;
+    this.executerRandom = seededRandom(opts.executerSeed ?? 0x2545f491);
+    this.executerQueue = new ExecuterQueue(this.executerRandom, opts.executerOrder);
 
     this.world = new World({
       gravity: Vec2(GRAVITY.x, GRAVITY.y),
@@ -139,6 +150,7 @@ export class GameWorld {
         this.powerUps.reset();
         this.clearExecuters();
         this.executerLaunches = 0;
+        this.executerQueue.reset();
         for (const button of this.ground.prizeButtons) button.launches = 0;
         opts.events?.onResetMatch?.();
       },
@@ -250,8 +262,10 @@ export class GameWorld {
       this.updateAiCounter(id);
     }
 
-    // 6. Hazards.
-    for (const e of this.executers) e.update(dt);
+    // 6. Hazards. The magnet bends the ball only while it is free and in play.
+    const freeBall = this.game.phase === 'play' && !this.ball.held && this.ball.ballOfPlayer === 0
+      ? this.ball.body : null;
+    for (const e of this.executers) e.update(dt, freeBall);
 
     // 7. The ball's speed clamps, last.
     this.ball.update();
@@ -530,25 +544,26 @@ export class GameWorld {
       return;
     }
     const target = button.side === 1 ? this.p1 : this.p2;
-    const variant = executerVariantForHit(this.executerLaunches);
+    const variant = this.executerQueue.next();
     // "my" is the executer player 1 earned (it lands on player 2), "comp" the other.
     const mine = button.side === 2;
     const ex = new Executer({
       world: this.world,
       timers: this.timers,
       target,
-      players: [this.p1, this.p2],
       side: button.side,
       variant,
       origin: button.launchPoint(),
       speed: mine ? OPTIONS.myExSpeed : OPTIONS.compExSpeed,
       lifeSeconds: mine ? OPTIONS.myExLife : OPTIONS.compExLife,
       tuning: this.executerTuning,
+      random: this.executerRandom,
       // Its button pops back out once its last executer dies.
       onDeath: (e) => button.executerDied(e, this.frame),
     });
     button.launches += 1;
     this.executerLaunches += 1;
+    this.executerLaunchEffect = { frame: this.frame, variant };
     button.executers.push(ex);
     this.executers.push(ex);
   }

@@ -189,10 +189,10 @@ describe('goal gifts', () => {
     }
   });
 
-  it('shield blocks a head punch', () => {
+  it('shield blocks a hazard’s knock', () => {
     const powered = world();
     powered.powerUps.activate(2, 'shield', 0);
-    powered.p2.receiveHeadPunch(Vec2(2, -1), 10);
+    expect(powered.p2.knock(Vec2(2, -1), 10)).toBe(false);
     expect(powered.p2.recoilFrames).toBe(0);
   });
 

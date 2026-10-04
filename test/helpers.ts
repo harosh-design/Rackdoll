@@ -1,6 +1,7 @@
 import { Vec2 } from 'planck';
 import { CHARGE, toM, toPx } from '../src/sim/constants';
 import type { ExecuterTuning } from '../src/sim/executer';
+import type { ExecuterId } from '../src/sim/executerVariants';
 import type { Player } from '../src/sim/player';
 import { GameWorld, type GameWorldOptions } from '../src/sim/world';
 
@@ -88,6 +89,16 @@ export function fireAtButton(gw: GameWorld, side: 1 | 2): number {
   throw new Error('ball never reached the button');
 }
 
+/** Is any part of the doll touching the net? */
+export function touchesNet(gw: GameWorld, p: Player): boolean {
+  return p.bodies.some((b) => {
+    for (let ce = b.getContactList(); ce; ce = ce.next) {
+      if (ce.other === gw.ground.net && ce.contact.isTouching()) return true;
+    }
+    return false;
+  });
+}
+
 export function jointErrPx(p: Player): number {
   let max = 0;
   for (const j of p.revolutes) {
@@ -114,12 +125,22 @@ export const SCRIPTS: Record<string, (f: number, gw: GameWorld) => void> = {
 };
 
 /**
- * Run a script for 25 s with (or without) an executer parked beside player 1,
- * and report the worst joint separation and executer/doll penetration.
+ * Run a script for 25 s with (or without, given null) an executer parked
+ * beside player 1, and report the worst joint separation and executer/doll
+ * penetration.
+ *
+ * A hard knock can throw the doll onto the net. Hung on the net top, it
+ * stretches by itself: its rail holds the head back while the net's 2.5
+ * friction holds the hips (a doll hopping at the net alone measures ~34 px).
+ * Joint separation is only counted while the doll is clear of the net, so
+ * this measures the executer, not the net.
+ *
+ * 'crusher' is §13's original for comparison: 400 kg, its velocity
+ * overwritten every frame to drive at the target's torso x, head y.
  */
 export function ramScenario(
   script: string,
-  withExecuter: boolean,
+  executer: ExecuterId | 'crusher' | null,
   tuning?: Partial<ExecuterTuning>,
   contactIterations?: number,
 ): {
@@ -134,10 +155,18 @@ export function ramScenario(
   tornFrames: number;
   /** Longest unbroken run of frames with a joint more than 15 px apart. */
   longestTear: number;
+  /** Blows the executer landed. */
+  hits: number;
 } {
-  const gw = hazardWorld({ hazards: withExecuter, executerTuning: tuning, contactIterations });
-  // The first (kettlebell) variant uses the original ball's hunting and pinning.
+  const crusher = executer === 'crusher';
+  const gw = hazardWorld({
+    hazards: executer !== null,
+    executerOrder: executer ? [crusher ? 'boxer' : executer] : undefined,
+    executerTuning: crusher ? { mass: 400, ...tuning } : tuning,
+    contactIterations,
+  });
   fireAtButton(gw, 1);
+  const executerAtStart = gw.executers[0];
   let maxJointPx = 0;
   let maxPenetrationPx = 0;
   let contactFrames = 0;
@@ -147,16 +176,25 @@ export function ramScenario(
   let tornFrames = 0;
   let tearRun = 0;
   let longestTear = 0;
+  let sinceNet = Infinity;
   for (let f = 0; f < 30 * 25; f++) {
     SCRIPTS[script](f, gw);
     gw.step();
     gw.reap();
     const e = gw.executers[0];
+    if (crusher && e && !e.dead) {
+      const c = e.body.getWorldCenter();
+      const dx = gw.p1.tors.getWorldCenter().x - c.x;
+      const dy = gw.p1.head.getWorldCenter().y - c.y;
+      const len = Math.hypot(dx, dy) || 1;
+      e.body.setLinearVelocity(Vec2((dx / len) * 1.3, (dy / len) * 1.3));
+    }
     if (f === 20 && e) {
       const h = gw.p1.head.getWorldCenter();
       e.body.setTransform(Vec2(h.x + toM(70), h.y - toM(30)), 0);
     }
-    const joint = jointErrPx(gw.p1);
+    sinceNet = touchesNet(gw, gw.p1) ? 0 : sinceNet + 1;
+    const joint = sinceNet > 15 ? jointErrPx(gw.p1) : 0;
     maxJointPx = Math.max(maxJointPx, joint);
     if (joint > 20) tornFrames++;
     tearRun = joint > 15 ? tearRun + 1 : 0;
@@ -178,5 +216,5 @@ export function ramScenario(
     if (pen > 4) deepFrames++;
     longestDeepRun = Math.max(longestDeepRun, deepRun);
   }
-  return { maxJointPx, maxPenetrationPx, contactFrames, deepFrames, longestDeepRun, tornFrames, longestTear };
+  return { maxJointPx, maxPenetrationPx, contactFrames, deepFrames, longestDeepRun, tornFrames, longestTear, hits: executerAtStart?.hits ?? 0 };
 }

@@ -1,19 +1,78 @@
-/** One shared, deterministic ten-hit sequence for both prize buttons. */
+/**
+ * The four hazards. Physical tuning lives here; how each one attacks lives in
+ * executer.ts, with its numbers in constants.ts (MAGNET, BOXER, COMET, SPRING).
+ * `speed` scales the base hunting speed, `launch` the speed it leaves the
+ * button at, and `force` its steering force budget.
+ */
 export const EXECUTER_VARIANTS = [
-  { id: 'kettlebell', kind: 'ball', mass: 6, speed: 1, launch: 1, force: 1, friction: 0.3, restitution: 1, wave: 0, magnet: 0 },
-  { id: 'magnet', kind: 'ball', mass: 4.8, speed: 0.82, launch: 0.9, force: 0.9, friction: 0.45, restitution: 0.65, wave: 0, magnet: 3.2 },
-  { id: 'boxer', kind: 'head', mass: 5.5, speed: 1.08, launch: 1.05, force: 1.05, friction: 0.3, restitution: 0.8, wave: 0, magnet: 0 },
-  { id: 'comet', kind: 'ball', mass: 3.7, speed: 1.45, launch: 1.35, force: 0.8, friction: 0.2, restitution: 0.85, wave: 0, magnet: 0 },
-  { id: 'anchor', kind: 'ball', mass: 7.2, speed: 0.72, launch: 0.82, force: 1.12, friction: 0.7, restitution: 0.35, wave: 0, magnet: 0 },
-  { id: 'spring', kind: 'ball', mass: 3.2, speed: 1.18, launch: 1.16, force: 0.8, friction: 0.18, restitution: 1.3, wave: 0, magnet: 0 },
-  { id: 'saw', kind: 'ball', mass: 5.2, speed: 1.12, launch: 1.05, force: 1.05, friction: 0.55, restitution: 0.6, wave: 0, magnet: 0 },
-  { id: 'crystal', kind: 'ball', mass: 4.1, speed: 1.05, launch: 1.08, force: 0.9, friction: 0.25, restitution: 0.95, wave: 0.3, magnet: 0 },
-  { id: 'gear', kind: 'ball', mass: 6.5, speed: 0.9, launch: 0.92, force: 1.08, friction: 0.8, restitution: 0.5, wave: 0, magnet: 0 },
-  { id: 'drone', kind: 'ball', mass: 3.9, speed: 1.3, launch: 1.2, force: 0.85, friction: 0.12, restitution: 0.75, wave: 0.5, magnet: 0 },
+  { id: 'magnet', label: 'MAGNET', mass: 6, speed: 1.1, launch: 0.6, force: 1.8, friction: 0.45, restitution: 0.3 },
+  { id: 'boxer', label: 'BOXER', mass: 5.5, speed: 1.08, launch: 1.05, force: 1.05, friction: 0.3, restitution: 0.8 },
+  { id: 'comet', label: 'COMET', mass: 3.7, speed: 1, launch: 1.6, force: 1, friction: 0.2, restitution: 0.6 },
+  { id: 'spring', label: 'SPRING', mass: 3.2, speed: 1, launch: 1, force: 1, friction: 0.18, restitution: 1 },
 ] as const;
 
 export type ExecuterVariant = (typeof EXECUTER_VARIANTS)[number];
+export type ExecuterId = ExecuterVariant['id'];
 
-export function executerVariantForHit(hitIndex: number): ExecuterVariant {
-  return EXECUTER_VARIANTS[hitIndex % EXECUTER_VARIANTS.length];
+export function executerVariant(id: ExecuterId): ExecuterVariant {
+  return EXECUTER_VARIANTS.find((v) => v.id === id)!;
+}
+
+/** Seeded LCG, so a match's hazard order and the boxer's aim are reproducible. */
+export function seededRandom(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => (s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 0x100000000;
+}
+
+/**
+ * The order hazards come out in, shared by both buttons. Each run of four is
+ * a fresh shuffle of all four, so every hazard turns up once per run, and a
+ * run never starts with the one the last run ended on. `order` replaces the
+ * shuffle with a fixed, repeating order, for tuning and tests.
+ */
+export class ExecuterQueue {
+  private readonly upcoming: ExecuterVariant[] = [];
+  private last: ExecuterVariant | null = null;
+  private cursor = 0;
+
+  constructor(
+    private readonly random: () => number,
+    private readonly order?: readonly ExecuterId[],
+  ) {}
+
+  /** The next `n` hazards, in the order they will come out. */
+  peek(n: number): readonly ExecuterVariant[] {
+    this.fill(n);
+    return this.upcoming.slice(0, n);
+  }
+
+  /** Take the next hazard off the front. */
+  next(): ExecuterVariant {
+    this.fill(1);
+    return this.upcoming.shift()!;
+  }
+
+  /** A new match: a fresh order (or the fixed order from the top). */
+  reset(): void {
+    this.upcoming.length = 0;
+    this.last = null;
+    this.cursor = 0;
+  }
+
+  private fill(n: number): void {
+    while (this.upcoming.length < n) {
+      if (this.order?.length) {
+        this.upcoming.push(executerVariant(this.order[this.cursor++ % this.order.length]));
+        continue;
+      }
+      const run: ExecuterVariant[] = [...EXECUTER_VARIANTS];
+      for (let i = run.length - 1; i > 0; i--) {
+        const j = Math.floor(this.random() * (i + 1));
+        [run[i], run[j]] = [run[j], run[i]];
+      }
+      if (run[0] === this.last) [run[0], run[1]] = [run[1], run[0]];
+      this.last = run[run.length - 1];
+      this.upcoming.push(...run);
+    }
+  }
 }

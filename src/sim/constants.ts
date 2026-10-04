@@ -430,8 +430,6 @@ export const EXECUTER = {
    */
   mass: 6,
   inertia: 0.1,
-  /** §13 spawn points in METRES. Unused since the rework; kept for reference. */
-  spawnM: { 1: { x: 3.5, y: -4 }, 2: { x: 17.5, y: -4 } },
   /**
    * Steering is a bounded force toward §13's target velocity, not a velocity
    * overwrite. An overwrite makes it unstoppable: it crushes the doll into its
@@ -446,8 +444,6 @@ export const EXECUTER = {
    * fling it. It turns solid once this has passed and it overlaps nothing.
    */
   emergeFrames: 6,
-  /** The x2 lunge fires every Nth second of its life (§13 cadence uncertain). */
-  burstEvery: 3,
   /**
    * CCD on. A doll's hands whip past 25 m/s in a jump (31 px a step) and would
    * tunnel 20+ px into a non-bullet executer. The time-of-impact solve does not
@@ -457,33 +453,133 @@ export const EXECUTER = {
   bullet: true,
   /** Within this many px of a doll part, the step runs EXECUTER_ITERATIONS. */
   nearMarginPx: 40,
+} as const;
+
+/**
+ * Magnet: the slowest hunter, with a strong field. Its player is dragged
+ * toward it, their arms reach for it, and a free ball curves in. Once it
+ * touches them it latches and holds still, so they have to fight their way
+ * clear or knock it off with a swing.
+ */
+export const MAGNET = {
+  /** Reach of the field, px from its centre to the doll's centre of mass. */
+  fieldPx: 240,
   /**
-   * Pinning. Within engagePx of any part of its player (edge to centre), an
-   * executer stops hunting, starts spinning, and tries to pin them against
-   * their half's outer wall — or the ceiling, if it arrives below their
-   * shoulders. It lets go beyond releasePx.
+   * Sideways pull on the whole doll at point blank, m/s², fading linearly to
+   * zero at the edge. Every part gets the same acceleration, so the field
+   * moves the doll without stretching it. Horizontal only: lifting the doll
+   * toward a magnet that hovers at its chest would carry it up off the floor.
    */
-  engagePx: 45,
-  releasePx: 150,
-  /** Speed it drives the player toward the wall at, m/s. */
-  pinSpeed: 2.6,
-  /** Speed it carries the player up to the ceiling at, m/s (~37 m to go). */
-  liftSpeed: 5,
-  /** Spin while pinning, rad/s, and the torque cap spinning it up, N·m. */
-  spinRate: 14,
-  spinTorque: 4,
-  /** Head variant: hover beside the target and land a short punch each cycle. */
-  headStandOffPx: 50,
-  headChaseSpeed: 3.8,
-  headPunchReachPx: 62,
-  headImpactReachPx: 55,
-  headPunchFrames: 24,
-  headImpactFrame: 8,
-  /** Each punch nudges both the rail-mounted head and the hips. */
-  headPunchImpulse: 1.0,
-  headPunchRecoilFrames: 10,
-  headArmRestPx: 31,
-  headArmExtensionPx: 12,
+  playerPull: 30,
+  /** Extra pull on the hands and fingers, so the arms visibly reach for it. */
+  handPull: 22,
+  /**
+   * Pull on a free ball at point blank, as a multiple of the ball's own
+   * gravity. Its upward part is capped below gravity (ballLiftMax), so it can
+   * bend a ball's flight hard but never hold one up and stall the rally.
+   */
+  ballPull: 1.6,
+  ballLiftMax: 0.5,
+  /** It latches on contact and lets go once its player is this far clear, px. */
+  releasePx: 34,
+} as const;
+
+/**
+ * Comet: the fastest hunter. It circles to a run-up point on the side of its
+ * player nearest the ball, then dashes through them, knocking them away from
+ * where they need to be. It glances off, brakes, and lines up again.
+ */
+export const COMET = {
+  /** Speed it circles to its run-up point at, m/s. Faster than anything else hunts. */
+  stalkSpeed: 9,
+  /** Force budget while lining up, N: it turns on a dime. */
+  stalkForce: 160,
+  /** The run-up point: this far to the side of its player, px, and this far up. */
+  runUpPx: 150,
+  runUpRisePx: 12,
+  /** With less room than this to that side (a wall), it rams from the other side. */
+  minRunUpPx: 80,
+  /** Clearance it keeps over the head when crossing to the other side, px. */
+  overheadPx: 95,
+  /** Gives up lining up after this long and dashes from where it is. */
+  maxStalkFrames: 75,
+  /** Dash: top speed, m/s, and the force budget getting there, N. */
+  dashSpeed: 16,
+  dashForce: 380,
+  /** Fraction of each frame's steer that goes toward the target mid-dash. */
+  dashHoming: 0.12,
+  dashFrames: 24,
+  /**
+   * Knock at full dash speed: the whole doll's change of speed, m/s, and the
+   * extra jolt to the part it struck.
+   */
+  knockSpeed: 5,
+  knockJolt: 4,
+  /** Upward share of the knock. */
+  knockLift: 0.25,
+  /** Frames the player stumbles and cannot steer after a hit. */
+  stumbleFrames: 12,
+  /** After a dash it brakes for this long before lining up again. */
+  recoverFrames: 10,
+  brakeForce: 160,
+} as const;
+
+/**
+ * Spring: it charges its player, building speed the whole way, and slams
+ * into them. The longer and faster the run, the harder the push and the
+ * harder it rebounds itself. It flies back, brakes gradually, settles, then
+ * charges again.
+ */
+export const SPRING = {
+  /** Acceleration while charging, m/s², and the speed it tops out at. */
+  accel: 8,
+  topSpeed: 11,
+  /** A run this long counts in full toward the impact, px. */
+  fullTravelPx: 320,
+  /** Impact strength: mostly the speed it reached, partly the distance run. */
+  speedShare: 0.65,
+  /**
+   * Push at full strength: the whole doll's change of speed, m/s, and the
+   * extra jolt to the part it struck.
+   */
+  pushSpeed: 8,
+  pushJolt: 4,
+  pushLift: 0.3,
+  /** Stumble frames at full strength. */
+  stumbleFrames: 16,
+  /** It rebounds at this fraction of its impact speed, plus a minimum, m/s. */
+  reboundScale: 0.6,
+  reboundMin: 3,
+  /** Free flight after the rebound, frames at full strength. */
+  reboundFrames: 8,
+  /** Then it brakes at this rate, m/s², and recovers this many frames at least. */
+  brake: 14,
+  recoverFrames: 24,
+  /** Speed it rises or sinks at to line up with its player's chest, m/s. */
+  settleSpeed: 6,
+} as const;
+
+/**
+ * Boxer: it hovers a fist's length from one part of its player and throws
+ * jabs, picking a new part — head, body, an arm, a leg, a foot — after every
+ * blow that lands.
+ */
+export const BOXER = {
+  standOffPx: 48,
+  chaseSpeed: 4,
+  punchReachPx: 62,
+  impactReachPx: 56,
+  punchFrames: 22,
+  impactFrame: 8,
+  /** Each blow shoves the whole doll a little, m/s... */
+  punchSpeed: 0.75,
+  /** ...and jolts the part it lands on, m/s. */
+  partJolt: 6,
+  recoilFrames: 10,
+  /** The boxer rocks back off each blow, N·s. */
+  recoilImpulse: 2,
+  armRestPx: 31,
+  armExtensionPx: 14,
 } as const;
 
 /**

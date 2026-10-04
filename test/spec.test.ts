@@ -11,10 +11,11 @@ import {
   BALL, CHARGE, GRAVITY, ITERATIONS, JOINTS, NET_TOP_PX, PARTS, PLAYER_FRICTION, SWING, TIME_STEP, toM,
 } from '../src/sim/constants';
 import { installContactListener } from '../src/sim/contacts';
-import { EXECUTER_VARIANTS } from '../src/sim/executerVariants';
+import { EXECUTER_VARIANTS, type ExecuterId } from '../src/sim/executerVariants';
+import type { GameWorld } from '../src/sim/world';
 import { Ground } from '../src/sim/ground';
 import {
-  fireAtButton, hazardWorld, jointErrPx, jumpServe, px, ramScenario, rng, run, SCRIPTS, untilPoint, world,
+  fireAtButton, hazardWorld, jumpServe, px, ramScenario, rng, run, SCRIPTS, untilPoint, world,
 } from './helpers';
 
 describe('§17.1 world + court + ball', () => {
@@ -785,48 +786,58 @@ describe('champion opponent', () => {
 });
 
 describe('hazards (reworked §13)', () => {
-  it('shares one ten-object sequence across both buttons and repeats after ten', () => {
+  const IDS = ['magnet', 'boxer', 'comet', 'spring'] as const;
+
+  /** Mean speed over its first 15 s, after it has left the button. */
+  const meanSpeed = (id: ExecuterId) => {
+    const gw = hazardWorld({ executerOrder: [id] });
+    fireAtButton(gw, 1);
+    const e = gw.executers[0];
+    let sum = 0;
+    let n = 0;
+    for (let f = 0; f < 30 * 15 && !e.dead; f++) {
+      gw.step();
+      if (f > 10) {
+        sum += e.body.getLinearVelocity().length();
+        n++;
+      }
+    }
+    return sum / n;
+  };
+
+  it('draws the four hazards in a shuffled order that both buttons share, and shows what comes next', () => {
+    expect(EXECUTER_VARIANTS.map((v) => v.id).sort()).toEqual(['boxer', 'comet', 'magnet', 'spring']);
     const gw = hazardWorld();
-    for (let i = 0; i < 11; i++) {
+    const seen: string[] = [];
+    for (let i = 0; i < 12; i++) {
       const side = i % 2 === 0 ? 1 : 2;
       const button = gw.ground.prizeButtons.find((b) => b.side === side)!;
+      const upcoming = gw.executerQueue.peek(4).map((v) => v.id);
       fireAtButton(gw, side);
       const e = gw.executers.at(-1)!;
-      const variant = EXECUTER_VARIANTS[i % 10];
-      expect(e.variant.id).toBe(variant.id);
-      expect(e.kind).toBe(variant.kind);
-      expect(e.body.getMass()).toBeCloseTo(variant.mass, 4);
-      expect(e.body.getFixtureList()!.getFriction()).toBe(variant.friction);
-      expect(button.launches).toBe(Math.floor(i / 2) + 1);
+      // The preview was right, and the rest of it moves up one.
+      expect(e.variant.id).toBe(upcoming[0]);
+      expect(gw.executerQueue.peek(3).map((v) => v.id)).toEqual(upcoming.slice(1));
+      expect(gw.executerLaunchEffect.variant).toBe(e.variant);
+      expect(e.body.getMass()).toBeCloseTo(e.variant.mass, 4);
+      expect(e.body.getFixtureList()!.getFriction()).toBe(e.variant.friction);
+      seen.push(e.variant.id);
       e.destroy();
       gw.reap();
       run(gw, 20);
       expect(button.armed).toBe(true);
     }
-    expect(gw.executerLaunches).toBe(11);
-    expect(new Set(EXECUTER_VARIANTS.map((v) => v.id)).size).toBe(10);
+    expect(gw.executerLaunches).toBe(12);
+    // Each run of four has every hazard once; none comes twice in a row.
+    for (let i = 0; i < seen.length; i += 4) expect(new Set(seen.slice(i, i + 4)).size).toBe(4);
+    for (let i = 1; i < seen.length; i++) expect(seen[i]).not.toBe(seen[i - 1]);
+    // And the order really is shuffled: other seeds, other orders.
+    const orders = new Set([1, 2, 3, 4, 5, 6].map((seed) =>
+      world({ hazards: true, executerSeed: seed }).executerQueue.peek(8).map((v) => v.id).join()));
+    expect(orders.size).toBeGreaterThan(2);
   });
 
-  it('the second object is a slower magnet that pulls a nearby player', () => {
-    const gw = hazardWorld();
-    fireAtButton(gw, 1);
-    const first = gw.executers[0];
-    const firstLaunchSpeed = first.body.getLinearVelocity().length();
-    first.destroy(); gw.reap(); run(gw, 20);
-    fireAtButton(gw, 2);
-    const magnet = gw.executers[0];
-    expect(magnet.variant.id).toBe('magnet');
-    expect(magnet.body.getLinearVelocity().length()).toBeLessThan(firstLaunchSpeed);
-    run(gw, 20);
-    const hips = gw.p2.ass.getWorldCenter();
-    magnet.body.setTransform(Vec2(hips.x - toM(100), hips.y), 0);
-    const spy = vi.spyOn(gw.p2.ass, 'applyLinearImpulse');
-    magnet.update(TIME_STEP);
-    expect(spy).toHaveBeenCalled();
-    expect(spy.mock.calls.at(-1)![0].x).toBeLessThan(0);
-  });
-
-  it('starts the shared sequence over for a new match', () => {
+  it('starts a fresh order for a new match', () => {
     const gw = hazardWorld();
     fireAtButton(gw, 1);
     expect(gw.executerLaunches).toBe(1);
@@ -834,51 +845,185 @@ describe('hazards (reworked §13)', () => {
     expect(gw.executerLaunches).toBe(0);
     expect(gw.executers.every((e) => e.dead)).toBe(true);
     expect(gw.ground.prizeButtons[0].launches).toBe(0);
+    expect(new Set(gw.executerQueue.peek(4).map((v) => v.id)).size).toBe(4);
   });
 
-  it('the head closes to punching range and hits the target head', () => {
-    const gw = hazardWorld();
-    gw.executerLaunches = 2;
+  it('the comet hunts fastest and the magnet slowest', () => {
+    const speeds = Object.fromEntries(IDS.map((id) => [id, meanSpeed(id)]));
+    for (const id of IDS) {
+      if (id !== 'comet') expect(speeds.comet).toBeGreaterThan(speeds[id]);
+      if (id !== 'magnet') expect(speeds.magnet).toBeLessThan(speeds[id] / 2);
+    }
+  });
+
+  it('the magnet drags a nearby player in, latches on, and slows their escape', () => {
+    const parked = (distPx: number) => {
+      const gw = hazardWorld({ executerOrder: ['magnet'] });
+      fireAtButton(gw, 1);
+      run(gw, 20);
+      const e = gw.executers[0];
+      const h = gw.p1.head.getWorldCenter();
+      const t = gw.p1.tors.getWorldCenter();
+      e.body.setTransform(Vec2(t.x + toM(distPx), (h.y + t.y) / 2), 0);
+      e.body.setLinearVelocity(Vec2(0, 0));
+      return { gw, e };
+    };
+    // Standing still, they are pulled a long way toward it in a second, and it latches.
+    const idle = parked(120);
+    const x0 = px(idle.gw.p1.ass.getWorldCenter().x);
+    run(idle.gw, 30);
+    expect(px(idle.gw.p1.ass.getWorldCenter().x) - x0).toBeGreaterThan(60);
+    expect(idle.e.phase).toBe('latched');
+    expect(idle.e.field).toBeGreaterThan(0.5);
+    // Walking away from it is much slower than walking freely.
+    const walk = (gw: GameWorld) => {
+      const a = px(gw.p1.ass.getWorldCenter().x);
+      gw.control.press(37);
+      run(gw, 30);
+      return a - px(gw.p1.ass.getWorldCenter().x);
+    };
+    const free = walk(hazardWorld({ hazards: false }));
+    const held = walk(parked(60).gw);
+    expect(held).toBeLessThan(free * 0.7);
+  });
+
+  it('the magnet bends a free ball toward it, but can never hold one up', () => {
+    const setup = (hazards: boolean) => {
+      const gw = hazardWorld({ hazards, executerOrder: ['magnet'] });
+      if (hazards) fireAtButton(gw, 1);
+      run(gw, 20);
+      const e = gw.executers[0];
+      e?.body.setTransform(Vec2(toM(60), toM(100)), 0);
+      e?.body.setLinearVelocity(Vec2(0, 0));
+      return gw;
+    };
+    // A ball dropped beside it curves in.
+    const drift = (gw: GameWorld) => {
+      gw.ball.body.setTransform(Vec2(toM(140), toM(60)), 0);
+      gw.ball.body.setLinearVelocity(Vec2(0, 0));
+      run(gw, 8);
+      return px(gw.ball.position.x) - 140;
+    };
+    expect(drift(setup(false))).toBeCloseTo(0, 0);
+    expect(drift(setup(true))).toBeLessThan(-6);
+    // A ball right underneath it slows, but still falls away from it.
+    const gw = setup(true);
+    const magnet = gw.executers[0].body;
+    magnet.setTransform(Vec2(toM(-150), toM(0)), 0);
+    gw.ball.body.setTransform(Vec2(toM(-150), toM(40)), 0);
+    gw.ball.body.setLinearVelocity(Vec2(0, 0));
+    run(gw, 45);
+    expect(px(gw.ball.position.y - magnet.getWorldCenter().y)).toBeGreaterThan(100);
+    expect(gw.ball.velocity.y).toBeGreaterThan(2);
+  });
+
+  it('the boxer punches all over the body, not just the head', () => {
+    const gw = hazardWorld({ executerOrder: ['boxer'] });
     fireAtButton(gw, 1);
     const e = gw.executers[0];
-    run(gw, 20);
-    const h = gw.p1.head.getWorldCenter();
-    e.body.setTransform(Vec2(h.x + toM(45), h.y), 0);
-    e.body.setLinearVelocity(Vec2(0, 0));
-    const hit = vi.spyOn(gw.p1.head, 'applyLinearImpulse');
-    run(gw, 60);
-    expect(e.punches).toBeGreaterThan(0);
-    expect(hit).toHaveBeenCalled();
-    expect(e.pinDir).toBeNull();
+    const punched = new Set<string>();
+    for (let f = 0; f < 30 * 20 && !e.dead; f++) {
+      const aim = e.punchPart;
+      const before = e.hits;
+      gw.step();
+      gw.reap();
+      if (e.hits > before) punched.add(aim);
+    }
+    expect(punched.size).toBeGreaterThanOrEqual(5);
+    expect([...punched].some((p) => p.startsWith('Leg') || p.startsWith('Foot'))).toBe(true);
+    expect([...punched].some((p) => p.startsWith('Arm') || p.startsWith('Hand'))).toBe(true);
+    expect([...punched].some((p) => p === 'Tors' || p === 'Ass')).toBe(true);
   });
 
-  it('a head punch nudges the player away during ordinary play', () => {
+  it('a punch nudges the player away during ordinary play', () => {
     for (const side of [1, 2] as const) {
-      const gw = hazardWorld();
-      gw.executerLaunches = 2;
+      const gw = hazardWorld({ executerOrder: ['boxer'] });
       fireAtButton(gw, side);
       const e = gw.executers[0];
       const p = side === 1 ? gw.p1 : gw.p2;
-      for (let i = 0; i < 30 * 20 && e.punches === 0; i++) {
+      for (let i = 0; i < 30 * 20 && e.hits === 0; i++) {
         gw.step();
       }
-      expect(e.punches).toBeGreaterThan(0);
+      expect(e.hits).toBeGreaterThan(0);
       const direction = e.body.getWorldCenter().x < p.head.getWorldCenter().x ? 1 : -1;
       const before = px(p.head.getWorldCenter().x);
       gw.control.press(side === 1 ? 37 : 68);
       run(gw, 8);
       const recoilPx = (px(p.head.getWorldCenter().x) - before) * direction;
-      expect(recoilPx).toBeGreaterThan(8);
+      expect(recoilPx).toBeGreaterThan(4);
       expect(recoilPx).toBeLessThan(40);
     }
   });
 
-  it('a swing that meets an executer with either selected hand throws it away', () => {
+  it('the comet lines up on the ball’s side and rams its player away from the ball', () => {
+    for (const ballSide of [1, -1] as const) {
+      const gw = hazardWorld({ executerOrder: ['comet'] });
+      fireAtButton(gw, 1);
+      const e = gw.executers[0];
+      const shifts: number[] = [];
+      for (let f = 0; f < 30 * 12 && !e.dead; f++) {
+        const t = gw.p1.tors.getWorldCenter();
+        gw.ball.body.setTransform(Vec2(t.x + ballSide * toM(160), toM(120)), 0);
+        gw.ball.body.setLinearVelocity(Vec2(0, 0));
+        const before = e.hits;
+        const x0 = px(gw.p1.ass.getWorldCenter().x);
+        gw.step();
+        gw.reap();
+        if (e.hits === before) continue;
+        expect(e.ramSide).toBe(ballSide);
+        run(gw, 8);
+        f += 8;
+        shifts.push(px(gw.p1.ass.getWorldCenter().x) - x0);
+      }
+      expect(shifts.length).toBeGreaterThanOrEqual(5);
+      const mean = shifts.reduce((a, b) => a + b, 0) / shifts.length;
+      expect(mean * ballSide).toBeLessThan(-15);
+    }
+  });
+
+  it('the spring slams harder after a longer run, rebounds, recovers and charges again', () => {
+    const slam = (runUpPx: number) => {
+      const gw = hazardWorld({ executerOrder: ['spring'] });
+      fireAtButton(gw, 1);
+      const e = gw.executers[0];
+      // It settles level with its player before its first run.
+      expect(e.phase).toBe('recover');
+      for (let f = 0; f < 30 * 6 && e.phase !== 'charge'; f++) gw.step();
+      expect(e.phase).toBe('charge');
+      const h = gw.p1.head.getWorldCenter();
+      const t = gw.p1.tors.getWorldCenter();
+      e.body.setTransform(Vec2(t.x + toM(runUpPx + 20), (h.y + t.y) / 2), 0);
+      e.body.setLinearVelocity(Vec2(0, 0));
+      e.travel = 0;
+      const x0 = px(gw.p1.ass.getWorldCenter().x);
+      for (let f = 0; f < 90 && e.hits === 0; f++) gw.step();
+      expect(e.hits).toBe(1);
+      expect(e.phase).toBe('rebound');
+      const rebound = e.body.getLinearVelocity().length();
+      run(gw, 20);
+      return { gw, e, power: e.lastImpact!.power, rebound, pushed: x0 - px(gw.p1.ass.getWorldCenter().x) };
+    };
+    const short = slam(50);
+    const long = slam(200);
+    expect(long.power).toBeGreaterThan(short.power + 0.25);
+    expect(long.rebound).toBeGreaterThan(short.rebound + 1.5);
+    expect(long.pushed).toBeGreaterThan(short.pushed * 2);
+    expect(long.pushed).toBeGreaterThan(60);
+    // Then it brakes to a stop, settles, and comes again.
+    const phases: string[] = [];
+    for (let f = 0; f < 30 * 5 && long.e.hits < 2; f++) {
+      long.gw.step();
+      if (phases.at(-1) !== long.e.phase) phases.push(long.e.phase);
+    }
+    expect(phases.slice(0, 2)).toEqual(['recover', 'charge']);
+    expect(long.e.hits).toBe(2);
+  });
+
+  it('a swing that meets any hazard with either selected hand throws it away', () => {
     for (const side of [1, 2] as const) {
-      for (const kind of ['head', 'ball'] as const) {
+      for (const id of IDS) {
         for (const hand of ['outside', 'inside'] as const) {
-          const gw = hazardWorld();
-          if (kind === 'head') gw.executerLaunches = 2;
+          const gw = hazardWorld({ executerOrder: [id] });
           fireAtButton(gw, side);
           const e = gw.executers[0];
           const player = side === 1 ? gw.p1 : gw.p2;
@@ -914,7 +1059,6 @@ describe('hazards (reworked §13)', () => {
       expect(button.armed).toBe(false);
     }
   });
-
   it('stays pressed while its executer lives, then pops back out armed', () => {
     const gw = hazardWorld();
     fireAtButton(gw, 1);
@@ -949,54 +1093,6 @@ describe('hazards (reworked §13)', () => {
     expect(button.armed).toBe(true);
   });
 
-  it('close to its player it spins and pins them against their half’s outer wall', () => {
-    for (const side of [1, 2] as const) {
-      const gw = hazardWorld();
-      fireAtButton(gw, side);
-      const p = side === 1 ? gw.p1 : gw.p2;
-      const e = gw.executers[0];
-      run(gw, 20);
-      const h = p.head.getWorldCenter();
-      // Park it on the net side of the player, level with the head.
-      e.body.setTransform(Vec2(h.x + toM(side === 1 ? 70 : -70), h.y), 0);
-      let maxSpin = 0;
-      for (let i = 0; i < 30 * 10; i++) {
-        gw.step();
-        maxSpin = Math.max(maxSpin, Math.abs(e.body.getAngularVelocity()));
-      }
-      expect(e.pinDir).not.toBeNull();
-      expect(e.pinDir!.x).toBe(side === 1 ? -1 : 1);
-      expect(maxSpin).toBeGreaterThan(10);
-      const hips = px(p.ass.getWorldCenter().x);
-      if (side === 1) expect(hips).toBeLessThan(-180); // wall face at -215
-      else expect(hips).toBeGreaterThan(810); // wall face at 840
-    }
-  });
-
-  it('from below the shoulders it carries its player to the ceiling, then sets them down gently', () => {
-    const gw = hazardWorld();
-    fireAtButton(gw, 1);
-    const e = gw.executers[0];
-    run(gw, 20);
-    const h = gw.p1.head.getWorldCenter();
-    e.body.setTransform(Vec2(h.x + toM(40), h.y + toM(70)), 0);
-    e.body.setLinearVelocity(Vec2(0, 0));
-    let top = Infinity;
-    let maxJoint = 0;
-    let fastestDrop = 0;
-    for (let i = 0; i < 30 * 30; i++) {
-      gw.step();
-      gw.reap();
-      top = Math.min(top, px(gw.p1.head.getWorldCenter().y));
-      maxJoint = Math.max(maxJoint, jointErrPx(gw.p1));
-      fastestDrop = Math.max(fastestDrop, gw.p1.head.getLinearVelocity().y);
-    }
-    expect(top).toBeLessThan(-800); // the ceiling's face is at -850
-    expect(e.dead).toBe(true);
-    expect(fastestDrop).toBeLessThan(8); // lowered, not dropped from 37 m
-    expect(maxJoint).toBeLessThan(25);
-  });
-
   it('comes out as a sensor, so it cannot spawn inside the ball, then turns solid', () => {
     const gw = hazardWorld();
     fireAtButton(gw, 1);
@@ -1006,23 +1102,6 @@ describe('hazards (reworked §13)', () => {
     run(gw, 20);
     expect(ex.solid).toBe(true);
     expect(ex.body.getFixtureList()!.isSensor()).toBe(false);
-  });
-
-  it('never crosses to the other half, whatever its target does', () => {
-    for (const side of [1, 2] as const) {
-      const gw = hazardWorld();
-      fireAtButton(gw, side);
-      const ex = gw.executers[0];
-      const r = rng(side);
-      const keys = side === 1 ? [37, 38, 39, 40] : [65, 68, 87, 83];
-      for (let f = 0; f < 30 * 20 && !ex.dead; f++) {
-        for (const c of keys) (r() < 0.1 ? gw.control.press(c) : gw.control.release(c));
-        gw.step();
-        const x = px(ex.body.getWorldCenter().x);
-        if (side === 1) expect(x).toBeLessThan(320);
-        else expect(x).toBeGreaterThan(320);
-      }
-    }
   });
 
   it('with hazards off a button still clicks, launches nothing and pops back', () => {
@@ -1036,30 +1115,55 @@ describe('hazards (reworked §13)', () => {
     expect(button.armed).toBe(true);
   });
 
-  it('rams and pins the doll without tearing it apart or passing through it', () => {
+  it('never crosses to the other half, whatever its target does', () => {
+    for (const side of [1, 2] as const) {
+      for (const id of IDS) {
+        const gw = hazardWorld({ executerOrder: [id] });
+        fireAtButton(gw, side);
+        const ex = gw.executers[0];
+        const r = rng(side);
+        const keys = side === 1 ? [37, 38, 39, 40] : [65, 68, 87, 83];
+        for (let f = 0; f < 30 * 20 && !ex.dead; f++) {
+          for (const c of keys) (r() < 0.1 ? gw.control.press(c) : gw.control.release(c));
+          gw.step();
+          const x = px(ex.body.getWorldCenter().x);
+          if (side === 1) expect(x).toBeLessThan(320);
+          else expect(x).toBeGreaterThan(320);
+        }
+      }
+    }
+  });
+
+  it('hits and holds the doll without tearing it apart or passing through it', () => {
     // Deterministic scripts on the player's own half, each run with and
-    // without an executer parked at the doll. The doll's own motion already
-    // stretches its joints (the original's jump is violent), so the executer
-    // is judged against that, not against zero.
+    // without each hazard parked at the doll. The doll's own motion already
+    // stretches its joints (the original's jump is violent), so a hazard is
+    // judged against that, not against zero. The hazards now throw the doll
+    // around on purpose, so it meets its rail limits harder and more often:
+    // a little more stretch is allowed, never a sustained tear.
     for (const name of Object.keys(SCRIPTS)) {
-      const alone = ramScenario(name, false);
-      const rammed = ramScenario(name, true);
-      expect(rammed.contactFrames).toBeGreaterThan(50); // it really was at the doll
-      // Visible tearing is sustained separation, not a one-frame spike (the
-      // doll's own jump spikes ~35 px): compare how long and how often.
-      expect(rammed.longestTear).toBeLessThanOrEqual(alone.longestTear + 3);
-      expect(rammed.tornFrames).toBeLessThanOrEqual(alone.tornFrames + 8);
-      expect(rammed.maxJointPx).toBeLessThan(45);
-      // It never sits inside the doll: a fingertip flung into it can overlap
-      // for a frame before the solver pushes it out, and that is all.
-      expect(rammed.longestDeepRun).toBeLessThanOrEqual(2);
-      expect(rammed.deepFrames).toBeLessThanOrEqual(6);
-      expect(rammed.maxPenetrationPx).toBeLessThan(15);
+      const alone = ramScenario(name, null);
+      for (const id of IDS) {
+        const r = ramScenario(name, id);
+        // It really was at the doll.
+        if (id === 'magnet') expect(r.contactFrames).toBeGreaterThan(100);
+        else expect(r.hits).toBeGreaterThanOrEqual(5);
+        expect(r.longestTear).toBeLessThanOrEqual(alone.longestTear + 6);
+        expect(r.tornFrames).toBeLessThanOrEqual(alone.tornFrames + 8);
+        expect(r.maxJointPx).toBeLessThan(45);
+        // It never sits inside the doll. A limb meeting it at speed — a
+        // comet or spring at 10–16 m/s, a fingertip flung 25 m/s by a jump —
+        // can overlap it for a single frame before the solver pushes it out,
+        // and that is all.
+        expect(r.longestDeepRun).toBeLessThanOrEqual(2);
+        expect(r.deepFrames).toBeLessThanOrEqual(12);
+        expect(r.maxPenetrationPx).toBeLessThan(40);
+      }
     }
   });
 
   it('(negative control) the original 400 kg crusher does tear a standing doll', () => {
-    const r = ramScenario('idle', true, { mass: 400, maxForce: 1e9 }, 10);
+    const r = ramScenario('idle', 'crusher', undefined, 10);
     expect(r.maxJointPx).toBeGreaterThan(20);
     expect(r.longestTear).toBeGreaterThan(10); // sustained, not a blip
   });

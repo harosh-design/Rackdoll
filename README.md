@@ -95,7 +95,7 @@ Gifts alternate between player 1's and player 2's side, stay for 10 seconds,
 and can be collected only by the player on that side. Pickup grants one random
 ability for 30 seconds: 1.5× body size, ⅔ body size, feather ball (a free ball
 over your half falls at 40% gravity), 1.5× jump, faster movement, a nearby-ball
-magnet, or protection against opponent and boxer knockback. The player then returns to normal. The HUD shows the ability and its
+magnet, or protection against knockback from the opponent and the hazards. The player then returns to normal. The HUD shows the ability and its
 remaining time.
 
 Size changes affect the ragdoll's actual collision shapes. The doll grows or
@@ -142,8 +142,6 @@ code where it happens.
   the wrong hand. Normal play never reaches this.
 - **The AI's `DisableMoveAfterPas`** is cleared once the ball reaches the human's
   half. The spec says when it is set but not when it is cleared.
-- **The executer's ×2 burst** fires every third second of its life. The spec
-  marks the cadence as its least certain detail.
 - **Campaign levels** scale the points a goal is worth. Levels 1–5 use the
   spec's AI defaults (`AImaxSpeed` 7). **Level 6** is a champion challenge. It
   forecasts the ball's flight (walls, net, feather ball), finds where the ball
@@ -175,34 +173,38 @@ changes that on purpose:
   that side, so aim for your opponent's button. An executer-only barrier above
   the net (collision-filtered, so nothing else ever meets it) keeps it on its
   half.
-- **Ten-object sequence.** Both buttons share one hit counter: the first hit
-  launches a heavy kettlebell, the second a slower magnet that gently attracts
-  nearby players, and the third a hovering boxer that punches the target's
-  head. Seven more objects follow (comet, anchor, spring, saw, crystal, gear,
-  drone), each with its own artwork and physical tuning. After the tenth, the
-  sequence repeats. A player's swinging hand can knock any type away and
-  briefly interrupt its pursuit. A new match starts again at the kettlebell.
-- **The button** sinks into the wall with a flash and a shockwave. It stays
-  pressed and glowing red while any of its executers lives, with a column that
-  drains with the longest-lived one, and springs back out when the last dies.
-  Every hit replays the press. With hazards off, a button still clicks and
-  pops back, but launches nothing.
-- **Pinning.** Within 45 px of its player a ball executer stops hunting, spins up
-  to 14 rad/s, and tries to pin them:
-  - *Against their half's outer wall* (the usual case). It gets round to the
-    far side of the player — over the top if needed — and pushes their torso
-    into the wall. Pushing at head height instead tore the neck and waist
-    whenever the player fought back.
-  - *Against the ceiling*, if it arrives below their shoulders. The doll hangs
-    from its head, so a ball pushing on a limb only swings it away like a
-    pendulum. Instead it rides alongside the shoulder and puts its lifting
-    force into the head, which rides a vertical rail. It climbs at 5 m/s,
-    reaching the ceiling in ~7 s, far above the frame (an arrow marks the
-    player). Before it expires, it lowers them again rather than dropping them
-    37 m.
-  - Contact with dolls is nearly frictionless (0.05). The spin is the cue; with
-    normal friction an 8 m/s surface whips the doll's light limbs.
-  - It lets go if knocked more than 150 px clear.
+- **Four hazards, shuffled.** Both buttons share one queue: magnet, boxer,
+  comet and spring, each run of four in a fresh random order, never the same
+  one twice in a row. The next four are previewed at the top of the screen, in
+  the order they will come out, and slide along as each launches. A new match
+  shuffles a fresh order. A player's swinging hand can knock any of them
+  away and briefly interrupt its attack.
+- **Magnet.** The slowest hunter (~1.4 m/s), with a strong field out to
+  240 px. Its player is dragged toward it — the same sideways acceleration on
+  every part, up to 30 m/s², so the doll moves without stretching — and their
+  arms reach for it. Walking away from one at close range is about 45% slower.
+  It bends a free ball's flight too: sideways harder than gravity, but upward
+  never more than half of it, so it can't hold a ball up. On contact it
+  latches and holds still until its player drags themselves 34 px clear.
+- **Boxer.** Hovers a fist's length from one part of its player and jabs:
+  head, torso, hips, an arm, a hand, a leg or a foot, whichever it can reach
+  from its side, picking a new one after every blow. Each blow shoves the
+  whole doll a little and jolts the part it lands on, so a leg is swept or an
+  arm knocked aside.
+- **Comet.** The fastest hunter. It circles to a run-up point 150 px to the
+  side of its player nearest the ball (over their head, if it has to cross),
+  then dashes through them at 16 m/s and knocks them away from the ball. It
+  glances off, brakes, and lines up again — about one ram a second.
+- **Spring.** It settles level with its player's chest, then charges,
+  building speed the whole way in (8 m/s², up to 11 m/s). Impact strength is
+  65% the speed it reached and 35% the distance it ran; the push grows
+  steeper than linearly with it, so a bump from a standing start stays a bump
+  and a long run throws the player hard. It rebounds off them at a speed set
+  by its own, flies free, brakes gradually and settles, then charges again.
+- **Knocks.** Every blow is a change of velocity given to every part of the
+  doll alike, plus a jolt to the part struck, and locks steering for a few
+  frames so it carries. Shoving only the head and hips, as the opponent's
+  swing does, tore the doll at hazard strength. The shield ignores them all.
 - **No more tearing through the doll.** Measured on scripted play (standing,
   pacing, hopping, crouching), the spec's executer stretched the ragdoll's
   joints 55–134 px (p99), with tears lasting up to 9 s. That was the break-apart
@@ -210,24 +212,27 @@ changes that on purpose:
 
   | | §13 | Now | Why |
   | --- | --- | --- | --- |
-  | Mass | 400 kg | 6 kg | No iterative solver holds a 2.75 kg doll's joints against 400 kg. Still 60× the ball, so shots bounce off it. |
-  | Steering | velocity overwrite | force-limited seek, 45 N | An overwrite is unstoppable and crushes the doll into its rail limits. |
+  | Mass | 400 kg | 3.2–6 kg | No iterative solver holds a 2.75 kg doll's joints against 400 kg. Still 30–60× the ball, so shots bounce off it. |
+  | Steering | velocity overwrite | force-limited, 45–380 N | An overwrite is unstoppable and crushes the doll into its rail limits. |
   | Contact with dolls | restitution 1 | inelastic | It shoves instead of batting a 0.07 kg hand away. |
   | Solver near a doll | 10 iterations | 20, within 40 px | A light hand hitting a heavy ball is badly conditioned. It is 10 everywhere else. |
 
   It is a bullet (CCD), because a doll's hands whip past 25 m/s in a jump and
-  would otherwise tunnel into it. It has no gravity: it hovers at head height,
-  as the velocity overwrite made the original's do. It comes out of the button
+  would otherwise tunnel into it. It has no gravity: it hovers, as the velocity
+  overwrite made the original's do. It comes out of the button
   as a sensor and turns solid once clear, so it can never spawn inside the ball
   that pressed it.
 
-  Result: joint separation while being rammed stays within what the doll shows
-  on its own (e.g. pacing: 21.6 px max against 30.4 alone). Penetration stays
-  under 3.5 px. The test suite pins this, alongside a negative control proving
-  the 400 kg original still tears.
-- **Ball behaviour retained from §13:** its size, the aim point (target's torso
-  x, head y), the 1.3 m/s hunting speed with ×2 bursts, and the 25 s life. At
-  that speed it takes ~8–9 s to drift from a wall button to a player.
+  Result: joint separation while each hazard works on the doll stays close to
+  what the doll shows on its own, with no sustained tear (e.g. pacing: 20 px
+  max with the magnet against 23 alone). A limb meeting one at speed can
+  overlap it for a single frame, never longer. Frames where a hard knock has
+  thrown the doll onto the net are left out: hung on the net top it stretches
+  by itself. The test suite pins this for all four hazards, alongside a
+  negative control proving the 400 kg original still tears.
+- **Retained from §13:** its size, the 1.3 m/s base hunting speed (the magnet
+  and boxer scale it), and the 25 s life. The ×2 bursts are gone: each hazard
+  now sets its own pace.
 
 ## The ball off a body
 

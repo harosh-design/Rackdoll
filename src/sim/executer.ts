@@ -1,9 +1,12 @@
 import { Circle, Vec2, type Body, type Fixture, type Vec2Value, type World } from 'planck';
-import { BODYTYPE, COLLISION, EXECUTER, GRAVITY, OPTIONS, SPAWN_P1_PX, SWING, TIMERS, toM, toPx } from './constants';
+import {
+  BODYTYPE, BOXER, clamp01, COLLISION, COMET, COURT, EXECUTER, FLOOR_TOP_PX, GRAVITY, LEFT_WALL_INNER_PX, MAGNET,
+  NET_X_PX, OPTIONS, RIGHT_WALL_INNER_PX, SPRING, SWING, TIMERS, toM, toPx, type PartName,
+} from './constants';
 import { FrameTimer, type TimerSet } from './timer';
 import type { Player, PlayerId } from './player';
 import type { BodyUserData } from './types';
-import type { ExecuterVariant } from './executerVariants';
+import { seededRandom, type ExecuterVariant } from './executerVariants';
 
 export interface ExecuterTuning {
   mass: number;
@@ -18,7 +21,6 @@ export interface ExecuterOptions {
   timers: TimerSet;
   /** The player it hunts: the one on the side it was launched into. */
   target: Player;
-  players: readonly Player[];
   side: PlayerId;
   variant: ExecuterVariant;
   /** Where it comes out, in metres. */
@@ -26,64 +28,115 @@ export interface ExecuterOptions {
   speed?: number;
   lifeSeconds?: number;
   tuning?: Partial<ExecuterTuning>;
+  /** Seeded, so the boxer's choice of target is reproducible. */
+  random?: () => number;
   onDeath?: (e: Executer) => void;
 }
 
 /**
- * §13 Executer — a variant of the hunting hazard, using the same safe steering
- * and collision rules for all ten appearances:
+ * What it is doing now:
+ * - magnet: `hunt`, then `latched` once it touches its player;
+ * - boxer: `chase`, throwing jabs whenever it is in reach;
+ * - comet: `stalk` to a run-up point, `dash` through its player, `recover`;
+ * - spring: `charge`, `rebound` off its player, `recover`, and again.
+ */
+export type ExecuterPhase = 'hunt' | 'latched' | 'chase' | 'stalk' | 'dash' | 'charge' | 'rebound' | 'recover';
+
+/** A blow that landed, for the renderer's flash and the sound. */
+export interface ExecuterImpact {
+  /** The executer's age when it landed. */
+  age: number;
+  /** 0..1 */
+  power: number;
+  xPx: number;
+  yPx: number;
+}
+
+const FIRST_PHASE: Record<ExecuterVariant['id'], ExecuterPhase> = {
+  // The spring settles level with its player before its first run.
+  magnet: 'hunt', boxer: 'chase', comet: 'stalk', spring: 'recover',
+};
+
+/** What the boxer aims at. Fingertips are too small to read as a target. */
+const PUNCH_PARTS: readonly PartName[] = [
+  'Head', 'Tors', 'Ass', 'ArmLeft', 'ArmRight', 'HandLeft', 'HandRight', 'LegLeft', 'LegRight', 'FootLeft', 'FootRight',
+];
+
+/** What the magnet's field draws out toward it, on top of the whole-doll pull. */
+const REACHING_PARTS: readonly PartName[] = ['HandLeft', 'HandRight', 'FingerLeft', 'FingerRight'];
+
+const unit = (x: number, y: number): Vec2 => {
+  const len = Math.hypot(x, y);
+  return len < 1e-9 ? Vec2(0, 0) : Vec2(x / len, y / len);
+};
+
+/**
+ * §13 Executer, reworked into four hazards that share one body and one set of
+ * safety rules but attack in their own ways:
  *
  * - fired out of the button it came from, straight at its target;
  * - a sensor until it is clear of everything, so it can't spawn inside the
  *   ball that just pressed the button;
- * - then steered by a bounded force toward §13's target velocity instead of
- *   having its velocity overwritten every frame;
- * - no gravity: it hovers at head height, as the velocity overwrite made the
- *   original's do;
- * - no bullet CCD: it moves a few px a step, and Box2D's time-of-impact solve
- *   pushes doll parts without solving their joints.
+ * - then steered by a bounded force rather than having its velocity
+ *   overwritten, so a player in the way stops it instead of being crushed;
+ * - no gravity: it hovers, as the velocity overwrite made the original's do;
+ * - every blow it deals goes through Player.knock(): a shove shared between
+ *   the rail-mounted head and the hips, which moves the doll without tearing
+ *   it, and which the shield ignores.
  */
 export class Executer {
   readonly body: Body;
   readonly target: Player;
   readonly variant: ExecuterVariant;
   readonly side: PlayerId;
-  readonly kind: 'ball' | 'head';
   dead = false;
   /** Frames since launch. */
   age = 0;
   /** False while it is still emerging from its button as a sensor. */
   solid = false;
-  /** While pinning: unit direction of the surface it drives its player into. */
-  pinDir: Vec2 | null = null;
-  /** Ceiling pin: carrying its player up (or back down). */
-  carrying = false;
-  /** Head variant: -1 outside punching range, otherwise its swing frame. */
-  punchFrame = -1;
-  punches = 0;
+  phase: ExecuterPhase;
+  /** Frames spent in the current phase. */
+  phaseAge = 0;
   /** Steering pauses briefly after a player's hit so the knockback carries. */
   knockbackFrames = 0;
+  /** Blows that connected: punches, rams and slams. */
+  hits = 0;
+  lastImpact: ExecuterImpact | null = null;
+  /** Magnet: how hard its field is pulling its player right now, 0..1. */
+  field = 0;
+  /** Boxer: the part it is going for, and its swing frame (-1 out of reach). */
+  punchPart: PartName;
+  punchFrame = -1;
+  /** Comet: the side of its player it rams from, +1 is to their right. */
+  ramSide: 1 | -1;
+  /** Comet: the line of the current dash. */
+  dashDir = Vec2(0, 0);
+  /** Spring: distance run on the current charge, m. */
+  travel = 0;
 
   private readonly fixture: Fixture;
   private readonly timer: FrameTimer;
   private readonly timers: TimerSet;
   private readonly world: World;
   private readonly speed: number;
-  private readonly players: readonly Player[];
   private readonly lifeSeconds: number;
   private readonly tuning: ExecuterTuning;
+  private readonly random: () => number;
   private readonly onDeath?: (e: Executer) => void;
+  /** Velocity going into the last step: what it hit with. */
+  private lastVelocity = Vec2(0, 0);
+  private reboundFrames = 0;
 
   constructor(o: ExecuterOptions) {
     this.world = o.world;
     this.timers = o.timers;
     this.target = o.target;
-    this.players = o.players;
     this.variant = o.variant;
     this.side = o.side;
-    this.kind = o.variant.kind;
+    this.phase = FIRST_PHASE[o.variant.id];
     this.speed = (o.speed ?? OPTIONS.myExSpeed) * o.variant.speed;
     this.lifeSeconds = o.lifeSeconds ?? OPTIONS.myExLife;
+    this.random = o.random ?? seededRandom(1);
     this.onDeath = o.onDeath;
     this.tuning = {
       mass: o.variant.mass,
@@ -101,7 +154,8 @@ export class Executer {
       linearDamping: 0,
       gravityScale: 0,
       bullet: this.tuning.bullet,
-      fixedRotation: this.kind === 'head',
+      // Only the comet tumbles; the others are drawn facing their player.
+      fixedRotation: o.variant.id !== 'comet',
     });
     this.fixture = this.body.createFixture({
       shape: Circle(toM(EXECUTER.radiusPx)),
@@ -115,29 +169,44 @@ export class Executer {
     this.body.setMassData({ mass: this.tuning.mass, center: Vec2(0, 0), I: EXECUTER.inertia });
     this.body.setUserData({ e_bodytype: BODYTYPE.EXECUTER, sprite: `Executer-${o.variant.id}` } as BodyUserData);
 
+    const tors = this.target.tors.getWorldCenter();
+    const sideOf = (x: number): 1 | -1 => (x >= tors.x ? 1 : -1);
+    this.ramSide = sideOf(o.origin.x);
+    this.punchPart = this.choosePunchPart(sideOf(o.origin.x));
+
     // Fire it straight at its target.
-    const d = this.toTarget();
+    const c = this.body.getWorldCenter();
+    const aim = this.chestPoint();
+    const d = unit(aim.x - c.x, aim.y - c.y);
     this.body.setLinearVelocity(Vec2(d.x * this.tuning.launchSpeed, d.y * this.tuning.launchSpeed));
+    this.lastVelocity = this.body.getLinearVelocity().clone();
 
     this.timer = o.timers.add(
-      new FrameTimer(TIMERS.executerTickMs, o.lifeSeconds ?? OPTIONS.myExLife, () => {}, () => this.destroy()),
+      new FrameTimer(TIMERS.executerTickMs, this.lifeSeconds, () => {}, () => this.destroy()),
     );
     this.timer.start();
   }
 
-  /** §13's aim point: the target's torso x, head y. Unit vector toward it. */
-  private toTarget(): Vec2 {
-    const p = this.body.getWorldCenter();
-    const dx = this.target.tors.getWorldCenter().x - p.x;
-    const dy = this.target.head.getWorldCenter().y - p.y;
-    const len = Math.hypot(dx, dy);
-    return len < 1e-9 ? Vec2(0, 0) : Vec2(dx / len, dy / len);
+  /** Where it aims: its player's chest, between the head and the torso. */
+  private chestPoint(): Vec2 {
+    const head = this.target.head.getWorldCenter();
+    const tors = this.target.tors.getWorldCenter();
+    return Vec2(tors.x, (head.y + tors.y) / 2);
   }
 
-  /** x2 lunge every Nth second of its life. */
-  private get burst(): number {
-    const n = this.timer.currentCount;
-    return n > 0 && n % EXECUTER.burstEvery === 0 ? 2 : 1;
+  /** Its player's centre of mass. */
+  private dollCentre(): Vec2 {
+    let m = 0;
+    let x = 0;
+    let y = 0;
+    for (const b of this.target.bodies) {
+      const p = b.getWorldCenter();
+      const bm = b.getMass();
+      m += bm;
+      x += p.x * bm;
+      y += p.y * bm;
+    }
+    return Vec2(x / m, y / m);
   }
 
   private overlapsAnything(): boolean {
@@ -145,6 +214,20 @@ export class Executer {
       if (ce.contact.isTouching()) return true;
     }
     return false;
+  }
+
+  /** Every part of its player it is touching. */
+  private touchingParts(): Set<Body> {
+    const parts = new Set<Body>();
+    for (let ce = this.body.getContactList(); ce; ce = ce.next) {
+      if (ce.contact.isTouching() && ce.other && this.target.bodies.includes(ce.other)) parts.add(ce.other);
+    }
+    return parts;
+  }
+
+  /** A part of its player it is touching, if any. */
+  private touchedPart(): Body | null {
+    return this.touchingParts().values().next().value ?? null;
   }
 
   /** Distance from its centre to the nearest part of its player, px. */
@@ -158,244 +241,380 @@ export class Executer {
     return toPx(best);
   }
 
-  /** §13's aim point, in metres. */
-  private aimPoint(): Vec2 {
-    return Vec2(this.target.tors.getWorldCenter().x, this.target.head.getWorldCenter().y);
+  /** Its own half, left to right, in metres, keeping its radius clear of the wall and the net. */
+  private get halfBounds(): [number, number] {
+    const r = EXECUTER.radiusPx + 4;
+    return this.side === 1
+      ? [toM(LEFT_WALL_INNER_PX + r), toM(NET_X_PX - r)]
+      : [toM(NET_X_PX + r), toM(RIGHT_WALL_INNER_PX - r)];
+  }
+
+  /** A height it can actually hover at: clear of the floor and the ceiling. */
+  private clampY(y: number): number {
+    const r = EXECUTER.radiusPx + 3;
+    const ceiling = COURT.ceiling.y + COURT.ceiling.hh;
+    return Math.min(toM(FLOOR_TOP_PX - r), Math.max(toM(ceiling + r), y));
+  }
+
+  private setPhase(phase: ExecuterPhase): void {
+    this.phase = phase;
+    this.phaseAge = 0;
   }
 
   /**
-   * The surface it pins against, chosen as it closes in: the ceiling if it
-   * arrives below its player's shoulders, otherwise its half's outer wall.
+   * Once per frame, after the step. `dt` is the step that just ran. `ball` is
+   * the ball while it is free and in play, otherwise null.
    */
-  private choosePin(): Vec2 {
-    const c = this.body.getWorldCenter();
-    if (c.y > this.aimPoint().y + toM(30)) return Vec2(0, -1);
-    return Vec2(this.side === 1 ? -1 : 1, 0);
-  }
-
-  /** Once per frame, after the step. `dt` is the step that just ran. */
-  update(dt: number): void {
+  update(dt: number, ball: Body | null = null): void {
     if (this.dead) return;
     this.age += 1;
+    this.phaseAge += 1;
 
     if (!this.solid) {
-      if (this.age < this.tuning.emergeFrames || this.overlapsAnything()) return; // coasting out
-      this.fixture.setSensor(false);
-      this.solid = true;
-    }
-
-    if (this.knockbackFrames > 0) {
+      if (this.age >= this.tuning.emergeFrames && !this.overlapsAnything()) {
+        this.fixture.setSensor(false);
+        this.solid = true;
+      }
+    } else if (this.knockbackFrames > 0) {
       this.knockbackFrames -= 1;
-      return;
+      this.field = 0;
+    } else {
+      switch (this.variant.id) {
+        case 'magnet': this.updateMagnet(dt, ball); break;
+        case 'boxer': this.updateBoxer(dt); break;
+        case 'comet': this.updateComet(dt, ball); break;
+        case 'spring': this.updateSpring(dt); break;
+      }
     }
-
-    if (this.variant.magnet > 0) this.attractPlayers(dt);
-
-    if (this.kind === 'head') {
-      this.updateHead(dt);
-      return;
-    }
-
-    const near = this.nearestPartPx();
-    if (!this.pinDir && near < EXECUTER.radiusPx + EXECUTER.engagePx) this.pinDir = this.choosePin();
-    else if (this.pinDir && near > EXECUTER.radiusPx + EXECUTER.releasePx) {
-      this.pinDir = null;
-      this.carrying = false;
-    }
-
-    const vd = this.pinDir ? this.pinVelocity(this.pinDir) : this.huntVelocity();
-    this.drive(vd, dt);
-    if (this.pinDir) this.spin(this.pinDir, dt);
-    if (this.pinDir && this.pinDir.y < 0) this.lift(dt);
+    this.lastVelocity = this.body.getLinearVelocity().clone();
   }
 
-  /** The magnet gives nearby dolls a gentle, distance-limited pull. */
-  private attractPlayers(dt: number): void {
+  // -------------------------------------------------------------------------
+  // Magnet
+  // -------------------------------------------------------------------------
+
+  /**
+   * Drift slowly toward its player; latch on contact and hold still. The field
+   * does the real work: it drags the player in from well outside reach.
+   */
+  private updateMagnet(dt: number, ball: Body | null): void {
+    const touching = this.touchedPart() !== null;
+    if (this.phase === 'hunt' && touching) this.setPhase('latched');
+    else if (this.phase === 'latched' && !touching && this.nearestPartPx() > EXECUTER.radiusPx + MAGNET.releasePx) {
+      this.setPhase('hunt');
+    }
+    // Latched, it holds its ground, so they have to drag themselves clear.
+    this.drive(this.phase === 'latched' ? Vec2(0, 0) : this.seek(this.chestPoint(), this.speed), dt);
+    this.pullPlayer(dt);
+    if (ball) this.pullBall(ball, dt);
+  }
+
+  private pullPlayer(dt: number): void {
     const c = this.body.getWorldCenter();
-    const radius = toM(180);
-    for (const player of this.players) {
-      const hips = player.ass.getWorldCenter();
-      const dx = c.x - hips.x;
-      const dy = c.y - hips.y;
-      const distance = Math.hypot(dx, dy);
-      if (distance < toM(EXECUTER.radiusPx) || distance >= radius) continue;
-      const strength = this.variant.magnet * dt * (1 - distance / radius) / distance;
-      const impulse = Vec2(dx * strength, dy * strength);
-      player.ass.applyLinearImpulse(impulse, hips, true);
-      const head = player.head.getWorldCenter();
-      player.head.applyLinearImpulse(Vec2(impulse.x * 0.25, impulse.y * 0.25), head, true);
+    const com = this.dollCentre();
+    const dx = c.x - com.x;
+    const reach = toM(MAGNET.fieldPx);
+    const d = Math.hypot(dx, c.y - com.y);
+    this.field = d < reach ? 1 - d / reach : 0;
+    if (this.field === 0) return;
+    // The same sideways acceleration on every part, so the doll is drawn in
+    // whole with nothing stretched. It fades out as they come up against
+    // its side: pulled on toward its centre, the hips would slide under it
+    // while the head stays put, and the doll would fold around it.
+    const clear = clamp01((Math.abs(dx) - toM(EXECUTER.radiusPx + 12)) / toM(24));
+    const ax = Math.sign(dx) * MAGNET.playerPull * this.field * clear;
+    for (const b of this.target.bodies) {
+      b.applyLinearImpulse(Vec2(b.getMass() * ax * dt, 0), b.getWorldCenter(), true);
+    }
+    // The arms reach for it. An arm already on it is left alone: pulling it
+    // in harder hooks the hand on it while the body walks away, and the
+    // wrist stretches.
+    const touching = this.touchingParts();
+    for (const name of REACHING_PARTS) {
+      const side = name.endsWith('Left') ? 'Left' : 'Right';
+      if (['Arm', 'Hand', 'Finger'].some((limb) => touching.has(this.target.part(`${limb}${side}` as PartName)))) continue;
+      const b = this.target.part(name);
+      const p = b.getWorldCenter();
+      const u = unit(c.x - p.x, c.y - p.y);
+      const j = b.getMass() * MAGNET.handPull * this.field * dt;
+      b.applyLinearImpulse(Vec2(u.x * j, u.y * j), p, true);
     }
   }
 
-  /** Keep a fist's length from the player's head and throw alternating blows. */
-  private updateHead(dt: number): void {
+  /**
+   * Bend a free ball's flight toward it. Sideways it can pull harder than
+   * gravity; upward never, so it can't hold a ball up and stall the rally.
+   */
+  private pullBall(ball: Body, dt: number): void {
     const c = this.body.getWorldCenter();
-    const h = this.target.head.getWorldCenter();
-    const dx = h.x - c.x;
-    const dy = h.y - c.y;
+    const p = ball.getWorldCenter();
+    const reach = toM(MAGNET.fieldPx);
+    const d = Math.hypot(c.x - p.x, c.y - p.y);
+    if (d >= reach) return;
+    const g = GRAVITY.y * ball.getGravityScale();
+    const a = MAGNET.ballPull * g * (1 - d / reach);
+    const u = unit(c.x - p.x, c.y - p.y);
+    const ay = Math.max(u.y * a, -MAGNET.ballLiftMax * g);
+    ball.applyLinearImpulse(Vec2(ball.getMass() * u.x * a * dt, ball.getMass() * ay * dt), p, true);
+  }
+
+  // -------------------------------------------------------------------------
+  // Boxer
+  // -------------------------------------------------------------------------
+
+  /** Keep a fist's length from the chosen part and throw jabs at it. */
+  private updateBoxer(dt: number): void {
+    const c = this.body.getWorldCenter();
+    const side: 1 | -1 = c.x >= this.target.tors.getWorldCenter().x ? 1 : -1;
+    const part = this.target.part(this.punchPart);
+    const p = part.getWorldCenter();
+    const stand = Vec2(p.x + side * toM(BOXER.standOffPx), this.clampY(p.y));
+    this.drive(this.seek(stand, Math.max(this.speed * 1.5, BOXER.chaseSpeed)), dt);
+
+    const dx = p.x - c.x;
+    const dy = p.y - c.y;
     const distance = toPx(Math.hypot(dx, dy));
-    const facing = dx >= 0 ? 1 : -1;
-    const standX = h.x - facing * toM(EXECUTER.headStandOffPx);
-    const standY = h.y;
-    const mx = standX - c.x;
-    const my = standY - c.y;
-    const m = Math.hypot(mx, my);
-    const speed = Math.max(this.speed * 1.5, EXECUTER.headChaseSpeed);
-    this.drive(m < toM(3) ? Vec2(0, 0) : Vec2(mx / m * Math.min(speed, m * 5), my / m * Math.min(speed, m * 5)), dt);
-
-    if (distance > EXECUTER.headPunchReachPx) {
+    if (distance > BOXER.punchReachPx) {
       this.punchFrame = -1;
       return;
     }
-    this.punchFrame = (this.punchFrame + 1) % EXECUTER.headPunchFrames;
-    if (this.punchFrame !== EXECUTER.headImpactFrame || distance > EXECUTER.headImpactReachPx) return;
+    this.punchFrame = (this.punchFrame + 1) % BOXER.punchFrames;
+    if (this.punchFrame !== BOXER.impactFrame || distance > BOXER.impactReachPx) return;
 
-    // The head rides a rail, so pushing it alone barely moves the doll. Share
-    // the blow with the hips to give the whole player a small sideways recoil.
-    const impulse = Vec2(facing * EXECUTER.headPunchImpulse, -EXECUTER.headPunchImpulse * 0.15);
-    this.target.receiveHeadPunch(impulse, EXECUTER.headPunchRecoilFrames);
-    this.body.applyLinearImpulse(Vec2(-impulse.x * 2, -impulse.y * 2), c, true);
-    this.punches += 1;
+    // The whole doll takes a small shove and the part it lands on a jolt, so
+    // a leg is swept, an arm knocked aside, the head snapped back.
+    const u = unit(dx, dy);
+    const shove = Vec2(u.x * BOXER.punchSpeed, (u.y - 0.15) * BOXER.punchSpeed);
+    this.target.knock(shove, BOXER.recoilFrames, part, Vec2(u.x * BOXER.partJolt, u.y * BOXER.partJolt));
+    this.body.applyLinearImpulse(Vec2(-u.x * BOXER.recoilImpulse, -u.y * BOXER.recoilImpulse), c, true);
+    this.landed(part, 0.35);
+    this.punchPart = this.choosePunchPart(side);
+  }
+
+  /**
+   * Any part it can reach from its side without punching through the body,
+   * never the same one twice running.
+   */
+  private choosePunchPart(side: 1 | -1): PartName {
+    const torsX = this.target.tors.getWorldCenter().x;
+    const open = PUNCH_PARTS.filter((name) => name !== this.punchPart &&
+      (this.target.part(name).getWorldCenter().x - torsX) * side > -toM(6));
+    const pool = open.length > 0 ? open : PUNCH_PARTS;
+    return pool[Math.floor(this.random() * pool.length)];
+  }
+
+  // -------------------------------------------------------------------------
+  // Comet
+  // -------------------------------------------------------------------------
+
+  private updateComet(dt: number, ball: Body | null): void {
+    const c = this.body.getWorldCenter();
+    const aim = this.chestPoint();
+    switch (this.phase) {
+      case 'stalk': {
+        this.ramSide = this.chooseRamSide(ball);
+        const tors = this.target.tors.getWorldCenter();
+        const head = this.target.head.getWorldCenter();
+        const [minX, maxX] = this.halfBounds;
+        const runUp = Vec2(
+          Math.min(maxX, Math.max(minX, tors.x + this.ramSide * toM(COMET.runUpPx))),
+          this.clampY(aim.y - toM(COMET.runUpRisePx)),
+        );
+        // On the wrong side of them: climb on its own side, clear of the
+        // body, then cross over their head. Straight across would plough
+        // through the doll.
+        const offside = (c.x - tors.x) * this.ramSide < toM(20);
+        const over = this.clampY(head.y - toM(COMET.overheadPx));
+        let goal = runUp;
+        if (offside && c.y > head.y - toM(50)) {
+          const out = tors.x - this.ramSide * Math.max(Math.abs(c.x - tors.x), toM(70));
+          goal = Vec2(Math.min(maxX, Math.max(minX, out)), over);
+        } else if (offside) {
+          goal = Vec2(tors.x + this.ramSide * toM(40), over);
+        }
+        this.drive(this.seek(goal, COMET.stalkSpeed, 6), dt, COMET.stalkForce);
+        const ready = Math.hypot(runUp.x - c.x, runUp.y - c.y) < toM(26);
+        if (!offside && (ready || this.phaseAge > COMET.maxStalkFrames)) {
+          this.dashDir = unit(aim.x - c.x, aim.y - c.y);
+          this.setPhase('dash');
+        }
+        return;
+      }
+      case 'dash': {
+        const hit = this.touchedPart();
+        if (hit) {
+          this.ram(hit);
+          return;
+        }
+        const past = (aim.x - c.x) * this.dashDir.x + (aim.y - c.y) * this.dashDir.y < -toM(30);
+        if (past || this.phaseAge > COMET.dashFrames) {
+          this.setPhase('recover');
+          return;
+        }
+        // Mostly committed to its line, so a jump can still dodge it.
+        const want = unit(aim.x - c.x, aim.y - c.y);
+        const h = COMET.dashHoming;
+        this.dashDir = unit(this.dashDir.x * (1 - h) + want.x * h, this.dashDir.y * (1 - h) + want.y * h);
+        this.drive(Vec2(this.dashDir.x * COMET.dashSpeed, this.dashDir.y * COMET.dashSpeed), dt, COMET.dashForce);
+        return;
+      }
+      default:
+        this.drive(Vec2(0, 0), dt, COMET.brakeForce);
+        if (this.phaseAge >= COMET.recoverFrames) this.setPhase('stalk');
+    }
+  }
+
+  /**
+   * Ram from the ball's side, to knock its player away from it. With the ball
+   * held or right overhead, from the net side, back toward their wall. Short
+   * of room for a run-up on that side, from the other.
+   */
+  private chooseRamSide(ball: Body | null): 1 | -1 {
+    const torsX = this.target.tors.getWorldCenter().x;
+    let side = this.ramSide;
+    if (ball) {
+      const dx = ball.getWorldCenter().x - torsX;
+      if (Math.abs(dx) > toM(40)) side = dx > 0 ? 1 : -1;
+    } else {
+      side = this.side === 1 ? 1 : -1;
+    }
+    const [minX, maxX] = this.halfBounds;
+    const room = side > 0 ? maxX - torsX : torsX - minX;
+    return room < toM(COMET.minRunUpPx) ? (-side as 1 | -1) : side;
+  }
+
+  private ram(part: Body): void {
+    const v = this.lastVelocity;
+    const speed = Math.hypot(v.x, v.y);
+    const power = clamp01(speed / COMET.dashSpeed);
+    const d = this.dashDir;
+    const k = COMET.knockSpeed * power;
+    const j = COMET.knockJolt * power;
+    this.target.knock(
+      Vec2(d.x * k, (d.y * 0.5 - COMET.knockLift) * k), Math.round(COMET.stumbleFrames * power), part, Vec2(d.x * j, d.y * j),
+    );
+    // It glances off, up and on over them.
+    this.body.setLinearVelocity(Vec2(d.x * speed * 0.35, -speed * 0.45));
+    this.landed(part, power);
+    this.setPhase('recover');
+  }
+
+  // -------------------------------------------------------------------------
+  // Spring
+  // -------------------------------------------------------------------------
+
+  private updateSpring(dt: number): void {
+    switch (this.phase) {
+      case 'charge': {
+        const hit = this.touchedPart();
+        if (hit) {
+          this.slam(hit);
+          return;
+        }
+        const v = this.body.getLinearVelocity();
+        this.travel += Math.hypot(v.x, v.y) * dt;
+        // Full speed is the goal, but the force budget only allows `accel`,
+        // so speed builds the whole way in.
+        const c = this.body.getWorldCenter();
+        const aim = this.chestPoint();
+        const d = unit(aim.x - c.x, aim.y - c.y);
+        this.drive(Vec2(d.x * SPRING.topSpeed, d.y * SPRING.topSpeed), dt, this.tuning.mass * SPRING.accel);
+        return;
+      }
+      case 'rebound':
+        if (this.phaseAge >= this.reboundFrames) this.setPhase('recover');
+        return;
+      default: {
+        // Brakes gradually, settling level with its player's chest, so the
+        // next run comes in from the side: a slam from above would only sag
+        // the doll on its rail.
+        // Spent, it gives way to a player who walks into it.
+        const dy = this.chestPoint().y - this.body.getWorldCenter().y;
+        const vy = Math.max(-SPRING.settleSpeed, Math.min(SPRING.settleSpeed, dy * 3));
+        if (!this.touchedPart()) this.drive(Vec2(0, vy), dt, this.tuning.mass * SPRING.brake);
+        const v = this.body.getLinearVelocity();
+        if (this.phaseAge >= SPRING.recoverFrames && Math.abs(v.x) < 0.5 && Math.abs(dy) < toM(24)) {
+          this.travel = 0;
+          this.setPhase('charge');
+        }
+      }
+    }
+  }
+
+  /** Impact strength, 0..1: mostly the speed it reached, partly how far it ran. */
+  get slamPower(): number {
+    const v = this.lastVelocity;
+    const speed = clamp01(Math.hypot(v.x, v.y) / SPRING.topSpeed);
+    const run = clamp01(toPx(this.travel) / SPRING.fullTravelPx);
+    return SPRING.speedShare * speed + (1 - SPRING.speedShare) * run;
+  }
+
+  private slam(part: Body): void {
+    const v = this.lastVelocity;
+    const speed = Math.hypot(v.x, v.y);
+    const power = this.slamPower;
+    const c = this.body.getWorldCenter();
+    const aim = this.chestPoint();
+    const d = speed > 0.5 ? unit(v.x, v.y) : unit(aim.x - c.x, aim.y - c.y);
+    // Mostly sideways: a straight-down slam would only sag the doll on its rail.
+    const push = unit(d.x, d.y * 0.4);
+    // Steeper than linear, so a bump from a standing start stays a bump.
+    const k = SPRING.pushSpeed * power ** 1.5;
+    const j = SPRING.pushJolt * power;
+    this.target.knock(
+      Vec2(push.x * k, push.y * k - SPRING.pushLift * k), Math.round(SPRING.stumbleFrames * power), part, Vec2(d.x * j, d.y * j),
+    );
+    // It bounces back off them, harder the harder it hit.
+    const back = SPRING.reboundMin + SPRING.reboundScale * speed;
+    this.body.setLinearVelocity(Vec2(-d.x * back, -d.y * back - 1));
+    this.reboundFrames = Math.round(SPRING.reboundFrames * (0.4 + 0.6 * power));
+    this.landed(part, power);
+    this.setPhase('rebound');
+  }
+
+  // -------------------------------------------------------------------------
+
+  private landed(part: Body, power: number): void {
+    const c = this.body.getWorldCenter();
+    const p = part.getWorldCenter();
+    this.hits += 1;
+    this.lastImpact = { age: this.age, power, xPx: toPx((c.x + p.x) / 2), yPx: toPx((c.y + p.y) / 2) };
   }
 
   /** An active player swing pushes this body away and interrupts its attack. */
   hitByPlayer(impulse: Vec2): void {
     if (this.dead || !this.solid) return;
-    this.pinDir = null;
-    this.carrying = false;
     this.punchFrame = -1;
+    if (this.phase === 'latched') this.setPhase('hunt');
+    else if (this.phase === 'dash' || this.phase === 'charge' || this.phase === 'rebound') this.setPhase('recover');
     this.knockbackFrames = SWING.executerKnockFrames;
     this.body.applyLinearImpulse(impulse, this.body.getWorldCenter(), true);
   }
 
-  /** §13: straight at the aim point at its speed, x2 in a burst. */
-  private huntVelocity(): Vec2 {
-    const d = this.toTarget();
-    const s = this.speed * this.burst;
-    const wave = this.variant.wave * Math.sin(this.age * 0.12) * s;
-    return Vec2(d.x * s - d.y * wave, d.y * s + d.x * wave);
-  }
-
-  /**
-   * Drive the player into the pin surface. Into a wall it pushes the torso
-   * from the far side, going over the top first if it is on the wrong
-   * side. Up into the ceiling it pushes under the shoulder, beside the neck:
-   * the doll hangs from its head, so a push near the top lifts it, while a
-   * push on the legs only swings it away like a pendulum.
-   */
-  private pinVelocity(dir: Vec2): Vec2 {
+  /** Velocity toward `p` at up to `speed`, easing in so it settles rather than overshoots. */
+  private seek(p: Vec2Value, speed: number, gain = 5): Vec2 {
     const c = this.body.getWorldCenter();
-    const gap = toM(EXECUTER.radiusPx + 14);
-    const fast = this.speed * 2;
-    const toward = (x: number, y: number, s: number) => {
-      const dx = x - c.x;
-      const dy = y - c.y;
-      const len = Math.hypot(dx, dy) || 1;
-      return Vec2((dx / len) * s, (dy / len) * s);
-    };
-
-    if (dir.y < 0) {
-      // Ride up beside the shoulder; lift() does the carrying.
-      const head = this.target.head.getWorldCenter();
-      const side = c.x >= head.x ? 1 : -1;
-      // Beside the shoulder, just clear of the hanging arm, so it rides with
-      // the player instead of shoving them sideways into a wall.
-      const ax = head.x + side * toM(EXECUTER.radiusPx + 34);
-      const ay = head.y + toM(20);
-      const d = Math.hypot(ax - c.x, ay - c.y);
-      // Catch up faster than it carries, or it loses them going up or down.
-      if (d > toM(20)) return toward(ax, ay, Math.max(fast, EXECUTER.liftSpeed * 1.6));
-      // Alongside: keep station on the anchor while matching the climb.
-      const hv = this.target.head.getLinearVelocity();
-      return Vec2((ax - c.x) * 6 + hv.x, (ay - c.y) * 6 + hv.y);
-    }
-
-    // Into a wall it pushes the torso's middle: pushing at head height while the
-    // player drives the hips the other way stretches the neck and waist.
-    const tors = this.target.tors.getWorldCenter();
-    const aim = Vec2(tors.x, tors.y);
-    const rx = c.x - aim.x;
-    const ry = c.y - aim.y;
-    const along = rx * dir.x; // < 0: on the far side from the wall, as wanted
-    if (along > -gap * 0.5) {
-      // Wrong side: over the top of the player to the far side.
-      return toward(aim.x - dir.x * gap, aim.y - toM(EXECUTER.radiusPx + 55), fast);
-    }
-    // Push toward the wall, sliding up or down to stay level with the aim point.
-    return Vec2(dir.x * EXECUTER.pinSpeed, -ry * 4);
-  }
-
-  /**
-   * Ceiling pin: carry the player up. A ragdoll hangs from its head, and a
-   * round ball pushing on a limb only swings it away, so the lifting force goes
-   * into the head, which rides a vertical rail, while the executer rides
-   * alongside the shoulder. Nothing below the head is pulled on, so nothing
-   * stretches. Same force budget as its drive; climbs at liftSpeed.
-   */
-  private lift(dt: number): void {
-    const head = this.target.head;
-    const c = this.body.getWorldCenter();
-    const h = head.getWorldCenter();
-    // The carry starts once it is riding alongside the shoulder, and then holds
-    // until the pin ends (knocked more than releasePx clear) — not on a
-    // per-frame position check, which a flailing arm at the ceiling defeats.
-    if (!this.carrying) {
-      const side = c.x >= h.x ? 1 : -1;
-      const sx = h.x + side * toM(EXECUTER.radiusPx + 34);
-      const sy = h.y + toM(20);
-      if (Math.hypot(c.x - sx, c.y - sy) > toM(EXECUTER.radiusPx + 40) || c.y < h.y - toM(10)) return;
-      this.carrying = true;
-    }
-    // A velocity servo on the whole doll's mass (it hangs from the head), so
-    // the climb is a steady pinSpeed rather than kicks to a 0.35 kg head.
-    let dollMass = 0;
-    for (const b of this.target.bodies) dollMass += b.getMass();
-    const vy = head.getLinearVelocity().y;
-    // Near the end of its life it lowers the player again, starting just in
-    // time to set them down at liftSpeed — otherwise they'd drop ~37 m from
-    // the ceiling and land hard enough to wrench the doll apart.
-    const heightM = h.y - toM(SPAWN_P1_PX.y);
-    const secondsLeft = this.lifeFraction * this.lifeSeconds;
-    const lowering = -heightM / EXECUTER.liftSpeed + 1 > secondsLeft;
-    const target = lowering ? EXECUTER.liftSpeed : -EXECUTER.liftSpeed;
-    let j = dollMass * (target - vy - GRAVITY.y * dt);
-    j = Math.max(-this.tuning.maxForce * dt, Math.min(0, j));
-    head.applyLinearImpulse(Vec2(0, j), h, true);
+    const dx = p.x - c.x;
+    const dy = p.y - c.y;
+    const len = Math.hypot(dx, dy);
+    if (len < toM(1)) return Vec2(0, 0);
+    const s = Math.min(speed, len * gain);
+    return Vec2((dx / len) * s, (dy / len) * s);
   }
 
   /** Force-limited: a player in the way stops it instead of being crushed. */
-  private drive(vd: Vec2, dt: number): void {
+  private drive(vd: Vec2, dt: number, maxForce = this.tuning.maxForce): void {
     const v = this.body.getLinearVelocity();
     const m = this.body.getMass();
     let jx = m * (vd.x - v.x);
     let jy = m * (vd.y - v.y);
-    const jMax = this.tuning.maxForce * dt;
+    const jMax = maxForce * dt;
     const j = Math.hypot(jx, jy);
     if (j > jMax) {
       jx *= jMax / j;
       jy *= jMax / j;
     }
     this.body.applyLinearImpulse(Vec2(jx, jy), this.body.getWorldCenter(), true);
-  }
-
-  /**
-   * Spin so the surface touching the player runs toward the pin surface, and
-   * friction drags them along with it.
-   */
-  private spin(dir: Vec2, dt: number): void {
-    const c = this.body.getWorldCenter();
-    const aim = dir.y < 0 ? this.target.head.getWorldCenter() : this.aimPoint();
-    const tx = aim.x - c.x;
-    const ty = aim.y - c.y;
-    // Surface velocity at the point facing the player is w * (-ty, tx).
-    const sign = -ty * dir.x + tx * dir.y >= 0 ? 1 : -1;
-    const w = this.body.getAngularVelocity();
-    const I = this.body.getInertia();
-    let dL = I * (sign * EXECUTER.spinRate - w);
-    const max = EXECUTER.spinTorque * dt;
-    if (dL > max) dL = max;
-    if (dL < -max) dL = -max;
-    this.body.applyAngularImpulse(dL, true);
   }
 
   destroy(): void {

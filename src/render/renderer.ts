@@ -1,8 +1,9 @@
 import {
-  ART, BALL, CHARGE, COURT, EXECUTER, FLOOR_TOP_PX, FPS, GIFT, MAX_TOUCHES, OPTIONS, PARTS, PRIZE_ANIM, PRIZE_BUTTONS,
-  RIGHT_WALL_INNER_PX, VIEW, toPx, type PartName,
+  ART, BALL, BOXER, CHARGE, COURT, EXECUTER, FLOOR_TOP_PX, FPS, GIFT, MAX_TOUCHES, OPTIONS, PARTS, PRIZE_ANIM,
+  PRIZE_BUTTONS, RIGHT_WALL_INNER_PX, SPRING, VIEW, toPx, type PartName,
 } from '../sim/constants';
 import type { Executer } from '../sim/executer';
+import type { ExecuterId } from '../sim/executerVariants';
 import type { GameWorld } from '../sim/world';
 import type { Player } from '../sim/player';
 import type { PrizeButton } from '../sim/prizeButton';
@@ -234,7 +235,7 @@ export class Renderer {
     this.stageSpace(ctx);
     this.drawOffscreenBall(ctx, gw, interp, alpha);
     this.drawOffscreenPlayers(ctx, gw, interp, alpha);
-    this.drawHud(ctx, gw, hud);
+    this.drawHud(ctx, gw, hud, now);
   }
 
   /**
@@ -708,148 +709,255 @@ export class Renderer {
 
   private drawExecuter(ctx: CanvasRenderingContext2D, e: Executer, interp: Interpolator, alpha: number): void {
     const pose = interp.pose(e.body, alpha);
-    const r = EXECUTER.radiusPx;
+    const t = e.age + alpha;
     ctx.save();
     ctx.translate(pose.x, pose.y);
-    ctx.rotate(pose.a);
     if (!e.solid) {
       // Emerging from the button: grows to full size as it clears the wall.
-      const p = Math.min(1, (e.age + alpha) / EXECUTER.emergeFrames);
-      const k = 0.45 + 0.55 * easeOutCubic(p);
+      const k = 0.45 + 0.55 * easeOutCubic(Math.min(1, t / EXECUTER.emergeFrames));
       ctx.scale(k, k);
     }
-    if (e.kind === 'head') {
-      this.drawHeadExecuter(ctx, e);
-      ctx.restore();
-      return;
+    const c = e.body.getWorldCenter();
+    const aim = e.target.tors.getWorldCenter();
+    const toTarget = Math.atan2(aim.y - c.y, aim.x - c.x);
+    switch (e.variant.id) {
+      case 'magnet':
+        this.drawMagnetArt(ctx, toTarget, e.field, e.phase === 'latched', t);
+        break;
+      case 'boxer':
+        this.drawBoxer(ctx, e);
+        break;
+      case 'comet': {
+        const v = e.body.getLinearVelocity();
+        this.drawCometArt(ctx, pose.a, Math.atan2(v.y, v.x), v.length(), e.phase === 'dash', t);
+        break;
+      }
+      case 'spring':
+        this.drawSpringArt(ctx, toTarget, springStretch(e, t));
+        break;
     }
-    this.drawExecuterVariant(ctx, e, r);
+    ctx.restore();
+
+    // A ring where each blow lands, sized by how hard it was.
+    const hit = e.lastImpact;
+    if (hit) {
+      const since = t - hit.age;
+      const rgb = IMPACT_RGB[e.variant.id];
+      ring(ctx, hit.xPx, hit.yPx, since, 12, 5, 16 + 34 * hit.power, 2 + 4 * hit.power, rgb);
+      ring(ctx, hit.xPx, hit.yPx, since - 2, 10, 3, 10 + 18 * hit.power, 1.5, '255,255,255');
+    }
+  }
+
+  /**
+   * A horseshoe magnet, poles toward its player. Field arcs run in from the
+   * poles while its pull is on, faster and brighter the stronger it is.
+   */
+  private drawMagnetArt(ctx: CanvasRenderingContext2D, facing: number, field: number, latched: boolean, t: number): void {
+    ctx.save();
+    ctx.rotate(facing);
+    if (field > 0) {
+      ctx.lineCap = 'round';
+      for (let i = 0; i < 3; i++) {
+        const p = (t * (0.03 + 0.04 * field) + i / 3) % 1; // 0 far → 1 near
+        const radius = 22 + (1 - p) * (24 + 40 * field);
+        ctx.strokeStyle = `rgba(84,184,238,${(0.15 + 0.55 * field) * Math.sin(p * Math.PI)})`;
+        ctx.lineWidth = 1.5 + 1.5 * field;
+        ctx.beginPath();
+        ctx.arc(0, 0, radius, -0.75, 0.75);
+        ctx.stroke();
+      }
+    }
+    if (latched) {
+      const glow = ctx.createRadialGradient(14, 0, 1, 14, 0, 22);
+      glow.addColorStop(0, `rgba(160,220,255,${0.45 + 0.2 * Math.sin(t * 0.5)})`);
+      glow.addColorStop(1, 'rgba(160,220,255,0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(-8, -22, 44, 44);
+    }
+    // The U opens toward +x: the bend at the back, the poles in front.
+    ctx.strokeStyle = '#3c4552';
+    ctx.lineWidth = 11;
+    ctx.lineCap = 'butt';
+    ctx.beginPath();
+    ctx.moveTo(12, -11);
+    ctx.lineTo(-5, -11);
+    ctx.arc(-5, 0, 11, -Math.PI / 2, Math.PI / 2, true);
+    ctx.lineTo(12, 11);
+    ctx.stroke();
+    ctx.fillStyle = '#e94c47';
+    ctx.fillRect(6, -16.5, 9, 11);
+    ctx.fillStyle = '#48a9e9';
+    ctx.fillRect(6, 5.5, 9, 11);
+    ctx.fillStyle = '#cdd5dc';
+    ctx.fillRect(-9, -14, 5, 5);
+    ctx.fillRect(-9, 9, 5, 5);
     ctx.restore();
   }
 
-  private drawExecuterVariant(ctx: CanvasRenderingContext2D, e: Executer, r: number): void {
-    const disc = (color: string | CanvasGradient, radius = r) => {
-      ctx.fillStyle = color;
+  /**
+   * A comet: an icy, tumbling nucleus in a glowing coma, trailing a tail
+   * that streams straight back from its flight and grows with its speed.
+   */
+  private drawCometArt(
+    ctx: CanvasRenderingContext2D, spin: number, heading: number, speed: number, dashing: boolean, t: number,
+  ): void {
+    const r = EXECUTER.radiusPx;
+    const len = 16 + Math.min(speed, 18) * (dashing ? 5.5 : 4);
+    const flicker = 1 + 0.06 * Math.sin(t * 1.7);
+
+    ctx.save();
+    ctx.rotate(heading + Math.PI); // +x now points down the tail
+    const tail = ctx.createLinearGradient(0, 0, len, 0);
+    tail.addColorStop(0, 'rgba(255,214,120,0.85)');
+    tail.addColorStop(0.45, 'rgba(255,130,50,0.45)');
+    tail.addColorStop(1, 'rgba(255,90,40,0)');
+    ctx.fillStyle = tail;
+    ctx.beginPath();
+    ctx.moveTo(-2, -r * 0.95);
+    ctx.quadraticCurveTo(len * 0.45, -r * 0.75 * flicker, len, 0);
+    ctx.quadraticCurveTo(len * 0.45, r * 0.75 * flicker, -2, r * 0.95);
+    ctx.closePath();
+    ctx.fill();
+    // A hotter, narrower core streak.
+    const core = ctx.createLinearGradient(0, 0, len * 0.7, 0);
+    core.addColorStop(0, 'rgba(255,255,235,0.9)');
+    core.addColorStop(1, 'rgba(160,220,255,0)');
+    ctx.fillStyle = core;
+    ctx.beginPath();
+    ctx.moveTo(0, -r * 0.45);
+    ctx.quadraticCurveTo(len * 0.35, -r * 0.2, len * 0.7, 0);
+    ctx.quadraticCurveTo(len * 0.35, r * 0.2, 0, r * 0.45);
+    ctx.closePath();
+    ctx.fill();
+    // Embers shed along the tail.
+    for (let i = 0; i < 5; i++) {
+      const p = (t * 0.09 + i * 0.37) % 1;
+      const x = r * 0.6 + p * len * 0.9;
+      const y = Math.sin(i * 2.4 + t * 0.3) * r * 0.55 * (1 - p * 0.5);
+      ctx.fillStyle = `rgba(255,${190 - 80 * p},90,${0.8 * (1 - p)})`;
       ctx.beginPath();
-      ctx.arc(0, 0, radius, 0, Math.PI * 2);
+      ctx.arc(x, y, 1.8 * (1 - p) + 0.6, 0, Math.PI * 2);
       ctx.fill();
-    };
-    const polygon = (points: readonly [number, number][], color: string) => {
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      points.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
-      ctx.closePath();
-      ctx.fill();
-    };
-    switch (e.variant.id) {
-      case 'kettlebell': {
-        ctx.strokeStyle = '#8c929b';
-        ctx.lineWidth = 5;
-        ctx.beginPath(); ctx.arc(0, -r + 2, 8, Math.PI, 0); ctx.stroke();
-        const metal = ctx.createRadialGradient(-6, -7, 1, 0, 0, r);
-        metal.addColorStop(0, '#8a9099'); metal.addColorStop(1, '#292e37');
-        disc(metal);
-        ctx.fillStyle = '#d5d9df'; ctx.font = 'bold 12px system-ui';
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('8', 0, 3);
-        break;
-      }
-      case 'magnet': {
-        ctx.strokeStyle = 'rgba(84,184,238,0.35)'; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(0, 0, r + 4 + Math.sin(e.age * 0.22) * 2, 0, Math.PI * 2); ctx.stroke();
-        ctx.strokeStyle = '#3c4552'; ctx.lineWidth = 11; ctx.lineCap = 'butt';
-        ctx.beginPath(); ctx.moveTo(-11, -12); ctx.lineTo(-11, 5);
-        ctx.arc(0, 5, 11, Math.PI, 0, true); ctx.lineTo(11, -12); ctx.stroke();
-        ctx.fillStyle = '#e94c47'; ctx.fillRect(-16.5, -15, 11, 9);
-        ctx.fillStyle = '#48a9e9'; ctx.fillRect(5.5, -15, 11, 9);
-        ctx.fillStyle = '#cdd5dc'; ctx.fillRect(-14, 0, 5, 5); ctx.fillRect(9, 0, 5, 5);
-        break;
-      }
-      case 'comet': {
-        polygon([[-9, -12], [-26, -20], [-17, -5], [-29, 1], [-14, 7], [-22, 19], [-4, 12]], '#ff8737');
-        disc('#f6ca54', 16); disc('#fff0a5', 9);
-        break;
-      }
-      case 'anchor': {
-        ctx.strokeStyle = '#425466'; ctx.lineWidth = 6; ctx.lineCap = 'round';
-        ctx.beginPath(); ctx.moveTo(0, -13); ctx.lineTo(0, 13);
-        ctx.moveTo(-10, -3); ctx.lineTo(10, -3);
-        ctx.moveTo(-15, 8); ctx.quadraticCurveTo(0, 27, 15, 8); ctx.stroke();
-        ctx.fillStyle = '#9eb4c4'; ctx.beginPath(); ctx.arc(0, -15, 5, 0, Math.PI * 2); ctx.fill();
-        break;
-      }
-      case 'spring': {
-        ctx.fillStyle = '#644a91'; ctx.fillRect(-14, -16, 28, 32);
-        ctx.strokeStyle = '#dfbaff'; ctx.lineWidth = 4; ctx.lineJoin = 'round';
-        ctx.beginPath(); ctx.moveTo(-10, -13);
-        for (let i = 0; i < 6; i++) ctx.lineTo(i % 2 ? -10 : 10, -9 + i * 4);
-        ctx.lineTo(10, 14); ctx.stroke();
-        break;
-      }
-      case 'saw': {
-        const teeth: [number, number][] = [];
-        for (let i = 0; i < 24; i++) {
-          const a = i * Math.PI / 12;
-          const d = i % 3 === 1 ? 23 : 16;
-          teeth.push([Math.cos(a) * d, Math.sin(a) * d]);
-        }
-        polygon(teeth, '#aebac4'); disc('#566470', 13); disc('#273c48', 5);
-        break;
-      }
-      case 'crystal': {
-        polygon([[0, -22], [16, -10], [13, 13], [0, 23], [-15, 10], [-14, -11]], '#287fba');
-        polygon([[0, -22], [16, -10], [4, 5], [0, 23]], '#69d9f2');
-        polygon([[0, -22], [-14, -11], [-4, 5], [0, 23]], '#b7f5ff');
-        break;
-      }
-      case 'gear': {
-        for (let i = 0; i < 8; i++) {
-          ctx.save(); ctx.rotate(i * Math.PI / 4);
-          ctx.fillStyle = '#be965e'; ctx.fillRect(-4, -23, 8, 11); ctx.restore();
-        }
-        disc('#d9ad70', 16); disc('#756046', 8); disc('#293a45', 4);
-        break;
-      }
-      case 'drone': {
-        ctx.strokeStyle = '#536b8b'; ctx.lineWidth = 4;
-        ctx.beginPath(); ctx.moveTo(-14, -8); ctx.lineTo(14, 8);
-        ctx.moveTo(14, -8); ctx.lineTo(-14, 8); ctx.stroke();
-        for (const x of [-16, 16]) for (const y of [-11, 11]) {
-          ctx.fillStyle = '#8de6ee'; ctx.beginPath(); ctx.ellipse(x, y, 8, 3, 0, 0, Math.PI * 2); ctx.fill();
-        }
-        disc('#345178', 12); disc('#a2eff5', 5);
-        break;
-      }
     }
+    ctx.restore();
+
+    // Coma.
+    const coma = ctx.createRadialGradient(0, 0, r * 0.4, 0, 0, r * 1.7);
+    coma.addColorStop(0, 'rgba(255,244,214,0.7)');
+    coma.addColorStop(1, 'rgba(255,200,120,0)');
+    ctx.fillStyle = coma;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 1.7, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Nucleus: a lumpy rock that tumbles with the body.
+    ctx.save();
+    ctx.rotate(spin);
+    const rock = ctx.createRadialGradient(-5, -6, 1, 0, 0, r);
+    rock.addColorStop(0, '#f2f8ff');
+    rock.addColorStop(0.55, '#9fb3c8');
+    rock.addColorStop(1, '#4d5c70');
+    ctx.fillStyle = rock;
+    ctx.beginPath();
+    for (let i = 0; i < 9; i++) {
+      const a = (i / 9) * Math.PI * 2;
+      const d = r * (0.82 + 0.13 * Math.sin(i * 2.7) + 0.05 * Math.cos(i * 5.1));
+      if (i === 0) ctx.moveTo(Math.cos(a) * d, Math.sin(a) * d);
+      else ctx.lineTo(Math.cos(a) * d, Math.sin(a) * d);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = 'rgba(55,70,90,0.45)';
+    for (const [x, y, s] of [[5, 3, 3.2], [-4, 7, 2.2], [2, -7, 1.8]] as const) {
+      ctx.beginPath();
+      ctx.arc(x, y, s, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
-  private drawHeadExecuter(ctx: CanvasRenderingContext2D, e: Executer): void {
-    const r = EXECUTER.radiusPx;
-    const facing = e.target.head.getWorldCenter().x >= e.body.getWorldCenter().x ? 1 : -1;
-    ctx.scale(facing, 1);
+  /**
+   * A coil spring between a base plate and a red bumper, the bumper toward
+   * its player. `stretch` is its length: drawn out while it charges,
+   * crushed flat on impact, then wobbling back as it recovers.
+   */
+  private drawSpringArt(ctx: CanvasRenderingContext2D, facing: number, stretch: number): void {
+    const half = 15 * stretch;
+    const w = 12 / Math.sqrt(stretch);
+    ctx.save();
+    ctx.rotate(facing);
+    // Coil: loops from the base to the bumper.
+    ctx.strokeStyle = '#dfbaff';
+    ctx.lineWidth = 3.2;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    const turns = 5;
+    ctx.beginPath();
+    for (let i = 0; i <= turns * 12; i++) {
+      const p = i / (turns * 12);
+      const x = -half + 4 + p * (half * 2 - 8);
+      const y = Math.sin(p * turns * Math.PI * 2) * w * 0.8;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(100,74,145,0.6)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    // Base plate and bumper.
+    ctx.fillStyle = '#644a91';
+    roundRect(ctx, -half - 3, -w - 3, 7, (w + 3) * 2, 2.5);
+    ctx.fill();
+    ctx.fillStyle = '#e8574a';
+    roundRect(ctx, half - 4, -w - 4, 8, (w + 4) * 2, 3.5);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    roundRect(ctx, half - 2, -w - 2, 2.5, (w + 2) * 1.2, 1.2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /** The boxer, with its jab aimed at whichever part it is going for. */
+  private drawBoxer(ctx: CanvasRenderingContext2D, e: Executer): void {
+    const c = e.body.getWorldCenter();
+    const p = e.target.part(e.punchPart).getWorldCenter();
+    const facing = p.x >= c.x ? 1 : -1;
+    // In the flipped frame the target is always ahead; aim the arms at it.
+    const aim = Math.max(-1.1, Math.min(1.1, Math.atan2(p.y - c.y, Math.abs(p.x - c.x))));
     const frame = e.punchFrame;
-    const reach = frame < 0 ? 0 : frame <= EXECUTER.headImpactFrame
-      ? frame / EXECUTER.headImpactFrame
-      : Math.max(0, 1 - (frame - EXECUTER.headImpactFrame) / 8);
-    const active = (e.punches + (frame >= EXECUTER.headImpactFrame ? 1 : 0)) % 2;
+    const reach = frame < 0 ? 0 : frame <= BOXER.impactFrame
+      ? frame / BOXER.impactFrame
+      : Math.max(0, 1 - (frame - BOXER.impactFrame) / 8);
+    const active = (e.hits + (frame >= BOXER.impactFrame ? 1 : 0)) % 2;
+    this.drawBoxerArt(ctx, facing, aim, reach, active);
+  }
+
+  private drawBoxerArt(ctx: CanvasRenderingContext2D, facing: number, aim: number, reach: number, active: number): void {
+    const r = EXECUTER.radiusPx;
+    ctx.save();
+    ctx.scale(facing, 1);
 
     // One longer arm jabs while the other guards.
+    ctx.save();
+    ctx.rotate(aim);
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     for (let i = 0; i < 2; i++) {
       const y = i === 0 ? -9 : 9;
-      const extension = i === active ? reach * EXECUTER.headArmExtensionPx : 0;
+      const extension = i === active ? reach * BOXER.armExtensionPx : 0;
       ctx.strokeStyle = '#934b48';
       ctx.lineWidth = 7;
       ctx.beginPath();
       ctx.moveTo(10, y);
       ctx.lineTo(21, y + (i === 0 ? -3 : 3));
-      ctx.lineTo(EXECUTER.headArmRestPx - 1 + extension, y - (i === 0 ? -2 : 2));
+      ctx.lineTo(BOXER.armRestPx - 1 + extension, y - (i === 0 ? -2 : 2));
       ctx.stroke();
-      ctx.fillStyle = '#eab18f';
+      ctx.fillStyle = '#e04a3c';
       ctx.beginPath();
-      ctx.arc(EXECUTER.headArmRestPx + extension, y - (i === 0 ? -2 : 2), 5, 0, Math.PI * 2);
+      ctx.arc(BOXER.armRestPx + extension, y - (i === 0 ? -2 : 2), 5.5, 0, Math.PI * 2);
       ctx.fill();
     }
+    ctx.restore();
 
     const skin = ctx.createRadialGradient(-6, -7, 1, 0, 0, r);
     skin.addColorStop(0, '#f4c39e');
@@ -877,6 +985,24 @@ export class Renderer {
     ctx.strokeStyle = '#6b3537';
     ctx.lineWidth = 1.5;
     ctx.strokeRect(5, 7, 8, 4);
+    ctx.restore();
+  }
+
+  /** One hazard as a still icon, `size` px across, for the HUD queue. */
+  private drawExecuterIcon(ctx: CanvasRenderingContext2D, id: ExecuterId, size: number): void {
+    const k = size / (EXECUTER.radiusPx * 2.6);
+    ctx.save();
+    ctx.scale(k, k);
+    switch (id) {
+      case 'magnet': this.drawMagnetArt(ctx, Math.PI / 2, 0, false, 0); break;
+      case 'boxer': this.drawBoxerArt(ctx, 1, 0, 0.8, 0); break;
+      case 'comet':
+        ctx.translate(-8, 5);
+        this.drawCometArt(ctx, 0.4, -2.75, 7, false, 4);
+        break;
+      case 'spring': this.drawSpringArt(ctx, 0, 1); break;
+    }
+    ctx.restore();
   }
 
   /**
@@ -937,7 +1063,7 @@ export class Renderer {
     }
   }
 
-  /** A player pinned to the ceiling is far above the frame; mark where. */
+  /** A player thrown or jumping far above the frame: mark where. */
   private drawOffscreenPlayers(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: Interpolator, alpha: number): void {
     for (const p of [gw.p1, gw.p2]) {
       const pose = interp.pose(p.head, alpha);
@@ -956,6 +1082,72 @@ export class Renderer {
       ctx.textBaseline = 'top';
       ctx.fillText(`P${p.id} ${(-sy / VIEW.scale / 30).toFixed(1)} m`, sx, 16);
     }
+  }
+
+  /**
+   * The hazard queue: the next four to come out of either button, in order,
+   * the first one largest. When one launches it pops out of the first slot
+   * and the rest slide up a place.
+   */
+  private drawHazardQueue(ctx: CanvasRenderingContext2D, gw: GameWorld, cx: number, now: number): number {
+    if (!gw.hazards) return 0;
+    const slots = 4;
+    const gap = 36;
+    const labelW = 30;
+    const w = labelW + gap * slots + 4;
+    const h = 34;
+    const x0 = cx - w / 2;
+    const y0 = 5;
+    const iconY = y0 + 14;
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    roundRect(ctx, x0, y0, w, h, 9);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(15,25,35,0.12)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(15,25,35,0.6)';
+    ctx.font = '800 7px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('NEXT', x0 + labelW / 2 + 3, y0 + h / 2);
+
+    const slotX = (q: number) => x0 + labelW + gap * (q + 0.5);
+    ctx.fillStyle = 'rgba(230,59,46,0.1)';
+    ctx.strokeStyle = 'rgba(230,59,46,0.45)';
+    ctx.beginPath();
+    ctx.arc(slotX(0), iconY, 14.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    const since = now - gw.executerLaunchEffect.frame;
+    const slide = since >= 0 && since < 10 ? 1 - easeOutCubic(since / 10) : 0;
+    const gone = gw.executerLaunchEffect.variant;
+    if (gone && slide > 0) {
+      ctx.save();
+      ctx.globalAlpha = slide;
+      ctx.translate(slotX(0), iconY);
+      ctx.scale(2 - slide, 2 - slide);
+      this.drawExecuterIcon(ctx, gone.id, 24);
+      ctx.restore();
+    }
+    gw.executerQueue.peek(slots).forEach((v, i) => {
+      const q = i + slide; // where it is between slots, 0 is next
+      const size = q < 1 ? 24 - 6 * q : 18;
+      const fadeIn = q > slots - 1 ? 1 - (q - (slots - 1)) : 1;
+      ctx.save();
+      ctx.globalAlpha = fadeIn * (1 - 0.1 * q);
+      ctx.translate(slotX(q), iconY);
+      this.drawExecuterIcon(ctx, v.id, size);
+      ctx.restore();
+      ctx.globalAlpha = fadeIn;
+      ctx.textBaseline = 'alphabetic';
+      ctx.font = q < 0.5 ? '800 6.5px system-ui, sans-serif' : '700 6px system-ui, sans-serif';
+      ctx.fillStyle = q < 0.5 ? '#c23a2e' : 'rgba(15,25,35,0.6)';
+      ctx.fillText(v.label, slotX(q), y0 + h - 2.5);
+    });
+    ctx.restore();
+    return y0 + h - 3;
   }
 
   /** The ball often flies above the frame; point at it from the top edge. */
@@ -978,7 +1170,7 @@ export class Renderer {
     ctx.fillText(`${heightM} m`, sx, 15);
   }
 
-  private drawHud(ctx: CanvasRenderingContext2D, gw: GameWorld, hud: HudState): void {
+  private drawHud(ctx: CanvasRenderingContext2D, gw: GameWorld, hud: HudState, now: number): void {
     const g = gw.game;
     // Keep the HUD over the court and clear of the prize buttons, which sit at
     // the top of each wall (stage x ~6 and ~593) and glow ~30 px around.
@@ -1016,11 +1208,13 @@ export class Renderer {
     side(1);
     side(2);
 
+    // The hazard queue sits at the very top; the match info goes under it.
+    const top = this.drawHazardQueue(ctx, gw, midX, now);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     ctx.fillStyle = 'rgba(15,25,35,0.55)';
     ctx.font = '700 8px system-ui, sans-serif';
-    ctx.fillText(`FIRST TO ${OPTIONS.gameSet}`, midX, 10);
+    ctx.fillText(`FIRST TO ${OPTIONS.gameSet}`, midX, top + 10);
 
     // Serve clock: 6 - count (§11).
     if (g.phase === 'play' && gw.ball.ballOfPlayer !== 0) {
@@ -1028,13 +1222,13 @@ export class Renderer {
       const secs = g.serveSecondsLeft;
       ctx.fillStyle = secs <= 2 ? '#e63b2e' : 'rgba(15,25,35,0.8)';
       ctx.font = '800 18px system-ui, sans-serif';
-      ctx.fillText(String(secs), midX, 22);
+      ctx.fillText(String(secs), midX, top + 22);
       ctx.font = '700 8px system-ui, sans-serif';
       ctx.fillStyle = 'rgba(15,25,35,0.6)';
       const who = hud.singlePlayer ? (holder === 1 ? 'YOUR SERVE' : 'CPU SERVE') : `P${holder} SERVE`;
-      ctx.fillText(who, midX, 44);
+      ctx.fillText(who, midX, top + 44);
       if (hud.showControlsHint && holder === 1) {
-        ctx.fillText('JUMP, THEN TAP TO SERVE', midX, 55);
+        ctx.fillText('JUMP, THEN TAP TO SERVE', midX, top + 55);
       }
     }
 
@@ -1057,7 +1251,7 @@ export class Renderer {
       if (live.length > 0) {
         const secs = Math.max(...live.map((e) => e.secondsLeft));
         ctx.fillStyle = '#e63b2e';
-        const label = live.length > 1 ? `EXECUTERS ×${live.length} · ${secs}s` : `EXECUTER · ${secs}s`;
+        const label = live.length > 1 ? `${live.length} HAZARDS · ${secs}s` : `${live[0].variant.label} · ${secs}s`;
         ctx.fillText(label, x, 72);
       }
       const power = gw.powerUps.active[id];
@@ -1077,6 +1271,24 @@ export class Renderer {
 }
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+/** Each hazard's impact ring colour. */
+const IMPACT_RGB: Record<ExecuterId, string> = {
+  magnet: '84,184,238', boxer: '255,214,170', comet: '255,150,60', spring: '214,160,255',
+};
+
+/**
+ * The spring's drawn length, 1 at rest: drawn out with speed as it charges,
+ * crushed on impact (further the harder it hit), then a damped wobble back
+ * to full length while it recovers.
+ */
+function springStretch(e: Executer, t: number): number {
+  if (e.phase === 'charge') return 1 + 0.3 * clamp01(e.body.getLinearVelocity().length() / SPRING.topSpeed);
+  const hit = e.lastImpact;
+  if (!hit) return 1;
+  const since = t - hit.age;
+  return 1 - (0.25 + 0.35 * hit.power) * Math.cos(since * 0.45) * Math.exp(-since * 0.07);
+}
 const easeOutCubic = (p: number) => 1 - Math.pow(1 - p, 3);
 /** Overshoots past 1 before settling — the spring when a button pops out. */
 const easeOutBack = (p: number) => {

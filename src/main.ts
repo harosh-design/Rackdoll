@@ -56,6 +56,7 @@ function createWorld(demo = false): GameWorld {
     hazards: settings.hazards,
     bindings: toKeyBindings(settings.bindings),
     powerSeed: Math.floor(Math.random() * 0x100000000),
+    executerSeed: Math.floor(Math.random() * 0x100000000),
     events: {
       onPoint: (winner, reason) => onPoint(winner, reason),
       onNewRound: () => { message = null; },
@@ -73,7 +74,6 @@ function* allBodies(w: GameWorld) {
 }
 
 function startMatch(): void {
-  $('menu-sub').textContent = 'Starting...';
   sfx.unlock();
   servesSeen = 0;
   gw = createWorld();
@@ -328,6 +328,7 @@ function simFrame(): void {
   const wasHeld = gw.ball.held;
   const wasDown = gw.flags.onBallDown;
   const executers = gw.executers.length;
+  const hazardHits = new Map(gw.executers.map((e) => [e, e.hits]));
   const buttons = gw.ground.prizeButtons.map((b) => [b.pressedAt, b.releasedAt]);
   const opponentHits = { 1: gw.opponentHitEffects[1].frame, 2: gw.opponentHitEffects[2].frame };
   const perfects = { 1: gw.perfectEffects[1].frame, 2: gw.perfectEffects[2].frame };
@@ -352,6 +353,9 @@ function simFrame(): void {
   }
   if (!wasDown && gw.flags.onBallDown) sfx.thud();
   if (gw.executers.length > executers) sfx.executer();
+  for (const [e, hits] of hazardHits) {
+    if (e.hits > hits && e.lastImpact) sfx.bump(0.4 + 1.4 * e.lastImpact.power);
+  }
   for (const id of [1, 2] as const) {
     const effect = gw.opponentHitEffects[id];
     if (effect.frame !== opponentHits[id]) sfx.bump(0.4 + 1.1 * effect.power);
