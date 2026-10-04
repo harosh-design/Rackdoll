@@ -1,14 +1,16 @@
 /**
- * The four hazards. Physical tuning lives here; how each one attacks lives in
- * executer.ts, with its numbers in constants.ts (MAGNET, BOXER, COMET, SPRING).
- * `speed` scales the base hunting speed, `launch` the speed it leaves the
- * button at, and `force` its steering force budget.
+ * The five hazards. Physical tuning lives here; how each one attacks lives in
+ * executer.ts, with its numbers in constants.ts (MAGNET, BOXER, COMET, SPRING,
+ * SLIME). `speed` scales the base hunting speed, `launch` the speed it leaves
+ * the button at, and `force` its steering force budget. No friction here may
+ * be 0.05 or 0.5/0.51: those values identify the ball and each player (§16.2).
  */
 export const EXECUTER_VARIANTS = [
   { id: 'magnet', label: 'MAGNET', mass: 6, speed: 1.1, launch: 0.6, force: 1.8, friction: 0.45, restitution: 0.3 },
   { id: 'boxer', label: 'BOXER', mass: 5.5, speed: 1.08, launch: 1.05, force: 1.05, friction: 0.3, restitution: 0.8 },
   { id: 'comet', label: 'COMET', mass: 3.7, speed: 1, launch: 1.6, force: 1, friction: 0.2, restitution: 0.6 },
   { id: 'spring', label: 'SPRING', mass: 3.2, speed: 1, launch: 1, force: 1, friction: 0.18, restitution: 1 },
+  { id: 'slime', label: 'SLIME', mass: 2.4, speed: 1, launch: 0.8, force: 1, friction: 0.8, restitution: 0 },
 ] as const;
 
 export type ExecuterVariant = (typeof EXECUTER_VARIANTS)[number];
@@ -25,8 +27,8 @@ export function seededRandom(seed: number): () => number {
 }
 
 /**
- * The order hazards come out in, shared by both buttons. Each run of four is
- * a fresh shuffle of all four, so every hazard turns up once per run, and a
+ * The order hazards come out in, shared by both buttons. Each run is a fresh
+ * shuffle of all five, so every hazard turns up once per run, and a
  * run never starts with the one the last run ended on. `order` replaces the
  * shuffle with a fixed, repeating order, for tuning and tests.
  */

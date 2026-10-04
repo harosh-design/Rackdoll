@@ -8,7 +8,7 @@ import { GameWorld, type GameWorldOptions } from '../src/sim/world';
 export const px = toPx;
 
 export function world(opts: GameWorldOptions = {}): GameWorld {
-  return new GameWorld({ singlePlayer: false, hazards: false, ...opts });
+  return new GameWorld({ singlePlayer: false, hazards: false, bees: false, ...opts });
 }
 
 export function run(gw: GameWorld, frames: number): void {

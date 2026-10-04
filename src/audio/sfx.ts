@@ -1,7 +1,8 @@
 /** Generated one-shots; procedural cues remain available while files load. */
 const samples = [
-  'bump', 'clack', 'thud', 'serve', 'perfect', 'counter', 'rescue',
+  'bump', 'clack', 'thud', 'perfect', 'counter', 'rescue',
   'miss', 'point', 'lose', 'executer', 'button', 'rearm',
+  'gift', 'bee', 'slime',
 ] as const;
 type Sample = typeof samples[number];
 
@@ -23,7 +24,13 @@ export class Sfx {
     this.ctx = new AC();
     this.master = this.ctx.createGain();
     this.master.gain.value = 0.32;
-    this.master.connect(this.ctx.destination);
+    const compressor = this.ctx.createDynamicsCompressor();
+    compressor.threshold.value = -20;
+    compressor.knee.value = 18;
+    compressor.ratio.value = 2.5;
+    compressor.attack.value = 0.005;
+    compressor.release.value = 0.16;
+    this.master.connect(compressor).connect(this.ctx.destination);
     this.load();
   }
 
@@ -50,7 +57,10 @@ export class Sfx {
     source.buffer = buffer;
     source.playbackRate.value = rate;
     gain.gain.value = volume;
-    source.connect(gain).connect(this.master);
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = name === 'bump' || name === 'thud' || name === 'bee' || name === 'slime' ? 6500 : 9500;
+    source.connect(filter).connect(gain).connect(this.master);
     source.start();
     return true;
   }
@@ -103,15 +113,10 @@ export class Sfx {
   }
 
   /** Ball into the sand. */
-  thud(): void {
-    if (this.play('thud', 0.67)) return;
-    this.noise(0.16, 0.5, 700);
-    this.tone(120, 0.14, 'sine', 0.45, 60);
-  }
-
-  serve(): void {
-    if (this.play('serve', 0.67)) return;
-    this.tone(300, 0.12, 'triangle', 0.4, 620);
+  thud(quiet = false): void {
+    if (this.play('thud', quiet ? 0.38 : 0.67)) return;
+    this.noise(0.16, quiet ? 0.28 : 0.5, 700);
+    this.tone(120, 0.14, 'sine', quiet ? 0.26 : 0.45, 60);
   }
 
   perfect(): void {
@@ -147,6 +152,13 @@ export class Sfx {
     this.tone(90, 0.5, 'sawtooth', 0.25, 45);
   }
 
+  /** The slime: a wet squelch as it sticks or glues, higher and thinner as a strand tears. */
+  splat(tear = false): void {
+    if (this.play('slime', tear ? 0.38 : 0.55, tear ? 1.55 : 1)) return;
+    this.noise(tear ? 0.06 : 0.12, tear ? 0.3 : 0.45, tear ? 2400 : 900);
+    this.tone(tear ? 520 : 240, tear ? 0.08 : 0.14, 'sine', 0.25, tear ? 900 : 90);
+  }
+
   /** A button pressed into the wall: a hard mechanical clunk. */
   button(): void {
     if (this.play('button', 0.6)) return;
@@ -166,9 +178,39 @@ export class Sfx {
     this.tone(880, 0.1, 'sine', 0.22, 1320);
   }
 
+  /** A bee flies in: a short, soft buzz, deeper for a bigger bee. */
+  beeBuzz(size = 1): void {
+    if (this.play('bee', 0.38, 1 / Math.max(0.8, size))) return;
+    if (!this.enabled || !this.ctx || !this.master) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(230 / size, t);
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 26;
+    const depth = ctx.createGain();
+    depth.gain.value = 14 / size;
+    lfo.connect(depth).connect(osc.frequency);
+    const band = ctx.createBiquadFilter();
+    band.type = 'bandpass';
+    band.frequency.value = 900;
+    band.Q.value = 0.8;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.07, t + 0.15);
+    g.gain.setValueAtTime(0.07, t + 0.35);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.8);
+    osc.connect(band).connect(g).connect(this.master);
+    osc.start(t);
+    lfo.start(t);
+    osc.stop(t + 0.85);
+    lfo.stop(t + 0.85);
+  }
+
   /** A gift collected: the ability starts. */
   giftPickup(): void {
-    if (this.play('rescue', 0.7, 1.1)) return;
+    if (this.play('gift', 0.64)) return;
     this.tone(660, 0.1, 'triangle', 0.3, 990);
     setTimeout(() => this.tone(1320, 0.16, 'sine', 0.25), 90);
   }

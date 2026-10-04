@@ -1,11 +1,11 @@
 import { Circle, Vec2, type Body, type Fixture, type Vec2Value, type World } from 'planck';
 import {
   BODYTYPE, BOXER, clamp01, COLLISION, COMET, COURT, EXECUTER, FLOOR_TOP_PX, GRAVITY, LEFT_WALL_INNER_PX, MAGNET,
-  NET_X_PX, OPTIONS, RIGHT_WALL_INNER_PX, SPRING, SWING, TIMERS, toM, toPx, type PartName,
+  NET_X_PX, OPTIONS, PARTS, RIGHT_WALL_INNER_PX, SLIME, SPRING, SWING, TIMERS, toM, toPx, type PartName,
 } from './constants';
 import { FrameTimer, type TimerSet } from './timer';
 import type { Player, PlayerId } from './player';
-import type { BodyUserData } from './types';
+import { ud, type BodyUserData } from './types';
 import { seededRandom, type ExecuterVariant } from './executerVariants';
 
 export interface ExecuterTuning {
@@ -38,9 +38,11 @@ export interface ExecuterOptions {
  * - magnet: `hunt`, then `latched` once it touches its player;
  * - boxer: `chase`, throwing jabs whenever it is in reach;
  * - comet: `stalk` to a run-up point, `dash` through its player, `recover`;
- * - spring: `charge`, `rebound` off its player, `recover`, and again.
+ * - spring: `charge`, `rebound` off its player, `recover`, and again;
+ * - slime: `fly` at a limb, `stuck` to the part it reached, `recover`, and again.
  */
-export type ExecuterPhase = 'hunt' | 'latched' | 'chase' | 'stalk' | 'dash' | 'charge' | 'rebound' | 'recover';
+export type ExecuterPhase =
+  'hunt' | 'latched' | 'chase' | 'stalk' | 'dash' | 'charge' | 'rebound' | 'recover' | 'fly' | 'stuck';
 
 /** A blow that landed, for the renderer's flash and the sound. */
 export interface ExecuterImpact {
@@ -52,9 +54,29 @@ export interface ExecuterImpact {
   yPx: number;
 }
 
+/** A part the slime glued into itself, held there by a capped spring. */
+export interface SlimeBond {
+  part: Body;
+  /** The glued point, in the part's own coordinates. */
+  local: Vec2;
+  /** Rest length, m: the gap it caught at, curing down to SLIME.glueRestPx. */
+  rest: number;
+  /** The slime's age when it glued. */
+  age: number;
+}
+
+/** A strand that tore, for the renderer: where its two ends were, px. */
+export interface SlimeSnap {
+  age: number;
+  ax: number;
+  ay: number;
+  bx: number;
+  by: number;
+}
+
 const FIRST_PHASE: Record<ExecuterVariant['id'], ExecuterPhase> = {
   // The spring settles level with its player before its first run.
-  magnet: 'hunt', boxer: 'chase', comet: 'stalk', spring: 'recover',
+  magnet: 'hunt', boxer: 'chase', comet: 'stalk', spring: 'recover', slime: 'fly',
 };
 
 /** What the boxer aims at. Fingertips are too small to read as a target. */
@@ -65,13 +87,35 @@ const PUNCH_PARTS: readonly PartName[] = [
 /** What the magnet's field draws out toward it, on top of the whole-doll pull. */
 const REACHING_PARTS: readonly PartName[] = ['HandLeft', 'HandRight', 'FingerLeft', 'FingerRight'];
 
+/** What the slime flies at: the limbs, where glue does the most harm. */
+const SLIME_PARTS: readonly PartName[] = ['HandLeft', 'HandRight', 'LegLeft', 'LegRight', 'FootLeft', 'FootRight'];
+
+/**
+ * What it glues to the part it is on: the ends of the limbs. An upper arm
+ * already sits against the head and the body, so gluing it there would
+ * hardly show.
+ */
+const GLUE_PARTS: ReadonlySet<PartName> = new Set<PartName>([
+  'HandLeft', 'HandRight', 'FingerLeft', 'FingerRight', 'LegLeft', 'LegRight', 'FootLeft', 'FootRight',
+]);
+
+/** Which limb each part is on. The slime only glues parts of different limbs together. */
+const LIMB: Record<PartName, string> = {
+  ArmLeft: 'armL', HandLeft: 'armL', FingerLeft: 'armL',
+  ArmRight: 'armR', HandRight: 'armR', FingerRight: 'armR',
+  LegLeft: 'legL', FootLeft: 'legL', LegRight: 'legR', FootRight: 'legR',
+  Head: 'core', Tors: 'core', Ass: 'core',
+};
+
+const PART_DEFS = new Map(PARTS.map((p) => [p.name, p]));
+
 const unit = (x: number, y: number): Vec2 => {
   const len = Math.hypot(x, y);
   return len < 1e-9 ? Vec2(0, 0) : Vec2(x / len, y / len);
 };
 
 /**
- * §13 Executer, reworked into four hazards that share one body and one set of
+ * §13 Executer, reworked into five hazards that share one body and one set of
  * safety rules but attack in their own ways:
  *
  * - fired out of the button it came from, straight at its target;
@@ -113,6 +157,18 @@ export class Executer {
   dashDir = Vec2(0, 0);
   /** Spring: distance run on the current charge, m. */
   travel = 0;
+  /** Slime: the limb it is flying at. */
+  aimPart: PartName = 'HandLeft';
+  /** Slime: the part it is stuck to, and where on it, in its own coordinates. */
+  host: Body | null = null;
+  hostAnchor = Vec2(0, 0);
+  /** Slime: the parts it has glued into itself. */
+  readonly bonds: SlimeBond[] = [];
+  /** Slime: the part it is reeling in on a strand. */
+  reelPart: Body | null = null;
+  /** Slime: strands that tore, and the last one. */
+  snaps = 0;
+  lastSnap: SlimeSnap | null = null;
 
   private readonly fixture: Fixture;
   private readonly timer: FrameTimer;
@@ -126,6 +182,12 @@ export class Executer {
   /** Velocity going into the last step: what it hit with. */
   private lastVelocity = Vec2(0, 0);
   private reboundFrames = 0;
+  /** Slime: frames it has left to hold on. */
+  private holdLeft = 0;
+  /** Slime: frames spent reeling in the current part. */
+  private reelAge = 0;
+  /** Slime: parts that tore free, and the age until which it can't glue them again. */
+  private readonly regrab = new Map<Body, number>();
 
   constructor(o: ExecuterOptions) {
     this.world = o.world;
@@ -173,6 +235,7 @@ export class Executer {
     const sideOf = (x: number): 1 | -1 => (x >= tors.x ? 1 : -1);
     this.ramSide = sideOf(o.origin.x);
     this.punchPart = this.choosePunchPart(sideOf(o.origin.x));
+    if (o.variant.id === 'slime') this.aimPart = this.openPart(SLIME_PARTS, sideOf(o.origin.x), null);
 
     // Fire it straight at its target.
     const c = this.body.getWorldCenter();
@@ -274,6 +337,8 @@ export class Executer {
       if (this.age >= this.tuning.emergeFrames && !this.overlapsAnything()) {
         this.fixture.setSensor(false);
         this.solid = true;
+      } else if (this.variant.id === 'slime' && this.age > this.tuning.emergeFrames) {
+        this.confine();
       }
     } else if (this.knockbackFrames > 0) {
       this.knockbackFrames -= 1;
@@ -284,6 +349,7 @@ export class Executer {
         case 'boxer': this.updateBoxer(dt); break;
         case 'comet': this.updateComet(dt, ball); break;
         case 'spring': this.updateSpring(dt); break;
+        case 'slime': this.updateSlime(dt); break;
       }
     }
     this.lastVelocity = this.body.getLinearVelocity().clone();
@@ -396,10 +462,15 @@ export class Executer {
    * never the same one twice running.
    */
   private choosePunchPart(side: 1 | -1): PartName {
+    return this.openPart(PUNCH_PARTS, side, this.punchPart);
+  }
+
+  /** One of `parts` it can reach from its side without going through the body, never `last` again. */
+  private openPart(parts: readonly PartName[], side: 1 | -1, last: PartName | null): PartName {
     const torsX = this.target.tors.getWorldCenter().x;
-    const open = PUNCH_PARTS.filter((name) => name !== this.punchPart &&
+    const open = parts.filter((name) => name !== last &&
       (this.target.part(name).getWorldCenter().x - torsX) * side > -toM(6));
-    const pool = open.length > 0 ? open : PUNCH_PARTS;
+    const pool = open.length > 0 ? open : parts;
     return pool[Math.floor(this.random() * pool.length)];
   }
 
@@ -573,6 +644,274 @@ export class Executer {
   }
 
   // -------------------------------------------------------------------------
+  // Slime
+  // -------------------------------------------------------------------------
+
+  private updateSlime(dt: number): void {
+    switch (this.phase) {
+      case 'fly': {
+        // Arriving on several parts at once, it takes the limb end it was
+        // after, or else any limb end, over an upper arm or the body.
+        const touching = [...this.touchingParts()];
+        const hit = touching.find((b) => ud(b).part === this.aimPart)
+          ?? touching.find((b) => GLUE_PARTS.has(ud(b).part!)) ?? touching[0];
+        if (hit) {
+          if (this.target.power === 'shield') {
+            // The shield won't take glue: it splats off and tries again.
+            const c = this.body.getWorldCenter();
+            const p = hit.getWorldCenter();
+            const u = unit(c.x - p.x, c.y - p.y);
+            this.body.setLinearVelocity(Vec2(u.x * SLIME.peelSpeed, u.y * SLIME.peelSpeed));
+            this.setPhase('recover');
+          } else {
+            this.stick(hit);
+          }
+          return;
+        }
+        // Homing on its limb, bobbing across its path so it flaps in
+        // rather than glides.
+        const p = this.target.part(this.aimPart).getWorldCenter();
+        const v = this.seek(Vec2(p.x, this.clampY(p.y)), SLIME.flySpeed, 4);
+        const u = unit(v.x, v.y);
+        const bob = SLIME.bobSpeed * Math.sin((this.age * 2 * Math.PI) / SLIME.bobFrames);
+        this.drive(Vec2(v.x - u.y * bob, v.y + u.x * bob), dt, SLIME.flyForce);
+        return;
+      }
+      case 'stuck':
+        this.holdOn(dt);
+        return;
+      default: {
+        this.drive(Vec2(0, 0), dt, SLIME.brakeForce);
+        if (this.phaseAge >= SLIME.recoverFrames) {
+          const side: 1 | -1 = this.body.getWorldCenter().x >= this.target.tors.getWorldCenter().x ? 1 : -1;
+          this.aimPart = this.openPart(SLIME_PARTS, side, this.aimPart);
+          this.setPhase('fly');
+        }
+      }
+    }
+  }
+
+  /**
+   * It sticks where it hit and becomes a sensor riding on that part, rather
+   * than a 2.4 kg body jointed to a 0.07 kg hand, which would tear the arm.
+   */
+  private stick(part: Body): void {
+    this.host = part;
+    // Its centre settles onto the part's surface, so the blob wraps it.
+    this.hostAnchor = this.nearestOn(part, this.body.getWorldCenter());
+    this.fixture.setSensor(true);
+    this.holdLeft = SLIME.holdFrames;
+    this.reelPart = null;
+    this.regrab.clear();
+    this.landed(part, 0.3);
+    this.setPhase('stuck');
+    this.follow();
+  }
+
+  /** While stuck: ride along, weigh the part down, keep its glue, reach for more. */
+  private holdOn(dt: number): void {
+    if (this.target.power === 'shield') {
+      this.peel();
+      return;
+    }
+    this.follow();
+    const host = this.host!;
+    host.applyLinearImpulse(Vec2(0, SLIME.weight * dt), host.getWorldPoint(this.hostAnchor), true);
+    this.tendBonds(dt);
+    this.reel(dt);
+    this.holdLeft -= 1;
+    if (this.holdLeft <= 0) this.peel();
+  }
+
+  /** Sit on the part it is stuck to. As a sensor nothing pushes it about. */
+  private follow(): void {
+    const host = this.host!;
+    const p = host.getWorldPoint(this.hostAnchor);
+    const [minX, maxX] = this.halfBounds;
+    // A hand reaching over the net doesn't carry it across.
+    this.body.setTransform(Vec2(Math.min(maxX, Math.max(minX, p.x)), p.y), 0);
+    this.body.setLinearVelocity(host.getLinearVelocityFromWorldPoint(p));
+  }
+
+  /**
+   * Each strand is a spring that only pulls, toward a short rest length, with
+   * a capped force: strong enough to hold two limbs together through walking
+   * and play, not to tear the doll. Pulled too far, it snaps.
+   */
+  private tendBonds(dt: number): void {
+    const host = this.host!;
+    const a = host.getWorldPoint(this.hostAnchor);
+    const va = host.getLinearVelocityFromWorldPoint(a);
+    const mA = host.getMass();
+    for (let i = this.bonds.length - 1; i >= 0; i--) {
+      const bond = this.bonds[i];
+      const b = bond.part.getWorldPoint(bond.local);
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len = Math.hypot(dx, dy);
+      if (len - bond.rest > toM(SLIME.breakPx)) {
+        this.snap(i, a, b);
+        continue;
+      }
+      bond.rest = Math.max(toM(SLIME.glueRestPx), bond.rest - toM(SLIME.cureRatePx));
+      const stretch = len - bond.rest;
+      if (stretch <= 0) continue;
+      const nx = dx / len;
+      const ny = dy / len;
+      const vb = bond.part.getLinearVelocityFromWorldPoint(b);
+      const vn = (vb.x - va.x) * nx + (vb.y - va.y) * ny;
+      const mB = bond.part.getMass();
+      // Impulse on the glued part along the strand: negative pulls it in.
+      const j = Math.max(-SLIME.glueForce * dt, Math.min(0, (mA * mB) / (mA + mB) * (-stretch * SLIME.glueRate - vn)));
+      bond.part.applyLinearImpulse(Vec2(nx * j, ny * j), b, true);
+      host.applyLinearImpulse(Vec2(-nx * j, -ny * j), a, true);
+    }
+  }
+
+  private snap(i: number, a: Vec2, b: Vec2): void {
+    const [bond] = this.bonds.splice(i, 1);
+    this.regrab.set(bond.part, this.age + SLIME.regrabFrames);
+    // Every strand they tear loosens its hold.
+    this.holdLeft -= SLIME.snapCostFrames;
+    this.snaps += 1;
+    this.lastSnap = { age: this.age, ax: toPx(a.x), ay: toPx(a.y), bx: toPx(b.x), by: toPx(b.y) };
+  }
+
+  /** Glue any part that reaches its core, and reel in the nearest one it could glue. */
+  private reel(dt: number): void {
+    if (this.bonds.length >= SLIME.maxBonds || this.phaseAge < SLIME.gripFrames) {
+      this.reelPart = null;
+      return;
+    }
+    const host = this.host!;
+    const a = host.getWorldPoint(this.hostAnchor);
+    for (const part of this.touchingParts()) {
+      if (!this.canGlue(part)) continue;
+      const b = part.getWorldPoint(this.nearestOn(part, a));
+      if (Math.hypot(b.x - a.x, b.y - a.y) < toM(SLIME.glueReachPx)) this.glue(part);
+      if (this.bonds.length >= SLIME.maxBonds) {
+        this.reelPart = null;
+        return;
+      }
+    }
+    if (this.reelPart && this.reelAge > SLIME.reelFrames) {
+      // Out of reach, behind the body: try another.
+      this.regrab.set(this.reelPart, this.age + SLIME.regrabFrames);
+      this.reelPart = null;
+    }
+    if (!this.reelPart || !this.canGlue(this.reelPart)) {
+      this.reelPart = this.nearestGluable();
+      this.reelAge = 0;
+    }
+    const part = this.reelPart;
+    if (!part) return;
+    this.reelAge += 1;
+    // Equal and opposite, so the strand draws the two parts together
+    // without pushing the doll anywhere.
+    const q = part.getWorldPoint(this.nearestOn(part, a));
+    const u = unit(a.x - q.x, a.y - q.y);
+    const va = host.getLinearVelocityFromWorldPoint(a);
+    const vq = part.getLinearVelocityFromWorldPoint(q);
+    const closing = (vq.x - va.x) * u.x + (vq.y - va.y) * u.y;
+    const mA = host.getMass();
+    const mB = part.getMass();
+    const j = Math.max(0, Math.min(SLIME.reelForce * dt, ((mA * mB) / (mA + mB)) * (SLIME.reelSpeed - closing)));
+    part.applyLinearImpulse(Vec2(u.x * j, u.y * j), q, true);
+    host.applyLinearImpulse(Vec2(-u.x * j, -u.y * j), a, true);
+  }
+
+  private glue(part: Body): void {
+    const a = this.host!.getWorldPoint(this.hostAnchor);
+    const local = this.nearestOn(part, a);
+    const b = part.getWorldPoint(local);
+    const rest = Math.max(toM(SLIME.glueRestPx), Math.hypot(b.x - a.x, b.y - a.y));
+    this.bonds.push({ part, local, rest, age: this.age });
+    if (part === this.reelPart) this.reelPart = null;
+    this.landed(part, 0.2);
+  }
+
+  /**
+   * The end of a limb it isn't holding yet: not the one it's on, not one
+   * jointed to the part it's on, and not one that just tore free.
+   */
+  private canGlue(part: Body): boolean {
+    const host = this.host;
+    if (!host || part === host || !this.target.bodies.includes(part)) return false;
+    const limb = LIMB[ud(part).part!];
+    if (!GLUE_PARTS.has(ud(part).part!) || limb === LIMB[ud(host).part!]) return false;
+    if (this.bonds.some((b) => LIMB[ud(b.part).part!] === limb)) return false;
+    if ((this.regrab.get(part) ?? 0) > this.age) return false;
+    for (let je = host.getJointList(); je; je = je.next) if (je.other === part) return false;
+    return true;
+  }
+
+  private nearestGluable(): Body | null {
+    const c = this.host!.getWorldPoint(this.hostAnchor);
+    let best: Body | null = null;
+    let bestD = toM(SLIME.reelReachPx);
+    for (const b of this.target.bodies) {
+      if (!this.canGlue(b)) continue;
+      const q = b.getWorldCenter();
+      const d = Math.hypot(q.x - c.x, q.y - c.y);
+      if (d < bestD) {
+        best = b;
+        bestD = d;
+      }
+    }
+    return best;
+  }
+
+  /** The point of a doll part nearest `p`, in the part's own coordinates. */
+  private nearestOn(part: Body, p: Vec2Value): Vec2 {
+    const l = part.getLocalPoint(p);
+    const def = PART_DEFS.get(ud(part).part!)!;
+    const s = this.target.sizeScale;
+    if (def.shape.kind === 'circle') {
+      const r = toM(def.shape.r * s);
+      const len = Math.hypot(l.x, l.y);
+      return len > r ? Vec2((l.x * r) / len, (l.y * r) / len) : l;
+    }
+    const hw = toM(def.shape.hw * s);
+    const hh = toM(def.shape.hh * s);
+    return Vec2(Math.max(-hw, Math.min(hw, l.x)), Math.max(-hh, Math.min(hh, l.y)));
+  }
+
+  /**
+   * Let go. Everything it glued comes free, and it springs clear, away from
+   * the body and never down, as a sensor until it overlaps nothing, then
+   * re-forms and flies again.
+   */
+  private peel(): void {
+    this.bonds.length = 0;
+    this.host = null;
+    this.reelPart = null;
+    this.solid = false;
+    this.fixture.setSensor(true);
+    const c = this.body.getWorldCenter();
+    const t = this.target.tors.getWorldCenter();
+    const u = unit(c.x - t.x, Math.min(0, c.y - t.y) - toM(10));
+    this.body.setLinearVelocity(Vec2(u.x * SLIME.peelSpeed, u.y * SLIME.peelSpeed));
+    this.setPhase('recover');
+  }
+
+  /** A new round re-stands the doll, which would tear its glue: the slime lets go first. */
+  shakeOff(): void {
+    if (!this.dead && this.phase === 'stuck') this.peel();
+  }
+
+  /** Drifting clear as a sensor, walls and the net can't stop it, so this does. */
+  private confine(): void {
+    const c = this.body.getWorldCenter();
+    const [minX, maxX] = this.halfBounds;
+    const x = Math.min(maxX, Math.max(minX, c.x));
+    const y = this.clampY(c.y);
+    if (x === c.x && y === c.y) return;
+    const v = this.body.getLinearVelocity();
+    this.body.setTransform(Vec2(x, y), 0);
+    this.body.setLinearVelocity(Vec2(x === c.x ? v.x : 0, y === c.y ? v.y : 0));
+  }
+
+  // -------------------------------------------------------------------------
 
   private landed(part: Body, power: number): void {
     const c = this.body.getWorldCenter();
@@ -586,7 +925,10 @@ export class Executer {
     if (this.dead || !this.solid) return;
     this.punchFrame = -1;
     if (this.phase === 'latched') this.setPhase('hunt');
-    else if (this.phase === 'dash' || this.phase === 'charge' || this.phase === 'rebound') this.setPhase('recover');
+    else if (this.phase === 'stuck') this.peel();
+    else if (this.phase === 'dash' || this.phase === 'charge' || this.phase === 'rebound' || this.phase === 'fly') {
+      this.setPhase('recover');
+    }
     this.knockbackFrames = SWING.executerKnockFrames;
     this.body.applyLinearImpulse(impulse, this.body.getWorldCenter(), true);
   }

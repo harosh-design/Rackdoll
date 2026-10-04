@@ -111,6 +111,36 @@ moves with the size: otherwise a ⅔-size doll dangles ~17 px above the floor an
 so its head peaks as high as a full-size jump. Crouch, arm wind-up and the
 grounded checks scale with the doll as well.
 
+## Bee gifts
+
+Bees also bring powers, separately from the goal gifts. During play a bee flies in from
+beyond the left or right screen edge every 12–20 seconds, with at most two in
+the air. It crosses above the net and leaves by the other edge. Each bee carries one of
+the seven abilities, and every ability turns up once in each run of seven. Hit
+a bee with the ball and its ability goes to whoever holds the ball or touched
+it last, on the same terms as a goal gift: 30 seconds, and it replaces any
+current ability. The ball passes straight through, so the rally is unchanged.
+A bee is only popped in play. During the goal replay the bees slow down with
+the physics.
+
+You can tell what a bee gives before you hit it:
+
+| Ability | The bee |
+| --- | --- |
+| Giant | 1.6× size, slow and heavy, arrows pushing outward |
+| Tiny | 0.6× size, fast and jittery, arrows pulling inward |
+| Feather ball | carries a feather, drifts lazily |
+| High jump | rides a spring and bounces along |
+| Speed | fastest, with speed lines and afterimages |
+| Magnet | carries a red horseshoe magnet |
+| Shield | flies inside a bubble |
+
+Each bee also has a halo in its ability's colour and a small label. Its hit
+radius matches its drawn size, so the giant bee is the easiest target and the
+tiny bee the hardest. The flight is a closed-form function of the bee's age, so it
+is deterministic: it can be swept against the ball for the hit test and
+interpolated for drawing.
+
 ## Fidelity notes
 
 The rules and constants follow the spec exactly. The points below are where a
@@ -156,7 +186,7 @@ code where it happens.
 - **Pause** freezes the physics and every timer, serve clock included.
 - **A held ball can't land.** Only a free ball sets the floor flag. Otherwise a
   held ball brushing the floor would be scored the moment it was served.
-- **Sounds** use short Stable Audio 3 samples for hits, serves, points, buttons,
+- **Sounds** use short Stable Audio 3 samples for hits, points, buttons,
   and special moves. Procedural cues cover the first moments while samples load
   or if a file is unavailable. Press M to mute. **Render interpolation** blends
   the last two frames on high-refresh displays. Neither touches the simulation.
@@ -173,9 +203,9 @@ changes that on purpose:
   that side, so aim for your opponent's button. An executer-only barrier above
   the net (collision-filtered, so nothing else ever meets it) keeps it on its
   half.
-- **Four hazards, shuffled.** Both buttons share one queue: magnet, boxer,
-  comet and spring, each run of four in a fresh random order, never the same
-  one twice in a row. The next four are previewed at the top of the screen, in
+- **Five hazards, shuffled.** Both buttons share one queue: magnet, boxer,
+  comet, spring and slime, each run of five in a fresh random order, never the
+  same one twice in a row. The next four are previewed at the top of the screen, in
   the order they will come out, and slide along as each launches. A new match
   shuffles a fresh order. A player's swinging hand can knock any of them
   away and briefly interrupt its attack.
@@ -201,6 +231,27 @@ changes that on purpose:
   steeper than linearly with it, so a bump from a standing start stays a bump
   and a long run throws the player hard. It rebounds off them at a speed set
   by its own, flies free, brakes gradually and settles, then charges again.
+- **Slime.** A glob of glue that flies at one of its player's hands, thighs
+  or shins (4.5 m/s, bobbing) and sticks to whatever part it reaches first,
+  weighing it down. Stuck, it reels the nearest end of another limb in on a
+  strand and glues it into itself, two at most: a hand ends up stuck to a
+  thigh, the other hand or a foot. It holds on for 6 s, then peels off,
+  re-forms and comes again.
+  - *It rides on the doll, it isn't jointed to it.* A 2.4 kg body welded to
+    a 0.07 kg hand tears the arm, so once stuck it is a sensor that follows
+    the part it hit. It has no contact to solve, so it doesn't raise the
+    solver to 20 iterations: measured, 20 iterations on a doll that is only
+    standing creeps it sideways about 10 px a second.
+  - *The glue is a spring, not a joint.* Each strand pulls the two parts
+    together with at most 10 N, and the reel at most 8 N (enough to lift a
+    hanging arm). Pulled more than 24 px past its rest length, a strand
+    snaps, and each snap takes 1.5 s off the hold. A jump often tears one, but
+    the slime grabs again a second later: a doll hopping every 1.3 s still
+    spends about half its slimed time glued.
+  - *Getting it off:* swing the slimed arm, or any hand that reaches it, to
+    fling it away and free everything it glued. The shield won't take its
+    glue, and a new round shakes it off, since re-standing the doll would
+    yank glued parts back together across the court.
 - **Knocks.** Every blow is a change of velocity given to every part of the
   doll alike, plus a jolt to the part struck, and locks steering for a few
   frames so it carries. Shoving only the head and hips, as the opponent's
@@ -212,7 +263,7 @@ changes that on purpose:
 
   | | §13 | Now | Why |
   | --- | --- | --- | --- |
-  | Mass | 400 kg | 3.2–6 kg | No iterative solver holds a 2.75 kg doll's joints against 400 kg. Still 30–60× the ball, so shots bounce off it. |
+  | Mass | 400 kg | 2.4–6 kg | No iterative solver holds a 2.75 kg doll's joints against 400 kg. Still 24–60× the ball, so shots bounce off it. |
   | Steering | velocity overwrite | force-limited, 45–380 N | An overwrite is unstoppable and crushes the doll into its rail limits. |
   | Contact with dolls | restitution 1 | inelastic | It shoves instead of batting a 0.07 kg hand away. |
   | Solver near a doll | 10 iterations | 20, within 40 px | A light hand hitting a heavy ball is badly conditioned. It is 10 everywhere else. |
@@ -228,7 +279,7 @@ changes that on purpose:
   max with the magnet against 23 alone). A limb meeting one at speed can
   overlap it for a single frame, never longer. Frames where a hard knock has
   thrown the doll onto the net are left out: hung on the net top it stretches
-  by itself. The test suite pins this for all four hazards, alongside a
+  by itself. The test suite pins this for all five hazards, alongside a
   negative control proving the 400 kg original still tears.
 - **Retained from §13:** its size, the 1.3 m/s base hunting speed (the magnet
   and boxer scale it), and the 25 s life. The ×2 bursts are gone: each hazard

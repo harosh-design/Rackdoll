@@ -3,13 +3,14 @@
  * The spec's reference figures are sanity checks from a faithful port, not
  * targets to tune toward — so these assert ranges around them.
  */
-import { Vec2, World } from 'planck';
+import { Vec2, World, type Body } from 'planck';
 import { describe, expect, it, vi } from 'vitest';
 import { Ball } from '../src/sim/ball';
 import { predictLanding } from '../src/sim/ai';
 import {
-  BALL, CHARGE, GRAVITY, ITERATIONS, JOINTS, NET_TOP_PX, PARTS, PLAYER_FRICTION, SWING, TIME_STEP, toM,
+  BALL, CHARGE, GRAVITY, ITERATIONS, JOINTS, NET_TOP_PX, PARTS, PLAYER_FRICTION, SLIME, SWING, TIME_STEP, toM,
 } from '../src/sim/constants';
+import { ud } from '../src/sim/types';
 import { installContactListener } from '../src/sim/contacts';
 import { EXECUTER_VARIANTS, type ExecuterId } from '../src/sim/executerVariants';
 import type { GameWorld } from '../src/sim/world';
@@ -786,10 +787,13 @@ describe('champion opponent', () => {
 });
 
 describe('hazards (reworked §13)', () => {
-  const IDS = ['magnet', 'boxer', 'comet', 'spring'] as const;
+  const IDS = ['magnet', 'boxer', 'comet', 'spring', 'slime'] as const;
 
-  /** Mean speed over its first 15 s, after it has left the button. */
-  const meanSpeed = (id: ExecuterId) => {
+  /**
+   * Mean speed over its first 15 s, after it has left the button; only while
+   * in `phase`, if given (the slime spends most of its time riding its player).
+   */
+  const meanSpeed = (id: ExecuterId, phase?: string) => {
     const gw = hazardWorld({ executerOrder: [id] });
     fireAtButton(gw, 1);
     const e = gw.executers[0];
@@ -797,7 +801,7 @@ describe('hazards (reworked §13)', () => {
     let n = 0;
     for (let f = 0; f < 30 * 15 && !e.dead; f++) {
       gw.step();
-      if (f > 10) {
+      if (f > 10 && (!phase || e.phase === phase)) {
         sum += e.body.getLinearVelocity().length();
         n++;
       }
@@ -805,11 +809,11 @@ describe('hazards (reworked §13)', () => {
     return sum / n;
   };
 
-  it('draws the four hazards in a shuffled order that both buttons share, and shows what comes next', () => {
-    expect(EXECUTER_VARIANTS.map((v) => v.id).sort()).toEqual(['boxer', 'comet', 'magnet', 'spring']);
+  it('draws the five hazards in a shuffled order that both buttons share, and shows what comes next', () => {
+    expect(EXECUTER_VARIANTS.map((v) => v.id).sort()).toEqual(['boxer', 'comet', 'magnet', 'slime', 'spring']);
     const gw = hazardWorld();
     const seen: string[] = [];
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 15; i++) {
       const side = i % 2 === 0 ? 1 : 2;
       const button = gw.ground.prizeButtons.find((b) => b.side === side)!;
       const upcoming = gw.executerQueue.peek(4).map((v) => v.id);
@@ -827,9 +831,9 @@ describe('hazards (reworked §13)', () => {
       run(gw, 20);
       expect(button.armed).toBe(true);
     }
-    expect(gw.executerLaunches).toBe(12);
-    // Each run of four has every hazard once; none comes twice in a row.
-    for (let i = 0; i < seen.length; i += 4) expect(new Set(seen.slice(i, i + 4)).size).toBe(4);
+    expect(gw.executerLaunches).toBe(15);
+    // Each run of five has every hazard once; none comes twice in a row.
+    for (let i = 0; i < seen.length; i += 5) expect(new Set(seen.slice(i, i + 5)).size).toBe(5);
     for (let i = 1; i < seen.length; i++) expect(seen[i]).not.toBe(seen[i - 1]);
     // And the order really is shuffled: other seeds, other orders.
     const orders = new Set([1, 2, 3, 4, 5, 6].map((seed) =>
@@ -849,7 +853,8 @@ describe('hazards (reworked §13)', () => {
   });
 
   it('the comet hunts fastest and the magnet slowest', () => {
-    const speeds = Object.fromEntries(IDS.map((id) => [id, meanSpeed(id)]));
+    // The slime by its flight: stuck, it only moves as its player does.
+    const speeds = Object.fromEntries(IDS.map((id) => [id, meanSpeed(id, id === 'slime' ? 'fly' : undefined)]));
     for (const id of IDS) {
       if (id !== 'comet') expect(speeds.comet).toBeGreaterThan(speeds[id]);
       if (id !== 'magnet') expect(speeds.magnet).toBeLessThan(speeds[id] / 2);
@@ -1017,6 +1022,121 @@ describe('hazards (reworked §13)', () => {
     }
     expect(phases.slice(0, 2)).toEqual(['recover', 'charge']);
     expect(long.e.hits).toBe(2);
+  });
+
+  /** Which limb a part is on, as the slime sees it. */
+  const limbOf = (b: Body) => ud(b).part!.replace(/^(Arm|Hand|Finger)/, 'arm').replace(/^(Leg|Foot)/, 'leg');
+
+  /** A slime launched at `side`, stepped until it is stuck. */
+  const stuckSlime = (side: 1 | 2) => {
+    const gw = hazardWorld({ executerOrder: ['slime'] });
+    fireAtButton(gw, side);
+    const e = gw.executers[0];
+    expect(e.phase).toBe('fly');
+    for (let f = 0; f < 30 * 6 && e.phase !== 'stuck'; f++) gw.step();
+    expect(e.phase).toBe('stuck');
+    return { gw, e, player: side === 1 ? gw.p1 : gw.p2 };
+  };
+
+  it('the slime flies at a limb, sticks to it, and glues another limb to it', () => {
+    const { gw, e, player } = stuckSlime(2);
+    expect(player.bodies).toContain(e.host);
+    // It rides on the part as a sensor, not as a heavy body jointed to it.
+    expect(e.body.getFixtureList()!.isSensor()).toBe(true);
+    const held = new Map<Body, number>();
+    let longest = 0;
+    for (let f = 0; f < SLIME.holdFrames - 1; f++) {
+      gw.step();
+      expect(e.phase).toBe('stuck');
+      const a = e.host!.getWorldPoint(e.hostAnchor);
+      expect(px(Vec2.distance(e.body.getWorldCenter(), a))).toBeLessThan(1);
+      for (const bond of e.bonds) {
+        // A part of another limb, and held to it.
+        expect(limbOf(bond.part)).not.toBe(limbOf(e.host!));
+        expect(px(Vec2.distance(bond.part.getWorldPoint(bond.local), a))).toBeLessThan(SLIME.glueReachPx + SLIME.breakPx);
+        held.set(bond.part, (held.get(bond.part) ?? 0) + 1);
+        longest = Math.max(longest, held.get(bond.part)!);
+      }
+    }
+    // Standing still, the glue holds for seconds.
+    expect(longest).toBeGreaterThan(60);
+    // Then it lets go of everything by itself.
+    gw.step();
+    expect(e.phase).toBe('recover');
+    expect(e.bonds).toHaveLength(0);
+  });
+
+  it('struggling tears the slime’s strands, which shortens its hold; it comes back after letting go', () => {
+    const gw = hazardWorld({ executerOrder: ['slime'] });
+    fireAtButton(gw, 1);
+    const e = gw.executers[0];
+    const stints: Array<{ frames: number; snaps: number }> = [];
+    for (let f = 0; f < 30 * 25 && !e.dead; f++) {
+      SCRIPTS.hop(f, gw);
+      const was = e.phase;
+      const snaps = e.snaps;
+      gw.step();
+      gw.reap();
+      if (e.phase === 'stuck' && was !== 'stuck') stints.push({ frames: 0, snaps: 0 });
+      if (was === 'stuck') {
+        stints.at(-1)!.frames += 1;
+        stints.at(-1)!.snaps += e.snaps - snaps;
+      }
+    }
+    expect(stints.length).toBeGreaterThanOrEqual(2);
+    expect(e.snaps).toBeGreaterThan(0);
+    for (const s of stints.slice(0, -1)) {
+      if (s.snaps > 0) expect(s.frames).toBeLessThan(SLIME.holdFrames);
+      else expect(s.frames).toBe(SLIME.holdFrames);
+    }
+  });
+
+  it('a swing of the slimed arm flings the slime off and frees what it glued', () => {
+    for (const side of [1, 2] as const) {
+      for (const hand of ['outside', 'inside'] as const) {
+        const gw = hazardWorld({ executerOrder: ['slime'] });
+        fireAtButton(gw, side);
+        const e = gw.executers[0];
+        const player = side === 1 ? gw.p1 : gw.p2;
+        run(gw, 20);
+        // Splat it onto that hand.
+        const finger = player.swingFinger(hand).getWorldCenter();
+        e.body.setTransform(Vec2(finger.x + toM(side === 1 ? 20 : -20), finger.y), 0);
+        e.body.setLinearVelocity(Vec2(0, 0));
+        e.aimPart = `Hand${player.swingSide(hand)}`;
+        run(gw, 30);
+        expect(e.phase).toBe('stuck');
+        expect(limbOf(e.host!)).toBe(`arm${player.swingSide(hand)}`);
+        gw.swing(player, 1, hand);
+        run(gw, 3);
+        expect(e.host).toBeNull();
+        expect(e.bonds).toHaveLength(0);
+        const away = e.body.getWorldCenter().x - player.head.getWorldCenter().x;
+        expect(e.body.getLinearVelocity().x * away).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('the shield won’t take the slime’s glue, and a new round shakes it off', () => {
+    const gw = hazardWorld({ executerOrder: ['slime'] });
+    gw.powerUps.activate(2, 'shield', gw.frame);
+    fireAtButton(gw, 2);
+    const e = gw.executers[0];
+    let splats = 0;
+    for (let f = 0; f < 30 * 8; f++) {
+      const was = e.phase;
+      gw.step();
+      expect(e.phase).not.toBe('stuck');
+      if (was === 'fly' && e.phase === 'recover') splats++;
+    }
+    expect(splats).toBeGreaterThan(0);
+
+    const { gw: next, e: stuck } = stuckSlime(2);
+    run(next, 60);
+    next.game.newRound();
+    expect(stuck.phase).toBe('recover');
+    expect(stuck.host).toBeNull();
+    expect(stuck.bonds).toHaveLength(0);
   });
 
   it('a swing that meets any hazard with either selected hand throws it away', () => {

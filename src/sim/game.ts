@@ -272,6 +272,18 @@ export class Game {
     this.newRound();
   }
 
+  /**
+   * Whose ball it is: the holder, or whoever touched it last. A fresh touch
+   * zeroes the other side's count and a serve sets the server's, so at most
+   * one count is non-zero.
+   */
+  get ballOwner(): PlayerId | null {
+    if (this.ball.ballOfPlayer !== 0) return this.ball.ballOfPlayer;
+    if (this.p1.contact > 0) return 1;
+    if (this.p2.contact > 0) return 2;
+    return null;
+  }
+
   /** Who is holding the ball right now, for the serve-legality hint. */
   get serveLegal(): boolean {
     const holder = this.ball.ballOfPlayer;

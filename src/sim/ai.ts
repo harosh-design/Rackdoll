@@ -1,16 +1,13 @@
 import { Vec2, type Vec2Value } from 'planck';
 import {
-  BALL, BALL_VX_SCALE_WALL, CHAMPION, DEG, FEATHER, FLOOR_TOP_PX, GRAVITY, LANDING_CENTRE_M,
+  BALL, BALL_VX_SCALE_WALL, BOT, botSkill, type BotSkill, DEG, FEATHER, FLOOR_TOP_PX, GRAVITY, LANDING_CENTRE_M,
   LEFT_WALL_INNER_PX, MAX_TOUCHES, NET_BOTTOM_PX, NET_TOP_PX, NET_X_PX, OPTIONS,
-  RIGHT_WALL_INNER_PX, SERVE_CENTRE_M, TIMERS, TIME_STEP, TOUCH_IMPULSE, toM, toPx,
+  RIGHT_WALL_INNER_PX, SERVE_CENTRE_M, TIME_STEP, TOUCH_IMPULSE, toM, toPx,
 } from './constants';
 import type { Ball } from './ball';
 import type { Player, SwingHand } from './player';
-import { FrameTimer, type TimerSet } from './timer';
 
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
-/** The spec's "d.x in (lo, hi)" — an exclusive range. */
-const between = (v: number, lo: number, hi: number) => v > lo && v < hi;
 
 export interface BallSample {
   /** Frames from now. */
@@ -84,44 +81,91 @@ export function predictLanding(
 }
 
 const NET_M = toM(NET_X_PX);
-/**
- * Measured over 1200 trial swings: with the ball in this box when the swing
- * starts (relative to the head, toward the net), the net-side hand connects
- * 75–98% of the time. Full-size px; negative "below" is above the head.
- */
-const SWING_ZONE = { aheadPx: [18, 72], belowPx: [-42, 22] } as const;
-/** Where the champion lines the ball up for a deliberate swing: mid-zone. */
-const SWING_AIM = { aheadPx: 45, belowPx: -10 } as const;
 
-/** The champion's current intention, in its own frame (itself on the right). */
+/**
+ * What the bot means to do with the ball coming its way:
+ * - `return`: an aimed header over the net;
+ * - `set`: a header up to itself, to attack from by the net next touch;
+ * - `smash`: a wound-up swing at a ball dropping in front of it;
+ * - `jump`: a leap at the net, batting the ball over with the rising arm;
+ * - `dig`: nothing clean is possible, so just get a touch on it.
+ */
+export type PlayKind = 'return' | 'set' | 'smash' | 'jump' | 'dig';
+
+/** The bot's current intention, in its own frame (itself on the right). */
 export interface ReturnPlan {
+  kind: PlayKind;
   score: number;
   /** Where its head should be when the ball arrives. */
   headX: number;
-  /** Frames until the ball reaches head height. */
+  /** Frames until the ball reaches it. */
   frame: number;
-  /** Contact angle, degrees; positive puts the ball on the net side of the head. */
+  /** Header contact angle, degrees; positive puts the ball on the net side of the head. */
   deg: number;
-  /** Forecast landing on the far side, metres. */
+  /** Forecast landing, metres; NaN when not forecast. */
   landX: number;
+  /** How far short of that spot its head will still be, px. */
+  latePx: number;
+}
+
+/** What it has in mind for the next touch, rolled whenever someone plays the ball. */
+interface Intent {
+  set: boolean;
+  jump: boolean;
+  smash: boolean;
+  /** Which way, and how far (-1..1), this touch's aim is off. */
+  aimUnit: number;
+  /**
+   * Extra aim error from how hard the ball is to play, degrees: fixed when it
+   * first sizes up the ball, so a scramble stays a scramble.
+   */
+  pressureDeg: number | null;
+}
+
+/** A serve: walk the head here, settle, jump, and flick the ball this many frames into the jump. */
+interface ServeRecipe {
+  headXpx: number;
+  delay: number;
+  /**
+   * Where it lands, px past the net, serving as player 1 and as player 2.
+   * The court and the serving hand are not quite mirror images.
+   */
+  landPx: readonly [number, number];
 }
 
 /**
- * §12 AI opponent. Written, as in the original, for player 2 on the right.
+ * Serves measured through serveRoutine(): each landed on the far side every
+ * time, from either side and at every level. Short drops to deep corners.
+ */
+const SERVES: readonly ServeRecipe[] = [
+  { headXpx: 580, delay: 22, landPx: [83, 139] },
+  { headXpx: 580, delay: 10, landPx: [179, 244] },
+  { headXpx: 460, delay: 4, landPx: [212, 284] },
+  { headXpx: 520, delay: 16, landPx: [216, 305] },
+  { headXpx: 640, delay: 22, landPx: [286, 368] },
+  { headXpx: 460, delay: 16, landPx: [328, 374] },
+  { headXpx: 520, delay: 10, landPx: [339, 365] },
+  { headXpx: 400, delay: 28, landPx: [406, 402] },
+  { headXpx: 400, delay: 16, landPx: [489, 438] },
+];
+
+/**
+ * The CPU player. Written, as in the original, for player 2 on the right.
  * Driving player 1 it sees the court mirrored about the net: positions go
  * through mx() on the way in and pushes through side() on the way out.
  *
- * The spec notes that the exact branch nesting here was reconstructed from a
- * stack-machine trace rather than read off cleanly: the thresholds are exact,
- * the control flow is very close.
+ * Each frame it forecasts the ball's flight, finds where it will come down on
+ * its head, and weighs every way to play it: each header angle as a shot
+ * scored by how hard it is to answer, each as a set scored by the best attack
+ * it allows, and on a ball up at the net a jump or a smash. Its level
+ * (BOT_LEVELS) sets how fast, how accurate and how bold it is. Same physics
+ * and touch rules as a human player.
  */
 export class AI {
   DisableAI = false;
-  DisableMoveAfterPas = false;
-  champion = false;
-  maxSpeed: number = OPTIONS.AImaxSpeed;
-  act_count = 0;
-  /** The champion's plan this frame, for tests and debugging. */
+  /** Campaign level 1..6: picks its skill. Set by the world every frame. */
+  level: number = OPTIONS.currentLevel;
+  /** The plan this frame, for tests and debugging. */
   plan: ReturnPlan | null = null;
 
   private readonly computer: Player;
@@ -129,261 +173,441 @@ export class AI {
   private readonly serve: (p: Player) => void;
   private readonly swing: (p: Player, power: number, hand: SwingHand) => void;
   private readonly canSwing: (p: Player) => boolean;
-  private readonly pasTimer: FrameTimer;
+  private readonly random: () => number;
   /** True when driving player 1, whose court is the mirror image. */
   private readonly flip: boolean;
 
+  private intent: Intent = { set: false, jump: false, smash: false, aimUnit: 0, pressureDeg: null };
+  /** Both players' touch counts last frame: any change means someone played the ball. */
+  private touchKey = '';
+  /** Frames left before it reacts to the opponent's touch. */
+  private reactLeft = 0;
+  /** Where it was heading before the touch, kept while it reacts. */
+  private lastTargetX: number | null = null;
+  private readyOffsetPx = 0;
+  private windupFrames = 0;
+  /** Its misjudgement of the opponent's last shot, m/s, and frames since that shot. */
+  private readBias = 0;
+  private readClock = 0;
+  private serving: { recipe: ServeRecipe; frames: number; jumpedAt: number; still: number } | null = null;
+
   constructor(
-    timers: TimerSet,
     computer: Player,
     ball: Ball,
     serve: (p: Player) => void,
     swing: (p: Player, power: number, hand: SwingHand) => void = () => {},
     canSwing: (p: Player) => boolean = () => true,
     private readonly opponent: Player | null = null,
+    random: () => number = Math.random,
   ) {
     this.computer = computer;
     this.ball = ball;
     this.serve = serve;
     this.swing = swing;
     this.canSwing = canSwing;
+    this.random = random;
     this.flip = computer.id === 1;
-    this.pasTimer = timers.add(
-      new FrameTimer(TIMERS.aiPasMs, TIMERS.aiPasRepeat, () => this.onPasTimer()),
-    );
+  }
+
+  get skill(): BotSkill {
+    return botSkill(this.level);
+  }
+
+  /** What a ball that does not go over costs it: a bold player shrugs off the risk. */
+  private get failValue(): number {
+    return BOT.failValue * (1 - BOT.riskAppetite * this.skill.aggression);
   }
 
   update(): void {
     if (this.DisableAI) return;
-
-    const c = this.computer;
-    const ballPos = this.local(this.ball.body.getWorldCenter());
-    const head = this.local(c.head.getWorldCenter());
-    const d = Vec2(ballPos.x - head.x, ballPos.y - head.y);
-    // Read once up front: the original re-reads it below, past a branch that
-    // has already proved it is not ours, and we want to keep that check visible.
-    const holder: number = this.ball.ballOfPlayer;
-
-    if (this.ball.ballOfPlayer === c.id) {
-      // Holding the ball: shuffle into position, then run the serve routine.
-      if (this.act_count === 0) {
-        if (ballPos.x < 11) c.turn(this.side(1));
-        else this.pasTimer.start();
-      }
-      return;
-    }
-
-    // The ball has left: rewind the serve sequencer.
-    if (this.pasTimer.running || this.act_count !== 0) {
-      this.pasTimer.reset();
-      this.act_count = 0;
-    }
-
-    if (this.champion) {
-      this.updateChampion();
-      return;
-    }
-
-    // Chase the ball while it is on this side.
-    if (ballPos.x > 10 && !this.DisableMoveAfterPas) {
-      let speed = this.maxSpeed;
-      const vx = this.ball.body.getLinearVelocity().x;
-      if (Math.abs(d.x) > 1 && Math.abs(vx) < 4) {
-        speed = clamp(Math.abs(vx) * 2, -this.maxSpeed, this.maxSpeed);
-      }
-      if (head.x >= ballPos.x + 0.3) c.turnComp(this.side(-speed));
-      else c.turnComp(this.side(speed));
-    }
-
-    // Ball is on the opponent's half: go home and be ready.
-    if (ballPos.x < this.mx(SERVE_CENTRE_M)) {
-      // The flag exists so the AI does not chase its own serve; once the ball
-      // is on the far side that job is done.
-      this.DisableMoveAfterPas = false;
-      this.goToXPlace(12.7, 2);
-      if (
-        between(d.x, -7, 0) &&
-        between(d.y, -7, 0) &&
-        this.ball.ballOfPlayer === 0
-      ) {
-        c.jump();
-      }
-    }
-
-    if (between(d.x, 0.5, 1.5) && ballPos.x > 9) c.turnComp(this.side(1.5));
-    if (between(d.x, -1.5, 0) && between(d.y, -2.5, 0)) c.jump();
-    if (between(d.x, -1.5, 0) && between(d.y, -5.5, 0)) c.jump();
-    if (ballPos.x > 10 && d.y > -3 && holder !== c.id) c.turnDown();
-  }
-
-  /** World x to the AI's own frame (itself on the right), and back. */
-  private mx(x: number): number {
-    return this.flip ? 2 * NET_M - x : x;
-  }
-
-  private local(p: Vec2Value): Vec2 {
-    return Vec2(this.mx(p.x), p.y);
-  }
-
-  /** A sideways push given in the AI's frame. */
-  private side(x: number): Vec2 {
-    return Vec2(this.flip ? -x : x, 0);
-  }
-
-  /**
-   * The champion. Each frame it forecasts the ball, finds where it will drop
-   * onto its head, and picks the contact angle whose rebound (plus the touch
-   * pop) lands farthest from the opponent's reach. Then it walks its head to
-   * that spot, jumps for balls it cannot otherwise get under, and spends its
-   * swing on a ball that is falling onto its hand. Same physics and rules.
-   */
-  private updateChampion(): void {
     const c = this.computer;
     this.plan = null;
-    if (this.ball.ballOfPlayer !== 0) {
-      // The opponent is about to serve.
-      this.steer(toM(CHAMPION.readyXpx));
+
+    if (this.ball.ballOfPlayer === c.id) {
+      this.serveRoutine();
       return;
     }
+    this.serving = null;
+    if (this.ball.ballOfPlayer !== 0) {
+      // The opponent is about to serve.
+      this.windupFrames = 0;
+      this.steer(this.readyX());
+      return;
+    }
+
+    this.noticeTouches();
+    this.readClock += 1;
     if (c.contact >= MAX_TOUCHES) {
       // A fourth touch loses the point outright; let the ball go.
       this.dodge();
       return;
     }
-    const plan = this.planSwing() ?? this.planReturn();
-    this.plan = plan;
-    if (!plan) {
-      this.steer(toM(CHAMPION.readyXpx));
+    if (this.reactLeft > 0) {
+      // Still reading the opponent's shot: carry on as before.
+      this.reactLeft -= 1;
+      this.steer(this.lastTargetX ?? this.readyX());
       return;
     }
-    this.steer(plan.headX, plan.frame);
-    this.championSwing();
+
+    const plan = this.choosePlan();
+    this.plan = plan;
+    if (!plan) {
+      this.windupFrames = 0;
+      this.lastTargetX = this.readyX();
+      this.steer(this.lastTargetX);
+      return;
+    }
+    this.lastTargetX = plan.headX;
+    this.execute(plan);
   }
 
-  /** Where the ball meets the head next, and the best way to send it back. */
-  private planReturn(): ReturnPlan | null {
+  reset(): void {
+    this.plan = null;
+    this.serving = null;
+    this.touchKey = '';
+    this.reactLeft = 0;
+    this.lastTargetX = null;
+    this.windupFrames = 0;
+    this.rollIntent();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Reading the rally
+
+  /**
+   * A change in either touch count means the ball was just played. After the
+   * opponent's touch it takes its level's reaction time to respond. Either
+   * way it decides afresh how to play the next touch.
+   */
+  private noticeTouches(): void {
+    const theirs = this.opponent?.contact ?? 0;
+    const key = `${this.computer.contact}:${theirs}`;
+    if (key === this.touchKey) return;
+    const wasTheirs = this.touchKey !== '' && theirs > 0;
+    this.touchKey = key;
+    this.readClock = 0;
+    this.readBias = 0;
+    if (wasTheirs) {
+      this.reactLeft = this.skill.reactFrames;
+      this.readBias = (this.random() + this.random() - 1) * this.skill.readErrMs;
+    }
+    this.rollIntent();
+  }
+
+  private rollIntent(): void {
+    const k = this.skill;
+    this.intent = {
+      set: this.random() < k.setChance,
+      jump: this.random() < k.jumpChance,
+      smash: this.random() < k.smashChance,
+      aimUnit: this.random() + this.random() - 1,
+      pressureDeg: null,
+    };
+    this.readyOffsetPx = (this.random() * 2 - 1) * k.readyJitterPx;
+  }
+
+  /** The next touch: an attack on a ball up at the net if it fancies one, else the best header. */
+  private choosePlan(): ReturnPlan | null {
     const c = this.computer;
+    const samples = this.forecast();
     const s = c.sizeScale;
-    const samples = forecastBall(this.ball.position, this.ball.velocity, CHAMPION.horizonFrames, this.gravityScaleAt);
-    const restY = toM(FLOOR_TOP_PX - (FLOOR_TOP_PX - CHAMPION.headRestPx) * s);
-    const reach = toM(CHAMPION.headRadiusPx * s + BALL.radiusPx);
+    const reach = toM(BOT.headRadiusPx * s + BALL.radiusPx);
     const ourSide = toM(NET_X_PX + BALL.radiusPx);
-    const sample = samples.find((q) => this.mx(q.x) > ourSide && q.vy > 0 && q.y >= restY - reach);
+    const sample = samples.find((q) => this.mx(q.x) > ourSide && q.vy > 0 && q.y >= this.restY(s) - reach);
     if (!sample) return null;
 
+    if (this.attackable(sample)) {
+      const attack = (this.intent.smash && this.canSwing(c) ? this.planSmash(samples) : null)
+        ?? (this.intent.jump ? this.planJump(samples) : null);
+      if (attack) return attack;
+    }
+
+    const headX = this.mx(c.head.getWorldCenter().x);
+    const { shot, set, dig } = this.weigh(sample, this.spin(), headX, BOT.angleStepDeg, c.contact <= 1);
+    let choice = shot;
+    // A set by the net when it fancies building an attack, or when it beats any shot.
+    if (set && (!shot || set.score > shot.score - (this.intent.set ? BOT.setTolerance : 0))) choice = set;
+    // Nothing goes over cleanly: keep it up on its own side for another go.
+    choice ??= dig;
+    if (!choice) {
+      // Nothing clears the net from here: get under it anyway, net side of
+      // the head, and let the next touch try again.
+      const bx = this.mx(sample.x);
+      return {
+        kind: 'dig', score: -Infinity, headX: clamp(bx + reach * 0.5, toM(BOT.minHeadXpx), this.maxHeadX()),
+        frame: sample.frame, deg: 30, landX: NaN, latePx: 0,
+      };
+    }
+    // Its aim is only as good as its level, and worse on a ball it has to scramble for.
+    this.intent.pressureDeg ??= this.pressure(sample, Math.abs(choice.headX - headX));
+    const error = this.intent.aimUnit * (this.skill.aimErrorDeg + this.intent.pressureDeg);
+    const bx = choice.headX - reach * Math.sin(choice.deg * DEG);
+    const aimed = clamp(bx + reach * Math.sin((choice.deg + error) * DEG), toM(BOT.minHeadXpx), this.maxHeadX());
+    return { ...choice, headX: aimed };
+  }
+
+  /**
+   * How much a hard ball throws its aim, degrees: a fast, flat ball, or one
+   * it has to sprint for (`travel` metres in the time left) is harder to
+   * place than a ball dropping onto its head. Composure shrinks it.
+   */
+  private pressure(sample: BallSample, travel: number): number {
+    const p = BOT.pressure;
+    const hurry = toPx(travel) / (this.skill.stepPx * Math.max(1, sample.frame - 2));
+    const difficulty = p.drive * clamp((Math.abs(sample.vx) - p.driveFromMs) / p.driveRangeMs, 0, 1.5)
+      + p.hurry * clamp((hurry - p.hurryFrom) / p.hurryRange, 0, 1.5);
+    return p.deg * (1 - this.skill.composure) * difficulty;
+  }
+
+  /** A ball coming down near the net, near enough upright, can be attacked. */
+  private attackable(sample: BallSample): boolean {
+    return toPx(this.mx(sample.x)) - NET_X_PX < BOT.attackNetPx && Math.abs(sample.vx) < BOT.attackMaxVx;
+  }
+
+  /**
+   * Every header angle, played from `sample`: the best shot over the net, and
+   * (if `allowSet`) the best set to itself, valued by the best shot it then
+   * has from where the set comes down.
+   */
+  private weigh(
+    sample: BallSample,
+    spin: number,
+    headNow: number,
+    stepDeg: number,
+    allowSet: boolean,
+  ): { shot: ReturnPlan | null; set: ReturnPlan | null; dig: ReturnPlan | null } {
+    const c = this.computer;
+    const s = c.sizeScale;
+    const reach = toM(BOT.headRadiusPx * s + BALL.radiusPx);
     const bx = this.mx(sample.x);
     const bvx = this.flip ? -sample.vx : sample.vx;
-    const headX = this.mx(c.head.getWorldCenter().x);
-    const opponentX = this.opponent ? this.mx(this.opponent.head.getWorldCenter().x) : toM(NET_X_PX - 220);
-    const maxTravel = toM(CHAMPION.maxStepPx) * Math.max(0, sample.frame - 2);
-    const minX = toM(CHAMPION.minHeadXpx);
+    const maxTravel = toM(this.skill.stepPx) * Math.max(0, sample.frame - 2);
+    const minX = toM(BOT.minHeadXpx);
     const maxX = this.maxHeadX();
-    const netClear = toM(NET_TOP_PX - BALL.radiusPx - CHAMPION.netClearancePx);
-    // The ball's spin survives its flight (no damping) and decides how much
-    // sideways speed the head's friction leaves it. Mirroring reverses it.
-    const spin = (this.flip ? -1 : 1) * this.ball.body.getAngularVelocity();
-    const r = toM(BALL.radiusPx);
-    const rollMass = 1 + BALL.mass * r * r / BALL.inertia;
-    let best: ReturnPlan | null = null;
-    for (let deg = CHAMPION.minAngleDeg; deg <= CHAMPION.maxAngleDeg; deg += 2) {
-      const th = deg * DEG;
-      // Contact normal, head centre to ball centre. Positive angles put the
-      // ball on the net side of the head.
-      const nx = -Math.sin(th);
-      const ny = -Math.cos(th);
-      const vn = bvx * nx + sample.vy * ny;
-      if (vn >= 0) continue;
-      // Bounce along the normal; friction along the tangent stops the
-      // contact point slipping (spin included), up to its Coulomb limit.
-      const pn = -(1 + CHAMPION.headBounce) * vn;
-      const tx = -ny;
-      const ty = nx;
-      const slip = bvx * tx + sample.vy * ty - spin * r;
-      const pt = clamp(slip / rollMass, -CHAMPION.headFriction * pn, CHAMPION.headFriction * pn);
-      const ox = clamp(bvx + pn * nx - pt * tx, -BALL.maxVx, BALL.maxVx);
-      const oy = clamp(sample.vy + pn * ny - pt * ty + TOUCH_IMPULSE.y / BALL.mass, -BALL.maxVy, BALL.maxVy);
-      const path = forecastBall(Vec2(sample.x, sample.y), Vec2(this.flip ? -ox : ox, oy), 150, this.gravityScaleAt);
-      const crossing = path.find((q) => this.mx(q.x) < NET_M);
-      // It must pass well over the net: the bounce model is only approximate.
-      if (!crossing || crossing.y > netClear) continue;
-      const end = path.at(-1)!;
-      const land = { x: end.x, seconds: end.frame * TIME_STEP };
-      const landX = this.mx(land.x);
-      if (landX > toM(NET_X_PX - CHAMPION.netMarginPx)) continue;
-      const target = bx + reach * Math.sin(th);
+    const netClear = toM(NET_TOP_PX - BALL.radiusPx - this.skill.netClearancePx);
+    // Touches left after this one: without one, a ball that stays on its own side is lost.
+    const spare = c.contact + 1 < MAX_TOUCHES;
+    const shots: Array<{ plan: ReturnPlan; value: number }> = [];
+    /** What each angle is worth if the head ends up there by mistake. */
+    const outcome = new Map<number, number>();
+    const sets: Array<{ plan: ReturnPlan; at: BallSample; near: number }> = [];
+
+    for (let deg = BOT.minAngleDeg; deg <= BOT.maxAngleDeg; deg += stepDeg) {
+      const out = this.bounce(bvx, sample.vy, spin, deg);
+      if (!out) continue;
+      const target = bx + reach * Math.sin(deg * DEG);
       // The rails stop the head short of the net and the wall.
       if (target < minX || target > maxX) continue;
-      const late = Math.max(0, Math.abs(target - headX) - maxTravel);
-      // The opponent's problem: how far they must run, and how little time.
-      // Right by the net is out of reach of any head.
-      const spread = Math.min(Math.abs(landX - opponentX), toM(CHAMPION.aimCapPx));
-      const deadZone = landX > toM(NET_X_PX - CHAMPION.deadZonePx) ? CHAMPION.deadZoneBonus : 0;
-      const score = (toPx(spread) + deadZone) / (land.seconds + CHAMPION.timeBias)
-        - CHAMPION.anglePenalty * Math.abs(deg)
-        - CHAMPION.latePenalty * toPx(late);
-      if (!best || score > best.score) best = { score, headX: target, frame: sample.frame, deg, landX };
+      const late = Math.max(0, Math.abs(target - headNow) - maxTravel);
+      const penalty = BOT.anglePenalty * Math.abs(deg) + BOT.steepPenalty * Math.max(0, Math.abs(deg) - BOT.steepFromDeg)
+        + BOT.latePenaltyPerPx * toPx(late);
+      const path = forecastBall(Vec2(sample.x, sample.y), Vec2(this.flip ? -out.x : out.x, out.y), 150, this.gravityScaleAt);
+      const crossing = path.find((q) => this.mx(q.x) < NET_M);
+      const plan = { headX: target, frame: sample.frame, deg, latePx: toPx(late) };
+      const t = crossing && crossing.y <= netClear ? this.shotValue(path, crossing) : null;
+      if (t) {
+        // The bounce model is off by a metre or two a second, more on a
+        // steep contact: a shot that only works exactly as forecast (a
+        // towering lob meant to drop just over the net) is a gamble.
+        const e = BOT.modelErrMs + BOT.modelErrPerDeg * Math.abs(deg);
+        let value = t.score;
+        for (const dir of [-1, 1]) {
+          const vx = out.x + dir * e;
+          const p = forecastBall(Vec2(sample.x, sample.y), Vec2(this.flip ? -vx : vx, out.y + e / 2), 150, this.gravityScaleAt);
+          const cross = p.find((q) => this.mx(q.x) < NET_M);
+          value += (cross && cross.y <= netClear ? this.shotValue(p, cross)?.score : undefined) ?? this.failValue;
+        }
+        value /= 3;
+        outcome.set(deg, value);
+        shots.push({ plan: { ...plan, kind: 'return', score: value - penalty, landX: t.landX }, value });
+        continue;
+      }
+      const at = crossing ? null : this.setPoint(path, target);
+      outcome.set(deg, at && spare ? BOT.recoverValue : this.failValue);
+      if (at && allowSet) {
+        const fromNet = toPx(this.mx(at.x)) - NET_X_PX;
+        const [lo, hi] = BOT.setNearNetPx;
+        const near = fromNet < lo ? fromNet / lo : clamp(1 - (fromNet - hi) / hi, 0, 1);
+        const hang = BOT.setHangPenalty * Math.max(0, at.frame - BOT.setHangFrames);
+        sets.push({ plan: { ...plan, kind: 'set', score: -penalty - hang, landX: NaN }, at, near });
+      }
     }
-    // Nothing clears the net from here: get under it anyway, net side of the
-    // head, and let the next touch try again.
-    return best ?? {
-      score: -Infinity, headX: clamp(bx + reach * 0.5, minX, maxX), frame: sample.frame, deg: 30, landX: NaN,
-    };
+
+    // The head arrives a few degrees off, so a shot is only as good as its
+    // neighbours: one beside an angle that hits the net is a gamble.
+    let shot: ReturnPlan | null = null;
+    for (const { plan, value } of shots) {
+      let sum = 0;
+      let n = 0;
+      for (let d = plan.deg - BOT.robustDeg; d <= plan.deg + BOT.robustDeg; d += stepDeg) {
+        const v = outcome.get(d);
+        if (v === undefined || d === plan.deg) continue;
+        sum += v;
+        n += 1;
+      }
+      const score = plan.score - value + (n ? (value + sum / n) / 2 : value);
+      if (!shot || score > shot.score) shot = { ...plan, score };
+    }
+
+    // Only the few sets that come down best placed get the second look.
+    sets.sort((a, b) => b.near - a.near);
+    let set: ReturnPlan | null = null;
+    let dig: ReturnPlan | null = null;
+    for (const cand of sets.slice(0, 3)) {
+      const next = this.weigh(cand.at, 0, cand.plan.headX, BOT.setAngleStepDeg, false).shot;
+      const value = next ? BOT.setDiscount * next.score : this.failValue;
+      const score = cand.plan.score + value + BOT.setNetBonus * cand.near;
+      const plan = { ...cand.plan, score, landX: next?.landX ?? NaN };
+      if (!dig || score > dig.score) dig = plan;
+      if (cand.near >= BOT.setMinNear && (!set || score > set.score)) set = plan;
+    }
+    return { shot, set, dig };
   }
 
   /**
-   * With the swing ready, stand so the ball drops through the middle of the
-   * swing zone rather than onto the head; championSwing() then strikes.
+   * Where a set comes back down to its head, if it does so on its own side,
+   * in reach of its rails and late enough to get there.
    */
-  private planSwing(): ReturnPlan | null {
-    const c = this.computer;
-    if (!this.canSwing(c) || c.contact >= MAX_TOUCHES) return null;
-    const s = c.sizeScale;
-    const restY = toM(FLOOR_TOP_PX - (FLOOR_TOP_PX - CHAMPION.headRestPx) * s);
-    const strikeY = restY + toM(SWING_AIM.belowPx * s);
-    const samples = forecastBall(this.ball.position, this.ball.velocity, CHAMPION.horizonFrames, this.gravityScaleAt);
-    const ourSide = toM(NET_X_PX + BALL.radiusPx);
-    const sample = samples.find((q) => this.mx(q.x) > ourSide && q.vy > 0 && q.y >= strikeY);
+  private setPoint(path: BallSample[], fromX: number): BallSample | null {
+    const s = this.computer.sizeScale;
+    const band = this.restY(s) - toM(BOT.headRadiusPx * s + BALL.radiusPx);
+    const at = path.find((q) => q.vy > 0 && q.y >= band);
+    if (!at || at.frame < BOT.setMinFrames) return null;
+    const x = this.mx(at.x);
+    if (x < toM(NET_X_PX + BALL.radiusPx) || x > this.maxHeadX()) return null;
+    if (Math.abs(x - fromX) > toM(this.skill.stepPx) * (at.frame - 4)) return null;
+    return at;
+  }
+
+  /**
+   * How hard a shot is to answer. The opponent, read as an ordinary
+   * defender, has to get their head under the ball where it comes down to
+   * head height: too far to run there in time, too close to the net for
+   * their rail, or pinned against their back wall all count. A timid level
+   * weighs safety (net clearance) instead.
+   */
+  private shotValue(path: BallSample[], crossing: BallSample): { score: number; landX: number } | null {
+    const end = path.at(-1)!;
+    const landX = this.mx(end.x);
+    if (landX > NET_M - toM(BOT.netMarginPx)) return null;
+    const os = this.opponent?.sizeScale ?? 1;
+    const band = this.restY(os) - toM(BOT.headRadiusPx * os + BALL.radiusPx);
+    const icpt = path.find((q) => q.frame >= crossing.frame && this.mx(q.x) < NET_M && q.vy > 0 && q.y >= band) ?? end;
+    const ix = toPx(this.mx(icpt.x));
+    const near = NET_X_PX - BOT.oppNetGapPx;
+    const far = toPx(this.mx(this.flip ? toM(RIGHT_WALL_INNER_PX) : toM(LEFT_WALL_INNER_PX))) + BOT.headRadiusPx * os + 2;
+    const travel = Math.abs(clamp(ix, far, near) - toPx(this.opponentHeadX()));
+    const spare = icpt.frame - BOT.oppReactFrames - travel / BOT.oppStepPx;
+    const w = BOT.threat;
+    const threat = w.reach * clamp(1 - spare / BOT.spareFrames, 0, 1)
+      + w.deadZone * (ix > near ? 1 : 0)
+      + w.deep * clamp(1 - (ix - far) / BOT.deepPx, 0, 1)
+      + w.pace * clamp((90 - icpt.frame) / 50, 0, 1)
+      + w.drive * clamp((Math.abs(icpt.vx) - BOT.pressure.driveFromMs) / BOT.pressure.driveRangeMs, 0, 1);
+    const clearance = toPx(toM(NET_TOP_PX - BALL.radiusPx) - crossing.y);
+    const safe = clamp(clearance / BOT.safeClearancePx, 0, 1);
+    const a = this.skill.aggression;
+    // Moonballs are dull to watch and easy to read: the higher it flies, the less it is worth.
+    let apex = crossing.y;
+    for (const q of path) apex = Math.min(apex, q.y);
+    const hang = BOT.hangPenalty * Math.max(0, end.frame - BOT.hangFrames)
+      + BOT.apexPenaltyPer100Px * Math.max(0, BOT.apexFreePx - toPx(apex)) / 100;
+    return { score: a * threat + (1 - a) * 0.5 * safe - hang, landX };
+  }
+
+  /**
+   * Ball velocity off a still head at contact angle `deg`, plus the touch pop,
+   * in its own frame. Bounce along the normal; friction along the tangent
+   * stops the contact point slipping (spin included), up to its Coulomb limit.
+   */
+  private bounce(bvx: number, bvy: number, spin: number, deg: number): Vec2 | null {
+    const th = deg * DEG;
+    // Contact normal, head centre to ball centre.
+    const nx = -Math.sin(th);
+    const ny = -Math.cos(th);
+    const vn = bvx * nx + bvy * ny;
+    if (vn >= 0) return null;
+    const r = toM(BALL.radiusPx);
+    const rollMass = 1 + BALL.mass * r * r / BALL.inertia;
+    const pn = -(1 + BOT.headBounce) * vn;
+    const tx = -ny;
+    const ty = nx;
+    const slip = bvx * tx + bvy * ty - spin * r;
+    const pt = clamp(slip / rollMass, -BOT.headFriction * pn, BOT.headFriction * pn);
+    return Vec2(
+      clamp(bvx + pn * nx - pt * tx, -BALL.maxVx, BALL.maxVx),
+      clamp(bvy + pn * ny - pt * ty + TOUCH_IMPULSE.y / BALL.mass, -BALL.maxVy, BALL.maxVy),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Attacks on a ball up at the net
+
+  /**
+   * Smash: stand so the ball drops through the measured strike window just
+   * in front of the head, wind the net-side arm up as it falls, and swing.
+   */
+  private planSmash(samples: BallSample[]): ReturnPlan | null {
+    const s = this.computer.sizeScale;
+    const strikeY = this.restY(s) + toM(BOT.smash.belowPx * s);
+    const sample = samples.find((q) => this.mx(q.x) > toM(NET_X_PX + BALL.radiusPx) && q.vy > 0 && q.y >= strikeY);
     if (!sample) return null;
-    const headX = this.mx(sample.x) + toM(SWING_AIM.aheadPx * s);
-    if (headX < toM(CHAMPION.minHeadXpx) || headX > this.maxHeadX()) return null;
-    const travel = Math.abs(headX - this.mx(c.head.getWorldCenter().x));
-    if (travel > toM(CHAMPION.maxStepPx) * Math.max(0, sample.frame - 3)) return null;
-    return { score: 0, headX, frame: sample.frame, deg: NaN, landX: NaN };
+    const headX = this.mx(sample.x) + toM(BOT.smash.aheadPx * s);
+    return this.reachable(headX, sample.frame - 3) ? this.attackPlan('smash', headX, sample.frame) : null;
   }
 
-  /** The far wall stops the head, in the AI's frame. */
-  private maxHeadX(): number {
-    const wall = this.flip ? this.mx(toM(LEFT_WALL_INNER_PX)) : toM(RIGHT_WALL_INNER_PX);
-    return wall - toM(CHAMPION.headRadiusPx * this.computer.sizeScale + 2);
-  }
-
-  /** Velocity-style steering: turnComp sets the doll's speed, so aim for a fraction of the gap. */
-  private steer(targetX: number, framesLeft = 30): void {
+  /** Jump attack: stand with the ball dropping just net-side of the head, and leap into it. */
+  private planJump(samples: BallSample[]): ReturnPlan | null {
     const c = this.computer;
-    if (!c.grounded) return; // turnComp would cancel a jump in flight
-    const err = toPx(targetX - this.mx(c.head.getWorldCenter().x));
-    if (Math.abs(err) < CHAMPION.deadbandPx) return;
-    const stepPx = clamp(err / clamp(framesLeft / 2, 1, 3), -CHAMPION.maxStepPx, CHAMPION.maxStepPx);
-    c.turnComp(this.side(stepPx / CHAMPION.pxPerImpulse));
+    if (!c.grounded) return null;
+    const s = c.sizeScale;
+    const meetY = this.restY(s) - toM(BOT.jump.leadRisePx * s);
+    const sample = samples.find((q) => this.mx(q.x) > toM(NET_X_PX + BALL.radiusPx) && q.vy > 0 && q.y >= meetY);
+    if (!sample || sample.frame < BOT.jump.leadFrames - BOT.jump.windowFrames) return null;
+    const headX = this.mx(sample.x) + toM(BOT.jump.aheadPx * s);
+    return this.reachable(headX, sample.frame - BOT.jump.leadFrames - 1) ? this.attackPlan('jump', headX, sample.frame) : null;
   }
 
-  /** Out of touches: stand clear of where the ball is coming down. */
-  private dodge(): void {
-    const samples = forecastBall(this.ball.position, this.ball.velocity, CHAMPION.horizonFrames, this.gravityScaleAt);
-    const last = samples.at(-1);
-    const head = this.mx(this.computer.head.getWorldCenter().x);
-    if (!last) return;
-    const x = this.mx(last.x);
-    const away = head >= x ? x + toM(CHAMPION.dodgePx) : x - toM(CHAMPION.dodgePx);
-    this.steer(clamp(away, toM(CHAMPION.minHeadXpx), this.maxHeadX()));
+  private attackPlan(kind: 'smash' | 'jump', headX: number, frame: number): ReturnPlan {
+    return { kind, score: 0, headX, frame, deg: NaN, landX: NaN, latePx: 0 };
   }
 
-  /**
-   * One swing per round. The net-side hand whips through a box just in front
-   * of the head, so swing the moment the ball is in it: the hit sends it over
-   * fast.
-   */
-  private championSwing(): void {
+  private reachable(headX: number, frames: number): boolean {
+    if (headX < toM(BOT.minHeadXpx) || headX > this.maxHeadX()) return false;
+    const travel = Math.abs(headX - this.mx(this.computer.head.getWorldCenter().x));
+    return travel <= toM(this.skill.stepPx) * Math.max(0, frames);
+  }
+
+  private execute(plan: ReturnPlan): void {
+    const c = this.computer;
+    this.steer(plan.headX, plan.frame);
+    if (plan.kind === 'smash') {
+      this.smash(plan);
+      return;
+    }
+    this.windupFrames = 0;
+    if (plan.kind === 'jump') {
+      const err = Math.abs(toPx(plan.headX - this.mx(c.head.getWorldCenter().x)));
+      if (plan.frame <= BOT.jump.leadFrames && err < 14 * c.sizeScale) c.jump();
+      return;
+    }
+    // Its head will not make it: throw a hand at the ball instead.
+    if (this.skill.lunges && plan.latePx > BOT.lunge.latePx) this.strikeIfInZone(BOT.swingZone, BOT.lunge.power);
+  }
+
+  private smash(plan: ReturnPlan): void {
+    const c = this.computer;
+    if (!this.canSwing(c)) return;
+    const { smash } = BOT;
+    if (plan.frame <= smash.windupFrames + 2) {
+      this.windupFrames = Math.min(this.windupFrames + 1, smash.windupFrames);
+      c.windUpArm(smash.power * this.windupFrames / smash.windupFrames, 'inside');
+    }
+    this.strikeIfInZone({ aheadPx: smash.zoneAheadPx, belowPx: smash.zoneBelowPx }, smash.power);
+  }
+
+  /** Swing the net-side hand the moment the ball is in the box in front of the head. */
+  private strikeIfInZone(zone: { aheadPx: readonly number[]; belowPx: readonly number[] }, power: number): void {
     const c = this.computer;
     if (!this.canSwing(c) || c.contact >= MAX_TOUCHES) return;
     const s = c.sizeScale;
@@ -392,10 +616,145 @@ export class AI {
     if (ball.x < NET_M) return;
     const ahead = toPx(head.x - ball.x) / s;
     const below = toPx(ball.y - head.y) / s;
-    if (ahead >= SWING_ZONE.aheadPx[0] && ahead <= SWING_ZONE.aheadPx[1] &&
-        below >= SWING_ZONE.belowPx[0] && below <= SWING_ZONE.belowPx[1]) {
-      this.swing(c, CHAMPION.swingPower, 'inside');
+    if (ahead >= zone.aheadPx[0] && ahead <= zone.aheadPx[1] && below >= zone.belowPx[0] && below <= zone.belowPx[1]) {
+      this.swing(c, power, 'inside');
+      this.windupFrames = 0;
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Serving
+
+  /**
+   * Pick the serve that lands farthest from the opponent (a weaker level
+   * picks more loosely), walk to its spot, jump, and flick it over at the
+   * recipe's moment in the jump.
+   */
+  private serveRoutine(): void {
+    const c = this.computer;
+    if (!this.serving) this.serving = { recipe: this.pickServe(), frames: 0, jumpedAt: -1, still: 0 };
+    const sv = this.serving;
+    sv.frames += 1;
+    if (sv.jumpedAt < 0) {
+      const err = toPx(toM(sv.recipe.headXpx) - this.mx(c.head.getWorldCenter().x));
+      const late = sv.frames > BOT.serveMaxWalkFrames;
+      if (Math.abs(err) >= BOT.serveArrivePx && !late) {
+        // Every level walks out at the same pace, so a recipe serves the same for all.
+        this.steer(toM(sv.recipe.headXpx), 6, BOT.serveStepPx);
+        sv.still = 0;
+        return;
+      }
+      // The serve is a flick from mid-jump: a doll still swaying sends it anywhere.
+      const sway = Math.max(c.head.getLinearVelocity().length(), c.ass.getLinearVelocity().length());
+      sv.still = sway < BOT.serveStillMs ? sv.still + 1 : 0;
+      if (sv.still < BOT.serveSettleFrames && !late) return;
+      if (this.serveLegal()) {
+        c.jump();
+        sv.jumpedAt = sv.frames;
+      } else {
+        c.turnComp(this.side(2)); // the ball has to be on its own half
+      }
+      return;
+    }
+    if (sv.frames - sv.jumpedAt >= sv.recipe.delay) this.serve(c);
+  }
+
+  private pickServe(): ServeRecipe {
+    const opp = toPx(this.opponentHeadX());
+    let best = SERVES[0];
+    let bestScore = -Infinity;
+    for (const r of SERVES) {
+      const land = NET_X_PX - r.landPx[this.flip ? 0 : 1];
+      // A weaker level reads the opponent less and picks more at random.
+      const score = Math.abs(land - opp) + this.random() * (1.2 - this.skill.aggression) * 400;
+      if (score > bestScore) {
+        bestScore = score;
+        best = r;
+      }
+    }
+    return best;
+  }
+
+  private serveLegal(): boolean {
+    const x = this.ball.position.x;
+    return this.flip ? x < SERVE_CENTRE_M : x > SERVE_CENTRE_M;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Moving
+
+  /** Where it waits while the opponent has the ball. */
+  private readyX(): number {
+    return toM(BOT.readyXpx + this.readyOffsetPx);
+  }
+
+  /** Velocity-style steering: turnComp sets the doll's speed, so aim for a fraction of the gap. */
+  private steer(targetX: number, framesLeft = 30, max = this.skill.stepPx): void {
+    const c = this.computer;
+    if (!c.grounded) return; // turnComp would cancel a jump in flight
+    const err = toPx(targetX - this.mx(c.head.getWorldCenter().x));
+    if (Math.abs(err) < BOT.deadbandPx) return;
+    const stepPx = clamp(err / clamp(framesLeft / 2, 1, 3), -max, max);
+    c.turnComp(this.side(stepPx / BOT.pxPerImpulse));
+  }
+
+  /** Out of touches: stand clear of where the ball is coming down. */
+  private dodge(): void {
+    const last = this.forecast().at(-1);
+    if (!last) return;
+    const head = this.mx(this.computer.head.getWorldCenter().x);
+    const x = this.mx(last.x);
+    const away = head >= x ? x + toM(BOT.dodgePx) : x - toM(BOT.dodgePx);
+    this.steer(clamp(away, toM(BOT.minHeadXpx), this.maxHeadX()));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Geometry, in its own frame
+
+  /**
+   * The ball's flight as it reads it. Right after the opponent's touch its
+   * guess at the ball's speed is off by readBias; the error fades as it
+   * watches the ball come.
+   */
+  private forecast(): BallSample[] {
+    const v = this.ball.velocity;
+    const fade = clamp(1 - this.readClock / this.skill.readFrames, 0, 1);
+    const read = Vec2(v.x + this.readBias * fade, v.y);
+    return forecastBall(this.ball.position, read, BOT.horizonFrames, this.gravityScaleAt);
+  }
+
+  /** The ball's spin survives its flight (no damping); mirroring reverses it. */
+  private spin(): number {
+    return (this.flip ? -1 : 1) * this.ball.body.getAngularVelocity();
+  }
+
+  /** Head centre at rest for a doll of this size, metres. */
+  private restY(scale: number): number {
+    return toM(FLOOR_TOP_PX - (FLOOR_TOP_PX - BOT.headRestPx) * scale);
+  }
+
+  /** The far wall stops the head, in its own frame. */
+  private maxHeadX(): number {
+    const wall = this.flip ? this.mx(toM(LEFT_WALL_INNER_PX)) : toM(RIGHT_WALL_INNER_PX);
+    return wall - toM(BOT.headRadiusPx * this.computer.sizeScale + 2);
+  }
+
+  private opponentHeadX(): number {
+    return this.opponent ? this.mx(this.opponent.head.getWorldCenter().x) : toM(NET_X_PX - 220);
+  }
+
+  /** World x to its own frame (itself on the right), and back. */
+  private mx(x: number): number {
+    return this.flip ? 2 * NET_M - x : x;
+  }
+
+  private local(p: Vec2Value): Vec2 {
+    return Vec2(this.mx(p.x), p.y);
+  }
+
+  /** A sideways push given in its own frame. */
+  private side(x: number): Vec2 {
+    return Vec2(this.flip ? -x : x, 0);
   }
 
   /** The feather ball falls slower over a feathered player's half. */
@@ -404,36 +763,4 @@ export class AI {
     const owner = ownerId === this.computer.id ? this.computer : this.opponent;
     return owner?.power === 'feather' ? FEATHER.gravityScale : 1;
   };
-
-  private goToXPlace(x: number, speed: number): void {
-    const hx = this.mx(this.computer.head.getWorldCenter().x);
-    if (hx > x) this.computer.turn(this.side(-speed));
-    if (hx < x) this.computer.turn(this.side(speed));
-  }
-
-  /**
-   * Fires up to 5 times, 700 ms apart. First tick jumps; later ticks serve and
-   * swing the arm through the ball, retrying while the ball is still held.
-   */
-  private onPasTimer(): void {
-    this.act_count += 1;
-    if (this.act_count === 1) {
-      this.computer.jump();
-      return;
-    }
-    this.serve(this.computer);
-    this.computer.turn(this.side(16));
-    if (this.ball.ballOfPlayer !== this.computer.id) {
-      this.DisableMoveAfterPas = true;
-      this.pasTimer.reset();
-      this.act_count = 0;
-    }
-  }
-
-  reset(): void {
-    this.pasTimer.reset();
-    this.act_count = 0;
-    this.DisableMoveAfterPas = false;
-    this.plan = null;
-  }
 }

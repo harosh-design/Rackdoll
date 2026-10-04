@@ -6,6 +6,7 @@ import {
 import { bindKeyboard } from './input/keyboard';
 import { Interpolator } from './render/interp';
 import { Renderer } from './render/renderer';
+import { BEE_FLIGHT } from './sim/bees';
 import { BALL, BODYTYPE, FPS, ITERATIONS, OPTIONS } from './sim/constants';
 import type { ControlAction } from './sim/control';
 import type { PointReason } from './sim/game';
@@ -328,13 +329,14 @@ function simFrame(): void {
   const wasHeld = gw.ball.held;
   const wasDown = gw.flags.onBallDown;
   const executers = gw.executers.length;
-  const hazardHits = new Map(gw.executers.map((e) => [e, e.hits]));
+  const hazardHits = new Map(gw.executers.map((e) => [e, { hits: e.hits, snaps: e.snaps }]));
   const buttons = gw.ground.prizeButtons.map((b) => [b.pressedAt, b.releasedAt]);
   const opponentHits = { 1: gw.opponentHitEffects[1].frame, 2: gw.opponentHitEffects[2].frame };
   const perfects = { 1: gw.perfectEffects[1].frame, 2: gw.perfectEffects[2].frame };
   const counter = gw.counterEffect.frame;
   const gift = gw.powerUps.gift;
   const powers = { 1: gw.powerUps.active[1], 2: gw.powerUps.active[2] };
+  const beeLaunches = gw.bees.launches;
   pendingHit = null;
 
   gw.step();
@@ -348,27 +350,39 @@ function simFrame(): void {
   });
 
   if (wasHeld && !gw.ball.held && gw.game.phase === 'play') {
-    sfx.serve();
     servesSeen++;
   }
-  if (!wasDown && gw.flags.onBallDown) sfx.thud();
+  if (!wasDown && gw.flags.onBallDown) sfx.thud(gw.game.phase === 'goal');
   if (gw.executers.length > executers) sfx.executer();
-  for (const [e, hits] of hazardHits) {
-    if (e.hits > hits && e.lastImpact) sfx.bump(0.4 + 1.4 * e.lastImpact.power);
+  for (const [e, { hits, snaps }] of hazardHits) {
+    if (e.hits > hits && e.lastImpact) {
+      if (e.variant.id === 'slime') sfx.splat();
+      else sfx.bump(0.4 + 1.4 * e.lastImpact.power);
+    }
+    if (e.snaps > snaps) sfx.splat(true);
   }
+  let perfectSound = false;
   for (const id of [1, 2] as const) {
     const effect = gw.opponentHitEffects[id];
     if (effect.frame !== opponentHits[id]) sfx.bump(0.4 + 1.1 * effect.power);
-    if (gw.perfectEffects[id].frame !== perfects[id]) sfx.perfect();
+    if (gw.perfectEffects[id].frame !== perfects[id]) {
+      sfx.perfect();
+      perfectSound = true;
+    }
   }
-  if (gw.counterEffect.frame !== counter) sfx.counter();
+  const counterSound = gw.counterEffect.frame !== counter;
+  if (counterSound) sfx.counter();
   if (gw.powerUps.gift && gw.powerUps.gift !== gift) sfx.giftSpawn();
+  const newestBee = gw.bees.bees.at(-1);
+  if (gw.bees.launches > beeLaunches && newestBee) sfx.beeBuzz(BEE_FLIGHT[newestBee.kind].scale);
   for (const id of [1, 2] as const) {
     const power = gw.powerUps.active[id];
     if (power && power !== powers[id]) sfx.giftPickup();
   }
   const hit = pendingHit as { kind: HitKind; strength: number } | null;
-  if (hit) (hit.kind === 'doll' ? sfx.bump(hit.strength) : sfx.clack(hit.strength));
+  if (hit && !perfectSound && !counterSound) {
+    (hit.kind === 'doll' ? sfx.bump(hit.strength) : sfx.clack(hit.strength));
+  }
 }
 
 /** The menu backdrop: the physics at the menu time step, no rules running. */

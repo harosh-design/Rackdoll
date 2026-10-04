@@ -1,13 +1,15 @@
 import {
   ART, BALL, BOXER, CHARGE, COURT, EXECUTER, FLOOR_TOP_PX, FPS, GIFT, MAX_TOUCHES, OPTIONS, PARTS, PRIZE_ANIM,
-  PRIZE_BUTTONS, RIGHT_WALL_INNER_PX, SPRING, VIEW, toPx, type PartName,
+  PRIZE_BUTTONS, RIGHT_WALL_INNER_PX, SLIME, SPRING, VIEW, toPx, type PartName,
 } from '../sim/constants';
+import type { Body, Vec2Value } from 'planck';
 import type { Executer } from '../sim/executer';
 import type { ExecuterId } from '../sim/executerVariants';
 import type { GameWorld } from '../sim/world';
 import type { Player } from '../sim/player';
 import type { PrizeButton } from '../sim/prizeButton';
 import { POWER_LABELS } from '../sim/powerUps';
+import { drawBeePops, drawBees } from './bees';
 import type { Interpolator, Pose } from './interp';
 
 /**
@@ -75,11 +77,26 @@ export interface HudState {
   showControlsHint: boolean;
 }
 
+interface DustPuff {
+  x: number;
+  frame: number;
+  drift: number;
+  size: number;
+}
+
+interface MotionState {
+  frame: number;
+  grounded: Record<1 | 2, boolean>;
+  lastStep: Record<1 | 2, number>;
+  dust: DustPuff[];
+}
+
 export class Renderer {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private readonly bg: HTMLCanvasElement;
   private readonly shadow: HTMLCanvasElement;
+  private readonly motion = new WeakMap<GameWorld, MotionState>();
   /** Device pixels per stage pixel. */
   private k = 1;
 
@@ -223,9 +240,12 @@ export class Renderer {
     const now = gw.frame - 1 + alpha;
     this.drawPrizeButtons(ctx, gw, now);
     this.drawGift(ctx, gw, now);
-    for (const p of [gw.p1, gw.p2]) this.drawDoll(ctx, p, interp, alpha);
+    this.drawFootMotion(ctx, gw, interp, now);
+    for (const p of [gw.p1, gw.p2]) this.drawDoll(ctx, p, interp, alpha, now);
     this.drawPowerGlows(ctx, gw, interp, alpha);
+    drawBees(ctx, gw, now, alpha);
     this.drawBall(ctx, gw, interp, alpha);
+    drawBeePops(ctx, gw, interp, alpha, now);
     this.drawSwingEffects(ctx, gw, interp, alpha);
     this.drawOpponentHitEffects(ctx, gw, interp, alpha);
     this.drawSpecialEffects(ctx, gw, interp, alpha);
@@ -273,10 +293,68 @@ export class Renderer {
     ctx.restore();
   }
 
-  private drawDoll(ctx: CanvasRenderingContext2D, p: Player, interp: Interpolator, alpha: number): void {
+  private drawDoll(ctx: CanvasRenderingContext2D, p: Player, interp: Interpolator, alpha: number, now: number): void {
+    const velocity = p.ass.getLinearVelocity();
+    const calm = p.grounded ? Math.max(0, 1 - Math.hypot(velocity.x, velocity.y) / 1.8) : 0;
+    const breath = Math.sin(now * 0.12 + p.id) * 0.035 * calm;
     for (const name of DRAW_ORDER) {
-      this.withPose(ctx, interp.pose(p.part(name), alpha), () => this.partArt(ctx, name, p.id), p.sizeScale);
+      const pose = interp.pose(p.part(name), alpha);
+      const artPose = name === 'Head'
+        ? { ...pose, y: pose.y - breath * 22 }
+        : name.startsWith('Arm') || name.startsWith('Hand') || name.startsWith('Finger')
+          ? { ...pose, a: pose.a + (name.endsWith('Left') ? -breath : breath) }
+          : pose;
+      this.withPose(ctx, artPose, () => this.partArt(ctx, name, p.id), p.sizeScale);
     }
+  }
+
+  /** Small sand puffs make steps, take-offs, and landings readable. */
+  private drawFootMotion(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: Interpolator, now: number): void {
+    let state = this.motion.get(gw);
+    if (!state) {
+      state = { frame: -1, grounded: { 1: gw.p1.grounded, 2: gw.p2.grounded }, lastStep: { 1: -20, 2: -20 }, dust: [] };
+      this.motion.set(gw, state);
+    }
+    if (gw.frame > state.frame) {
+      for (const p of [gw.p1, gw.p2]) {
+        const grounded = p.grounded;
+        const vx = p.ass.getLinearVelocity().x;
+        const vy = p.ass.getLinearVelocity().y;
+        const left = interp.pose(p.part('FootLeft'), 1);
+        const right = interp.pose(p.part('FootRight'), 1);
+        const x = (left.x + right.x) / 2;
+        if (grounded && !state.grounded[p.id]) {
+          state.dust.push({ x, frame: gw.frame, drift: -Math.sign(vx) * 0.35, size: 1.5 });
+        } else if (!grounded && state.grounded[p.id] && vy < -1) {
+          state.dust.push({ x, frame: gw.frame, drift: 0, size: 0.85 });
+        } else if (grounded && Math.abs(vx) > 2.5 && gw.frame - state.lastStep[p.id] >= 6) {
+          state.dust.push({ x: x - Math.sign(vx) * 7, frame: gw.frame, drift: -Math.sign(vx) * 0.5, size: 0.7 });
+          state.lastStep[p.id] = gw.frame;
+        }
+        state.grounded[p.id] = grounded;
+      }
+      state.dust = state.dust.filter((puff) => gw.frame - puff.frame < 15);
+      state.frame = gw.frame;
+    }
+    ctx.save();
+    for (const puff of state.dust) {
+      const age = now - puff.frame;
+      if (age < 0 || age >= 15) continue;
+      const fade = (1 - age / 15) ** 2;
+      ctx.fillStyle = `rgba(255,246,218,${0.55 * fade})`;
+      for (const side of [-1, 0, 1]) {
+        ctx.beginPath();
+        ctx.ellipse(
+          puff.x + side * (5 + age * 0.55) * puff.size + age * puff.drift,
+          FLOOR_TOP_PX - 2 - age * (0.25 + 0.12 * Math.abs(side)),
+          (4 + age * 0.23) * puff.size,
+          (2.5 + age * 0.12) * puff.size,
+          0, 0, Math.PI * 2,
+        );
+        ctx.fill();
+      }
+    }
+    ctx.restore();
   }
 
   private drawGift(ctx: CanvasRenderingContext2D, gw: GameWorld, now: number): void {
@@ -390,19 +468,19 @@ export class Renderer {
       const age = now - effect.frame;
       if (age < 0 || age >= 8) continue;
       const finger = interp.pose(p.swingFinger(effect.hand), alpha);
-      const fade = 1 - age / 8;
+      const fade = (1 - age / 8) ** 2;
       const radius = 16 + effect.power * 12 + age * 2;
       const start = p.id === 1 ? -Math.PI * 0.7 : Math.PI * 0.3;
       const end = start + Math.PI * 0.9;
       ctx.save();
       ctx.lineCap = 'round';
-      ctx.strokeStyle = `rgba(255,245,190,${0.85 * fade})`;
-      ctx.lineWidth = 3 + 3 * effect.power;
+      ctx.strokeStyle = `rgba(255,246,210,${0.72 * fade})`;
+      ctx.lineWidth = 2.5 + 2 * effect.power;
       ctx.beginPath();
       ctx.arc(finger.x, finger.y, radius, start, end);
       ctx.stroke();
-      ctx.strokeStyle = `rgba(255,77,46,${0.7 * fade})`;
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = `rgba(255,190,95,${0.42 * fade})`;
+      ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.arc(finger.x, finger.y, radius + 8, start + 0.2, end - 0.2);
       ctx.stroke();
@@ -643,10 +721,10 @@ export class Renderer {
       ctx.save();
       ctx.translate(pose.x, pose.y);
       ctx.rotate(ang);
-      const len = 70 * s;
+      const len = 48 * s;
       const grad = ctx.createLinearGradient(-len, 0, 0, 0);
       grad.addColorStop(0, 'rgba(255,255,255,0)');
-      grad.addColorStop(1, 'rgba(255,255,255,0.55)');
+      grad.addColorStop(1, 'rgba(255,255,255,0.34)');
       ctx.fillStyle = grad;
       ctx.beginPath();
       ctx.moveTo(-len, 0);
@@ -666,7 +744,7 @@ export class Renderer {
       const back = (i * Math.min(speed, 20)) / 28 / 3 * 30;
       const ux = speed > 0 ? v.x / speed : 0;
       const uy = speed > 0 ? v.y / speed : 0;
-      ctx.globalAlpha = 0.18 / i;
+      ctx.globalAlpha = 0.12 / i;
       this.ballArt(ctx, { x: pose.x - ux * back, y: pose.y - uy * back, a: pose.a });
     }
     ctx.globalAlpha = 1;
@@ -710,6 +788,7 @@ export class Renderer {
   private drawExecuter(ctx: CanvasRenderingContext2D, e: Executer, interp: Interpolator, alpha: number): void {
     const pose = interp.pose(e.body, alpha);
     const t = e.age + alpha;
+    if (e.variant.id === 'slime') this.drawSlimeGlue(ctx, e, interp, alpha, t);
     ctx.save();
     ctx.translate(pose.x, pose.y);
     if (!e.solid) {
@@ -735,6 +814,16 @@ export class Renderer {
       case 'spring':
         this.drawSpringArt(ctx, toTarget, springStretch(e, t));
         break;
+      case 'slime': {
+        // Its eyes are on the part it is reeling in, or else its player.
+        const look = (e.reelPart ?? e.target.head).getWorldCenter();
+        const v = e.body.getLinearVelocity();
+        const splat = e.host ? interp.pose(e.host, alpha).a : null;
+        this.drawSlimeArt(
+          ctx, Math.atan2(v.y, v.x), clamp01(v.length() / SLIME.flySpeed), splat, Math.atan2(look.y - c.y, look.x - c.x), t,
+        );
+        break;
+      }
     }
     ctx.restore();
 
@@ -917,6 +1006,187 @@ export class Renderer {
     ctx.restore();
   }
 
+  /**
+   * A glob of green goo. Flying, it stretches out along its path into a
+   * teardrop and sheds drips; stuck (`splat` is the angle of the part it is
+   * on), it spreads flat along the part, see-through so the limb shows
+   * inside it, with a drip forming underneath. Its eyes follow `gaze`.
+   */
+  private drawSlimeArt(
+    ctx: CanvasRenderingContext2D, heading: number, speed: number, splat: number | null, gaze: number, t: number,
+  ): void {
+    const r = EXECUTER.radiusPx;
+    const stuck = splat !== null;
+    ctx.save();
+    ctx.rotate(stuck ? splat : heading);
+    // Drips shed behind it in flight.
+    if (!stuck && speed > 0.2) {
+      for (let i = 0; i < 2; i++) {
+        const p = (t * 0.07 + i * 0.5) % 1;
+        ctx.fillStyle = `rgba(${SLIME_RGB},${0.7 * (1 - p) * speed})`;
+        ctx.beginPath();
+        ctx.arc(-r * (1.05 + 1.2 * p), Math.sin(i * 2.3 + t * 0.2) * r * 0.35, 3.2 * (1 - 0.6 * p), 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    // The body: a wobbling outline, stretched along its flight into a
+    // teardrop, or spread flat along the part it is stuck to.
+    const sx = stuck ? 1.3 : 1 + 0.3 * speed;
+    const sy = stuck ? 0.78 : 1 - 0.18 * speed;
+    const n = 14;
+    const pts: Array<[number, number]> = [];
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      const wob = 1 + 0.07 * Math.sin(t * 0.33 + i * 1.9) + 0.045 * Math.sin(t * 0.21 + i * 3.7);
+      const tail = stuck ? 1 : 1 + 0.35 * speed * Math.max(0, -Math.cos(a)) ** 2;
+      pts.push([Math.cos(a) * r * wob * tail * sx, Math.sin(a) * r * wob * sy]);
+    }
+    ctx.beginPath();
+    for (let i = 0; i <= n; i++) {
+      const [x0, y0] = pts[i % n];
+      const [x1, y1] = pts[(i + 1) % n];
+      if (i === 0) ctx.moveTo((x0 + x1) / 2, (y0 + y1) / 2);
+      else ctx.quadraticCurveTo(x0, y0, (x0 + x1) / 2, (y0 + y1) / 2);
+    }
+    ctx.closePath();
+    const goo = ctx.createRadialGradient(-r * 0.3, -r * 0.35, 1, 0, 0, r * 1.25);
+    goo.addColorStop(0, `rgba(205,248,160,${stuck ? 0.8 : 0.95})`);
+    goo.addColorStop(0.5, `rgba(${SLIME_RGB},${stuck ? 0.72 : 0.9})`);
+    goo.addColorStop(1, `rgba(40,128,36,${stuck ? 0.8 : 0.95})`);
+    ctx.fillStyle = goo;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(30,92,26,0.75)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // Bubbles rising inside, and a wet shine.
+    ctx.fillStyle = 'rgba(235,255,215,0.45)';
+    for (let i = 0; i < 3; i++) {
+      const p = (t * 0.02 + i * 0.33) % 1;
+      ctx.beginPath();
+      ctx.arc((i - 1) * r * 0.45, r * (0.45 - 0.9 * p) * sy, 1.4 + i * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.beginPath();
+    ctx.ellipse(-r * 0.3 * sx, -r * 0.45 * sy, r * 0.32, r * 0.14, -0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Stuck, a drip swells underneath and falls away.
+    if (stuck) {
+      const p = (t / 40) % 1;
+      const y = r * 0.55 + (p < 0.75 ? (p / 0.75) * 9 : 9 + ((p - 0.75) / 0.25) * 22);
+      const s = p < 0.75 ? 1.5 + 2.5 * (p / 0.75) : 4 * (1 - (p - 0.75) / 0.25);
+      ctx.fillStyle = `rgba(${SLIME_RGB},0.85)`;
+      ctx.beginPath();
+      if (p < 0.75) {
+        ctx.moveTo(-2.5, r * 0.5);
+        ctx.quadraticCurveTo(-s, y - s, 0, y + s);
+        ctx.quadraticCurveTo(s, y - s, 2.5, r * 0.5);
+      } else {
+        ctx.arc(0, y, Math.max(0.5, s), 0, Math.PI * 2);
+      }
+      ctx.fill();
+    }
+
+    // Eyes, upright whatever the body does, looking at `gaze`; a blink now and then.
+    const gx = Math.cos(gaze);
+    const gy = Math.sin(gaze);
+    const blink = t % 97 < 4;
+    for (const side of [-1, 1]) {
+      const ex = side * 5.5 + gx * 3;
+      const ey = -3 + gy * 2.5;
+      if (blink) {
+        ctx.strokeStyle = '#1c3a1a';
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(ex - 3, ey);
+        ctx.lineTo(ex + 3, ey);
+        ctx.stroke();
+        continue;
+      }
+      ctx.fillStyle = '#fbfff4';
+      ctx.beginPath();
+      ctx.ellipse(ex, ey, 3.6, 4.4, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#1c3a1a';
+      ctx.beginPath();
+      ctx.arc(ex + gx * 1.5, ey + gy * 1.8, 1.9, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  /**
+   * The slime's glue, under its body: a goo bridge to each part it holds,
+   * thinning as it is pulled out, a coat of goo on that part, a thin strand
+   * to the part it is reeling in, and a strand that tore recoiling apart.
+   */
+  private drawSlimeGlue(ctx: CanvasRenderingContext2D, e: Executer, interp: Interpolator, alpha: number, t: number): void {
+    const at = (b: Body, local: Vec2Value) => {
+      const p = interp.pose(b, alpha);
+      const lx = toPx(local.x);
+      const ly = toPx(local.y);
+      return { x: p.x + Math.cos(p.a) * lx - Math.sin(p.a) * ly, y: p.y + Math.sin(p.a) * lx + Math.cos(p.a) * ly };
+    };
+    ctx.save();
+    ctx.lineCap = 'round';
+    if (e.host) {
+      const a = at(e.host, e.hostAnchor);
+      for (const bond of e.bonds) {
+        const b = at(bond.part, bond.local);
+        const len = Math.hypot(b.x - a.x, b.y - a.y);
+        ctx.strokeStyle = `rgba(${SLIME_RGB},0.8)`;
+        ctx.lineWidth = Math.max(2.5, 12 - len * 0.4);
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+        ctx.fillStyle = `rgba(${SLIME_RGB},0.72)`;
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, 6.5 + 0.8 * Math.sin(t * 0.3 + bond.age), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(30,92,26,0.6)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+      if (e.reelPart) {
+        const q = interp.pose(e.reelPart, alpha);
+        const sag = 6 + 3 * Math.sin(t * 0.4);
+        ctx.strokeStyle = `rgba(${SLIME_RGB},0.75)`;
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.quadraticCurveTo((a.x + q.x) / 2, (a.y + q.y) / 2 + sag, q.x, q.y);
+        ctx.stroke();
+      }
+    }
+    // A torn strand: each end snaps back toward its part, flinging drops.
+    const s = e.lastSnap;
+    const since = s ? t - s.age : -1;
+    if (s && since >= 0 && since < 10) {
+      const p = since / 10;
+      const mx = (s.ax + s.bx) / 2;
+      const my = (s.ay + s.by) / 2;
+      const back = 0.5 * easeOutCubic(p);
+      ctx.strokeStyle = `rgba(${SLIME_RGB},${0.85 * (1 - p)})`;
+      ctx.lineWidth = 3 * (1 - p) + 1;
+      ctx.beginPath();
+      ctx.moveTo(s.ax, s.ay);
+      ctx.lineTo(mx + (s.ax - mx) * back, my + (s.ay - my) * back);
+      ctx.moveTo(s.bx, s.by);
+      ctx.lineTo(mx + (s.bx - mx) * back, my + (s.by - my) * back);
+      ctx.stroke();
+      ctx.fillStyle = `rgba(${SLIME_RGB},${0.9 * (1 - p)})`;
+      for (let i = 0; i < 5; i++) {
+        const a = i * 1.26 + s.age;
+        ctx.beginPath();
+        ctx.arc(mx + Math.cos(a) * 14 * p, my + Math.sin(a) * 10 * p + 12 * p * p, 2.2 * (1 - p) + 0.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+
   /** The boxer, with its jab aimed at whichever part it is going for. */
   private drawBoxer(ctx: CanvasRenderingContext2D, e: Executer): void {
     const c = e.body.getWorldCenter();
@@ -1001,6 +1271,7 @@ export class Renderer {
         this.drawCometArt(ctx, 0.4, -2.75, 7, false, 4);
         break;
       case 'spring': this.drawSpringArt(ctx, 0, 1); break;
+      case 'slime': this.drawSlimeArt(ctx, 0, 0, null, 0.4, 20); break;
     }
     ctx.restore();
   }
@@ -1274,8 +1545,11 @@ const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
 /** Each hazard's impact ring colour. */
 const IMPACT_RGB: Record<ExecuterId, string> = {
-  magnet: '84,184,238', boxer: '255,214,170', comet: '255,150,60', spring: '214,160,255',
+  magnet: '84,184,238', boxer: '255,214,170', comet: '255,150,60', spring: '214,160,255', slime: '140,226,92',
 };
+
+/** The slime's goo. */
+const SLIME_RGB = '111,209,74';
 
 /**
  * The spring's drawn length, 1 at rest: drawn out with speed as it charges,

@@ -385,6 +385,28 @@ export const GIFT = {
   pickupRadiusPx: 24,
 } as const;
 
+/**
+ * Bees: gifts on the wing, besides the goal gifts. Every 12–20 s of play one
+ * flies in from a screen edge and crosses to the other. The ball meeting one
+ * gives its power to whoever holds the ball or touched it last. Frames and
+ * world px.
+ */
+export const BEES = {
+  firstFrames: 8 * FPS,
+  intervalFrames: { min: 12 * FPS, max: 20 * FPS },
+  maxAlive: 2,
+  /** A full-size bee's hit radius; the giant and tiny bees scale it. */
+  radiusPx: 15,
+  /** The flight's centre line: above the net top, below the HUD. */
+  altitudePx: { top: -70, bottom: 130 },
+  /** Bees start and leave this far beyond the screen edge. */
+  edgeMarginPx: 60,
+  /** A ball that moved further than this in one frame was reset, not flying. */
+  maxSweepPx: 60,
+  /** How long a popped bee's burst lasts. */
+  popFrames: 18,
+} as const;
+
 /** Feather ball: over its holder's half, the free ball falls at this fraction of gravity. */
 export const FEATHER = { gravityScale: 0.4 } as const;
 
@@ -583,6 +605,65 @@ export const BOXER = {
 } as const;
 
 /**
+ * Slime: a glob of glue. It flies at one of its player's limbs and sticks to
+ * whatever part it reaches first, weighing it down. Stuck, it reels the
+ * nearest part of another limb in on a strand and glues it into itself, two
+ * at most, so a hand ends up stuck to the other hand, a leg or the head.
+ *
+ * The glue is a capped spring, not a joint: a joint welding a 0.07 kg hand to
+ * a leg fights the doll's own joint limits and tears it. Strain hard enough
+ * (a jump, a knock) and a strand stretches and snaps, which also shortens how
+ * long the slime holds on. A swing that reaches it flings it off; otherwise
+ * it lets go by itself, re-forms and flies in again.
+ */
+export const SLIME = {
+  /** Flight speed, m/s, the force budget getting there, N, and a bob across its path. */
+  flySpeed: 4.5,
+  flyForce: 90,
+  bobSpeed: 1.4,
+  bobFrames: 16,
+  /** The glob's weight on the part it is stuck to, N. */
+  weight: 3,
+  /** Frames after it sticks before it reaches for a second part. */
+  gripFrames: 8,
+  /** It reels in the nearest part it can glue within this, px... */
+  reelReachPx: 110,
+  /**
+   * ...drawing the two together at up to this speed, m/s, with at most this
+   * force, N: enough to lift a hanging arm (~5 N) up to a slime on the head.
+   */
+  reelSpeed: 3,
+  reelForce: 8,
+  /** ...and gives up on one it can't bring in after this many frames. */
+  reelFrames: 45,
+  /** Parts it glues at once, besides the one it is stuck to... */
+  maxBonds: 2,
+  /** ...once one comes within this of the glue's core, px. */
+  glueReachPx: 12,
+  /**
+   * Glue spring: closes the gap at this rate, 1/s, with at most this force,
+   * N. Measured: at this strength a doll glued hand to thigh stretches its
+   * joints no more on landings and wall hits than it does on its own.
+   */
+  glueRate: 5,
+  glueForce: 10,
+  /** The glue cures from the gap it caught at down to this one, px, at this rate, px a frame. */
+  glueRestPx: 3,
+  cureRatePx: 1.5,
+  /** Stretched this far past its rest length, a strand snaps, px. */
+  breakPx: 24,
+  /** A part that tore free can't be glued again for this long, frames. */
+  regrabFrames: 30,
+  /** It holds on this long, frames. Every strand snapped takes `snapCostFrames` off. */
+  holdFrames: 6 * 30,
+  snapCostFrames: 45,
+  /** Letting go, it springs clear at this, m/s, then brakes and re-forms before the next flight. */
+  peelSpeed: 3,
+  recoverFrames: 30,
+  brakeForce: 60,
+} as const;
+
+/**
  * Solver iterations for a step with an executer at a doll. The original's 10
  * everywhere else. Measured: with this, a doll rammed by an executer tears no
  * more than one standing, pacing, hopping or crouching alone.
@@ -643,11 +724,14 @@ export const OPTIONS = {
 } as const;
 
 /**
- * The champion (level 6). It reads the ball's flight, chooses where on its head
- * to take it so the rebound lands away from the opponent, and gets there first.
- * Distances are px, in its own frame (itself on the right of the net).
+ * The CPU player, every level. It reads the ball's flight, picks the touch
+ * that is hardest for the opponent to answer (a drop into the strip by the
+ * net no head can reach, a deep corner, a ball away from them) and gets there
+ * first. It builds attacks over two touches: a set to itself by the net,
+ * then a jump attack or a wound-up smash. BOT_LEVELS sets how well it does
+ * each. Distances are px, in its own frame (itself on the right of the net).
  */
-export const CHAMPION = {
+export const BOT = {
   /** Where it waits while the ball is on the other side. */
   readyXpx: 520,
   /** Its rail stops the head this close to the net. */
@@ -660,6 +744,7 @@ export const CHAMPION = {
   /** Contact angles tried; positive is the net side of the head. Past ~45° the arm takes it. */
   minAngleDeg: -30,
   maxAngleDeg: 46,
+  angleStepDeg: 2,
   /**
    * Fitted to real head contacts in play (median error 1.7 m/s): the head
    * rides a soft rail and gives way, so the ball comes off it at about
@@ -668,25 +753,196 @@ export const CHAMPION = {
   headBounce: 0.8,
   /** Box2D mixes friction as sqrt(ball 0.05 × doll 0.5). */
   headFriction: Math.sqrt(0.05 * 0.5),
-  /** A return must land at least this far past the net, and clear its top by this much. */
-  netMarginPx: 25,
-  netClearancePx: 30,
-  /** No head reaches a ball this close to the net on the far side. */
-  deadZonePx: 45,
-  deadZoneBonus: 120,
-  /** Scoring of candidate returns. */
-  aimCapPx: 260,
-  timeBias: 0.6,
-  anglePenalty: 1.2,
-  latePenalty: 4,
+  /** A shot must land at least this far past the net. */
+  netMarginPx: 12,
+
+  /**
+   * How it reads the opponent, as an ordinary defender: this many frames to
+   * react to a shot, then this fast to the ball, px per frame. A real reply
+   * also needs the head placed, so a shot it reaches with less than
+   * `spareFrames` to spare still counts as partly winning.
+   */
+  oppReactFrames: 8,
+  oppStepPx: 10,
+  spareFrames: 45,
+  /** The opponent's rail stops their head this far from the net, px. */
+  oppNetGapPx: 50,
+  /** A ball coming down this close to the opponent's back wall pins them there, px. */
+  deepPx: 90,
+  /** What makes a shot hard to answer. */
+  threat: { reach: 0.7, deadZone: 0.6, deep: 0.3, pace: 0.2, drive: 0.4 },
+  /**
+   * A hard ball is harder to place. Its aim error grows by up to `deg` (less
+   * its composure) with how fast the ball comes in flat, m/s, and with
+   * `hurry`: the fraction of its top speed it needs to get there in time.
+   * Measured before this, a defender lost 5–8% of possessions whatever the
+   * ball did; the long, floaty flights let it reach everything.
+   */
+  pressure: { deg: 30, drive: 0.5, driveFromMs: 3, driveRangeMs: 8, hurry: 0.6, hurryFrom: 0.4, hurryRange: 0.5 },
+  /** A shot that clears the net by this much counts as fully safe, px. */
+  safeClearancePx: 90,
+  /**
+   * Small preferences: a central contact on the head, and getting there in
+   * time. Past `steepFromDeg` the bounce model drifts (median error 1.8 m/s at
+   * 40°, 4 m/s at 50°, against 0.7 m/s at 10°), so steep contacts cost more.
+   */
+  anglePenalty: 0.004,
+  steepFromDeg: 30,
+  steepPenalty: 0.02,
+  latePenaltyPerPx: 0.02,
+  /**
+   * The head meets the ball a median 7° from where it meant to, so each shot
+   * is scored with its neighbours this many degrees either side. A neighbour
+   * that hits the net or lands on its own side counts as `failValue`; one
+   * that stays up on its own side, with a touch to spare, as `recoverValue`.
+   */
+  robustDeg: 6,
+  failValue: -0.5,
+  recoverValue: -0.1,
+  /** How much of failValue a fully aggressive level ignores. */
+  riskAppetite: 0.7,
+  /**
+   * Each shot is also replayed leaving the head this much off in speed, m/s,
+   * both ways, plus this much per degree of contact angle.
+   */
+  modelErrMs: 1,
+  modelErrPerDeg: 0.04,
+  /** A shot still in the air after this many frames is a moonball: it costs this much per frame. */
+  hangFrames: 75,
+  hangPenalty: 0.006,
+  /**
+   * The screen shows the court up to y ≈ -320. Every touch adds 10 m/s of
+   * lift, so a rally of square headers climbs until each ball tops out
+   * off-screen; an angled touch turns that fall into a low, hard drive. A shot
+   * peaking above `apexFreePx` costs this much per 100 px higher.
+   */
+  apexFreePx: -100,
+  apexPenaltyPer100Px: 0.2,
+
+  /**
+   * A set: a touch that stays on its own side and comes back down where it
+   * can attack from. It must come down at least `setMinFrames` later,
+   * ideally this far from the net, px.
+   */
+  setMinFrames: 22,
+  setNearNetPx: [30, 150],
+  /** A set hanging in the air longer than this slows the game: it costs this much per frame. */
+  setHangFrames: 45,
+  setHangPenalty: 0.008,
+  /** A set ball is worth its best attack, discounted for the extra touch. */
+  setDiscount: 0.92,
+  /** Value of a set by the net beyond the header (the smash and jump it allows). */
+  setNetBonus: 0.12,
+  /** With a set in mind, take one that is worth at most this much less than the best shot... */
+  setTolerance: 0.25,
+  /** ...if it comes down at least this well placed (0..1, see setNearNetPx). */
+  setMinNear: 0.4,
+  /** Ply-two forecasts use this coarser angle step. */
+  setAngleStepDeg: 4,
+
+  /** A ball coming down within this far of the net and this upright can be attacked. */
+  attackNetPx: 160,
+  attackMaxVx: 6,
+  /**
+   * Smash: measured over trial swings at a ball dropping onto the stance,
+   * a ~0.45 swing of the net-side hand with the ball this far ahead of and
+   * below the head sends it over hard. Full power flies to the far wall and
+   * back. Full-size px; negative "below" is above the head.
+   */
+  smash: { aheadPx: 30, belowPx: -10, zoneAheadPx: [18, 44], zoneBelowPx: [-40, 16], power: 0.45, windupFrames: 10 },
+  /**
+   * Jump attack: with the ball dropping ~40 px on the net side of the head,
+   * the net-side arm rises into it 6–14 frames into a jump and bats it over.
+   * It jumps when the ball will be `leadRisePx` above its standing head in
+   * `leadFrames`.
+   */
+  jump: { aheadPx: 40, leadFrames: 10, leadRisePx: 117, windowFrames: 2 },
+  /** A ball it cannot get its head under in time, it lunges at with a light swing. */
+  lunge: { latePx: 24, power: 0.35 },
+  /** The old catch-all strike zone: the net-side hand connects 75–98% of the time. */
+  swingZone: { aheadPx: [18, 72], belowPx: [-42, 22] },
+
   /** Steering: turnComp moves the head ~1.4 px per frame per unit impulse. */
   pxPerImpulse: 1.4,
-  maxStepPx: 13,
-  deadbandPx: 3,
+  deadbandPx: 1.5,
   /** With three touches spent, keep this far from where the ball comes down. */
   dodgePx: 90,
-  swingPower: 0.8,
+  /**
+   * Serving: it walks to its spot at this pace, px per frame, to within
+   * `serveArrivePx`, then waits until head and hips are slower than
+   * `serveStillMs` for `serveSettleFrames` before jumping. After
+   * `serveMaxWalkFrames` it serves from wherever it is.
+   */
+  serveStepPx: 8,
+  serveArrivePx: 6,
+  serveStillMs: 0.4,
+  serveSettleFrames: 4,
+  serveMaxWalkFrames: 50,
 } as const;
+
+/** How well each level plays. Level 6 is the champion. */
+export interface BotSkill {
+  /** Top head speed while steering, px per frame. */
+  stepPx: number;
+  /** Frames before it reacts to the opponent's touch. */
+  reactFrames: number;
+  /** Spread of its aim, degrees of head-contact angle. */
+  aimErrorDeg: number;
+  /** 0 plays it safe, 1 plays every ball for the winner. */
+  aggression: number;
+  /** Net clearance it insists on, px. */
+  netClearancePx: number;
+  /** Chance it builds the attack with a set when it has the touches. */
+  setChance: number;
+  /** Chance it attacks a ball up at the net with a jump. */
+  jumpChance: number;
+  /** Chance it smashes a ball up at the net when its swing is ready. */
+  smashChance: number;
+  /** Lunges at balls out of its head's reach with a swing. */
+  lunges: boolean;
+  /** How far its waiting spot wanders, px. */
+  readyJitterPx: number;
+  /**
+   * Reading the opponent's shot: its first guess at the ball's speed is off
+   * by up to this much, m/s, and the error fades out over this many frames.
+   * A perfect reader reaches everything; every touch sends the ball up at
+   * 10 m/s or more, so each shot hangs for two seconds or longer.
+   */
+  readErrMs: number;
+  readFrames: number;
+  /** 0..1: how little a hard or hurried ball throws its aim (see BOT.pressure). */
+  composure: number;
+}
+
+export const BOT_LEVELS: Record<number, BotSkill> = {
+  1: {
+    stepPx: 8, reactFrames: 9, aimErrorDeg: 13, aggression: 0.3, netClearancePx: 44,
+    setChance: 0.15, jumpChance: 0.25, smashChance: 0.25, lunges: false, readyJitterPx: 40, readErrMs: 3.5, readFrames: 70, composure: 0.1,
+  },
+  2: {
+    stepPx: 9, reactFrames: 7, aimErrorDeg: 10, aggression: 0.45, netClearancePx: 38,
+    setChance: 0.25, jumpChance: 0.35, smashChance: 0.35, lunges: false, readyJitterPx: 35, readErrMs: 3, readFrames: 64, composure: 0.25,
+  },
+  3: {
+    stepPx: 10, reactFrames: 5, aimErrorDeg: 8, aggression: 0.6, netClearancePx: 32,
+    setChance: 0.35, jumpChance: 0.45, smashChance: 0.45, lunges: true, readyJitterPx: 30, readErrMs: 2.6, readFrames: 58, composure: 0.4,
+  },
+  4: {
+    stepPx: 11, reactFrames: 4, aimErrorDeg: 6, aggression: 0.72, netClearancePx: 26,
+    setChance: 0.45, jumpChance: 0.55, smashChance: 0.6, lunges: true, readyJitterPx: 25, readErrMs: 2.2, readFrames: 52, composure: 0.5,
+  },
+  5: {
+    stepPx: 12, reactFrames: 2, aimErrorDeg: 4, aggression: 0.85, netClearancePx: 20,
+    setChance: 0.5, jumpChance: 0.65, smashChance: 0.7, lunges: true, readyJitterPx: 20, readErrMs: 1.9, readFrames: 46, composure: 0.6,
+  },
+  6: {
+    stepPx: 13, reactFrames: 0, aimErrorDeg: 1.5, aggression: 1, netClearancePx: 16,
+    setChance: 0.55, jumpChance: 0.7, smashChance: 0.8, lunges: true, readyJitterPx: 15, readErrMs: 1.6, readFrames: 40, composure: 0.7,
+  },
+};
+
+export const botSkill = (level: number): BotSkill =>
+  BOT_LEVELS[Math.min(OPTIONS.maxLevel, Math.max(1, Math.round(level)))];
 
 // ---------------------------------------------------------------------------
 // §15 Rendering transform

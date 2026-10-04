@@ -1,10 +1,11 @@
 import { Vec2, World } from 'planck';
 import { AI } from './ai';
 import { Ball } from './ball';
+import { Bees } from './bees';
 import {
   CHARGE, EXECUTER, EXECUTER_ITERATIONS, FEATHER, GRAVITY, ITERATIONS, LANDING_CENTRE_M,
   MS_PER_FRAME, OPTIONS, PRIZE_ANIM, NET_X_PX, powerScale,
-  SERVE_CENTRE_M, SPAWN_P1_PX, SPAWN_P2_PX, SWING, toM,
+  SERVE_CENTRE_M, SPAWN_P1_PX, SPAWN_P2_PX, SWING, toM, toPx,
 } from './constants';
 import { Control, type KeyBindings } from './control';
 import { installContactListener, installContactTweaks, type ContactFlags } from './contacts';
@@ -13,7 +14,7 @@ import { ExecuterQueue, seededRandom, type ExecuterId, type ExecuterVariant } fr
 import { Game, type GameEvents } from './game';
 import { Ground } from './ground';
 import { Player, type PlayerId, type SwingHand } from './player';
-import { PowerUps } from './powerUps';
+import { PowerUps, type PowerId } from './powerUps';
 import type { PrizeButton } from './prizeButton';
 import { FrameTimer, TimerSet } from './timer';
 
@@ -22,7 +23,7 @@ export interface GameWorldOptions {
   singlePlayer?: boolean;
   /** Both sides are driven by the AI; the keyboard only pauses. */
   botVsBot?: boolean;
-  /** Campaign level 1..6; level 6 enables the champion opponent. */
+  /** Campaign level 1..6: how well the CPU plays; level 6 is the champion. */
   level?: number;
   /** Bot vs bot: player 1's level. Player 2 plays at `level`. */
   p1Level?: number;
@@ -40,6 +41,14 @@ export interface GameWorldOptions {
   bindings?: KeyBindings;
   /** Optional random seed for reproducible gift abilities. */
   powerSeed?: number;
+  /** Bees fly in now and then with a power for whoever hits one with the ball. On by default. */
+  bees?: boolean;
+  /** Seed for when bees come, where they fly and what they carry. */
+  beeSeed?: number;
+  /** A fixed, repeating order of bee powers instead of the shuffle, for tests. */
+  beeOrder?: readonly PowerId[];
+  /** Seed for the CPU players' choices (when to set, jump or smash, their aim). */
+  aiSeed?: number;
   events?: GameEvents;
 }
 
@@ -54,6 +63,7 @@ export class GameWorld {
   readonly p2: Player;
   readonly ball: Ball;
   readonly powerUps: PowerUps;
+  readonly bees: Bees;
   readonly game: Game;
   readonly control: Control;
   /** The AI driving each side, or null for a human. */
@@ -123,6 +133,7 @@ export class GameWorld {
     this.p2 = new Player(this.world, railAnchor, SPAWN_P2_PX.x, SPAWN_P2_PX.y, 2);
     this.ball = new Ball(this.world);
     this.powerUps = new PowerUps({ 1: this.p1, 2: this.p2 }, opts.powerSeed);
+    this.bees = new Bees(this.powerUps, seededRandom(opts.beeSeed ?? 0x5bd1e995), opts.bees ?? true, opts.beeOrder);
 
     installContactListener(this.world, this.flags);
     installContactTweaks(this.world);
@@ -144,10 +155,14 @@ export class GameWorld {
         this.aiCounterWindupFrames[1] = this.aiCounterWindupFrames[2] = 0;
         // Every round starts with both hands' swing ready.
         this.nextSwingFrame[1] = this.nextSwingFrame[2] = 0;
+        // The dolls were just re-stood: glue between parts now far apart
+        // would yank them back together, so any slime lets go.
+        for (const e of this.executers) e.shakeOff();
         opts.events?.onNewRound?.();
       },
       onResetMatch: () => {
         this.powerUps.reset();
+        this.bees.reset();
         this.clearExecuters();
         this.executerLaunches = 0;
         this.executerQueue.reset();
@@ -161,9 +176,10 @@ export class GameWorld {
     );
     if (opts.level != null) this.game.level = opts.level;
 
-    const bot = (p: Player) => new AI(this.timers, p, this.ball,
+    const aiSeed = opts.aiSeed ?? 0x51f15e;
+    const bot = (p: Player) => new AI(p, this.ball,
       (q) => this.serve(q), (q, power, hand) => this.swing(q, power, hand), this.canSwing,
-      p === this.p1 ? this.p2 : this.p1);
+      p === this.p1 ? this.p2 : this.p1, seededRandom(aiSeed ^ Math.imul(p.id, 0x9e3779b9)));
     this.ais = {
       1: this.botVsBot ? bot(this.p1) : null,
       2: this.botVsBot || this.singlePlayer ? bot(this.p2) : null,
@@ -252,12 +268,15 @@ export class GameWorld {
     this.game.update();
     this.powerUps.tick(this.frame, this.game.phase === 'play');
     this.applyMagnetPower();
+    // A ball meeting a bee gives its power to whoever holds it or touched it last.
+    this.bees.update(dt, this.frame, this.game.phase === 'play',
+      { xPx: toPx(this.ball.position.x), yPx: toPx(this.ball.position.y) }, this.game.ballOwner);
 
     // 5. AI, on every CPU side.
     for (const id of [1, 2] as const) {
       const ai = this.ais[id];
       if (!ai) continue;
-      ai.champion = this.levelOf(id) === OPTIONS.championLevel;
+      ai.level = this.levelOf(id);
       ai.update();
       this.updateAiCounter(id);
     }
@@ -509,7 +528,10 @@ export class GameWorld {
   executerNearDoll(): boolean {
     const reach = toM(EXECUTER.radiusPx + EXECUTER.nearMarginPx);
     for (const e of this.executers) {
-      if (e.dead || !e.solid) continue;
+      // A stuck slime is a sensor riding on the doll: no contact to solve.
+      // Measured: 20 iterations on a doll that is merely standing creeps it
+      // sideways ~10 px a second.
+      if (e.dead || !e.solid || e.phase === 'stuck') continue;
       const c = e.body.getWorldCenter();
       for (const p of [this.p1, this.p2]) {
         for (const b of p.bodies) {
