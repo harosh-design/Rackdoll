@@ -76,7 +76,7 @@ export function beePosition(bee: Bee, age = bee.age): { xPx: number; yPx: number
 
 /**
  * Match-owned bee lifecycle: launches, flight, and the ball meeting a bee.
- * A hit goes through `PowerUps.activate`, exactly like a collected gift.
+ * A hit goes through `PowerUps.activate`, replacing any current ability.
  */
 export class Bees {
   readonly bees: Bee[] = [];

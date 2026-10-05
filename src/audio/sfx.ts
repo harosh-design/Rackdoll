@@ -172,12 +172,6 @@ export class Sfx {
     this.tone(520, 0.08, 'triangle', 0.22, 900);
   }
 
-  /** A gift drops onto the court. */
-  giftSpawn(): void {
-    if (this.play('rearm', 0.55, 1.35)) return;
-    this.tone(880, 0.1, 'sine', 0.22, 1320);
-  }
-
   /** A bee flies in: a short, soft buzz, deeper for a bigger bee. */
   beeBuzz(size = 1): void {
     if (this.play('bee', 0.38, 1 / Math.max(0.8, size))) return;

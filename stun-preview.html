@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Punch and stun preview</title>
+<style>
+  body { margin: 0; background: #18222c; display: grid; place-items: center; min-height: 100vh; }
+  canvas { display: block; width: min(100vw, 960px); aspect-ratio: 8 / 5; }
+</style>
+<canvas aria-label="Punch wave hitting the red player, with stun stars above their head"></canvas>
+<script type="module">
+  import { GameWorld } from '/src/sim/world.ts';
+  import { Vec2 } from 'planck';
+  import { Renderer } from '/src/render/renderer.ts';
+  import { Interpolator } from '/src/render/interp.ts';
+  const gw = new GameWorld({ singlePlayer: false, hazards: false, bees: false });
+  gw.game.update = () => {};
+  gw.world.destroyJoint(gw.p1.holdingJoint);
+  gw.p1.forgetBallJoint();
+  gw.ball.ballOfPlayer = 0;
+  gw.ball.body.setTransform(Vec2(10, -10), 0);
+  for (let f = 0; f < 60; f++) gw.step();
+  gw.p1.standPlayer(210, 256);
+  gw.p2.standPlayer(420, 256);
+  gw.swing(gw.p1, 1);
+  const interp = new Interpolator();
+  function* bodies() {
+    for (let body = gw.world.getBodyList(); body; body = body.getNext()) yield body;
+  }
+  for (let f = 0; f < 3; f++) {
+    gw.step();
+    interp.commit(bodies());
+  }
+  const renderer = new Renderer(document.querySelector('canvas'));
+  renderer.draw(gw, interp, 1, { singlePlayer: false, message: null, showControlsHint: false });
+</script>
+</html>

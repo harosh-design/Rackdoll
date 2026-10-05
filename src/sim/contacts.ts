@@ -25,12 +25,25 @@ export interface ContactFlags {
   prizeHits: Body[];
   /** Player parts that met the ball during the physics step. */
   ballPlayerHits?: Array<{ playerId: 1 | 2; part: PartName }>;
+  /** Hand/forearm contacts with the opposing head, checked against active swings. */
+  playerHeadHits?: Array<{ attackerId: 1 | 2; part: PartName }>;
 }
 
 export function installContactListener(world: World, flags: ContactFlags): void {
   world.on('post-solve', (contact: Contact) => {
     const fa = contact.getFixtureA();
     const fb = contact.getFixtureB();
+
+    if (bodyTypeOf(fa.getBody()) === BODYTYPE.PLAYER && bodyTypeOf(fb.getBody()) === BODYTYPE.PLAYER) {
+      const a = ud(fa.getBody());
+      const b = ud(fb.getBody());
+      if (a.playerId !== b.playerId) {
+        const hand = a.part === 'Head' ? b : b.part === 'Head' ? a : null;
+        if (hand?.playerId && hand.part && /^(Finger|Hand)(Left|Right)$/.test(hand.part)) {
+          flags.playerHeadHits?.push({ attackerId: hand.playerId, part: hand.part });
+        }
+      }
+    }
 
     let ballFixture = null;
     let other = null;

@@ -85,7 +85,7 @@ export class Control {
 
     if (this.isDown(action.key) && action.kind === 'swing') {
       const previous = this.chargeFrames.get(player.id) ?? 0;
-      const frames = Math.min(previous + 1, CHARGE.maxFrames);
+      const frames = Math.min(previous + player.controlScale, CHARGE.maxFrames);
       this.chargeFrames.set(player.id, frames);
       if (previous < CHARGE.maxFrames) player.windUpArm(frames / CHARGE.maxFrames, action.hand);
     }

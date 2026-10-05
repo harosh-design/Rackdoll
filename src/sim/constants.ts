@@ -275,8 +275,10 @@ export const SWING = {
   armImpulseX: 5.8,
   armImpulseY: -3.6,
   /** Forgiving frontal hit zone, measured from the attacker's head. */
-  opponentReachPx: 180,
+  opponentReachPx: 225,
   opponentHeightPx: 115,
+  /** A wave level with the head counts as a head hit; lower hits only shove. */
+  opponentHeadHeightPx: 28,
   opponentHitFrames: 11,
   /** Split the knockback between the head rail and hips to protect joints. */
   opponentImpulseX: 7.5,
@@ -296,6 +298,12 @@ export const SWING = {
   counterHoldFrames: 3,
   counterBallSpeedX: 12,
   counterBallSpeedY: -9,
+} as const;
+
+/** Head hits leave controls at one fifth of their usual strength for three seconds. */
+export const STUN = {
+  frames: 3 * FPS,
+  controlScale: 0.2,
 } as const;
 
 /**
@@ -375,18 +383,13 @@ export const TIMERS = {
 /** §11.3 — contact > 3 hands the point to the opponent. 3 lights the warning. */
 export const MAX_TOUCHES = 3;
 
-/** A gift appears after every three points and lasts ten real game seconds. */
-export const GIFT = {
-  goalsPerGift: 3,
-  lifeFrames: 10 * FPS,
-  powerFrames: 30 * FPS,
-  xPx: { 1: 220, 2: 420 },
-  yPx: 310,
-  pickupRadiusPx: 24,
+/** Powers collected from bees last thirty seconds. */
+export const POWER = {
+  durationFrames: 30 * FPS,
 } as const;
 
 /**
- * Bees: gifts on the wing, besides the goal gifts. Every 12–20 s of play one
+ * Bees: gifts on the wing. Every 12–20 s of play one
  * flies in from a screen edge and crosses to the other. The ball meeting one
  * gives its power to whoever holds the ball or touched it last. Frames and
  * world px.

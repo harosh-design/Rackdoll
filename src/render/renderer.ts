@@ -1,6 +1,6 @@
 import {
-  ART, BALL, BOXER, CHARGE, COURT, EXECUTER, FLOOR_TOP_PX, FPS, GIFT, MAX_TOUCHES, OPTIONS, PARTS, PRIZE_ANIM,
-  PRIZE_BUTTONS, RIGHT_WALL_INNER_PX, SLIME, SPRING, VIEW, toPx, type PartName,
+  ART, BALL, BOXER, CHARGE, COURT, EXECUTER, FLOOR_TOP_PX, FPS, MAX_TOUCHES, OPTIONS, PARTS, PRIZE_ANIM,
+  PRIZE_BUTTONS, RIGHT_WALL_INNER_PX, SLIME, SPRING, STUN, SWING, VIEW, toPx, type PartName,
 } from '../sim/constants';
 import type { Body, Vec2Value } from 'planck';
 import type { Executer } from '../sim/executer';
@@ -239,7 +239,6 @@ export class Renderer {
     // previous frame and the latest, so this does too.
     const now = gw.frame - 1 + alpha;
     this.drawPrizeButtons(ctx, gw, now);
-    this.drawGift(ctx, gw, now);
     this.drawFootMotion(ctx, gw, interp, now);
     for (const p of [gw.p1, gw.p2]) this.drawDoll(ctx, p, interp, alpha, now);
     this.drawPowerGlows(ctx, gw, interp, alpha);
@@ -248,6 +247,7 @@ export class Renderer {
     drawBeePops(ctx, gw, interp, alpha, now);
     this.drawSwingEffects(ctx, gw, interp, alpha);
     this.drawOpponentHitEffects(ctx, gw, interp, alpha);
+    this.drawStunEffects(ctx, gw, interp, alpha);
     this.drawSpecialEffects(ctx, gw, interp, alpha);
     for (const e of gw.executers) if (!e.dead) this.drawExecuter(ctx, e, interp, alpha);
     this.drawChargeMeters(ctx, gw, interp, alpha);
@@ -357,36 +357,6 @@ export class Renderer {
     ctx.restore();
   }
 
-  private drawGift(ctx: CanvasRenderingContext2D, gw: GameWorld, now: number): void {
-    const gift = gw.powerUps.gift;
-    if (!gift) return;
-    const y = gift.yPx - 5 + Math.sin(now * 0.14) * 3;
-    const life = Math.max(0, (gift.expiresAt - now) / GIFT.lifeFrames);
-    ctx.save();
-    ctx.translate(gift.xPx, y);
-    ctx.shadowColor = '#ffd44f';
-    ctx.shadowBlur = 18;
-    ctx.fillStyle = gift.side === 1 ? '#427be7' : '#e9574a';
-    roundRect(ctx, -16, -11, 32, 25, 4);
-    ctx.fill();
-    ctx.fillStyle = '#ffdb54';
-    ctx.fillRect(-3, -15, 6, 29);
-    ctx.fillRect(-19, -3, 38, 6);
-    ctx.fillStyle = '#fff4b4';
-    ctx.beginPath();
-    ctx.ellipse(-7, -15, 7, 4, -0.35, 0, Math.PI * 2);
-    ctx.ellipse(7, -15, 7, 4, 0.35, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = 'rgba(20,30,45,0.5)';
-    roundRect(ctx, -17, 20, 34, 4, 2);
-    ctx.fill();
-    ctx.fillStyle = '#ffdb54';
-    roundRect(ctx, -17, 20, 34 * life, 4, 2);
-    ctx.fill();
-    ctx.restore();
-  }
-
   /** A ring on a powered head, and the ability's name rising for 1.5 s on pickup. */
   private drawPowerGlows(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: Interpolator, alpha: number): void {
     const now = gw.frame - 1 + alpha;
@@ -460,15 +430,15 @@ export class Renderer {
     }
   }
 
-  /** A short slash around the striking hand makes the release readable. */
+  /** A hand slash and a forward wave show the extended punch reach. */
   private drawSwingEffects(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: Interpolator, alpha: number): void {
     const now = gw.frame - 1 + alpha;
     for (const p of [gw.p1, gw.p2]) {
       const effect = gw.swingEffects[p.id];
       const age = now - effect.frame;
-      if (age < 0 || age >= 8) continue;
+      if (age < 0 || age >= SWING.opponentHitFrames) continue;
       const finger = interp.pose(p.swingFinger(effect.hand), alpha);
-      const fade = (1 - age / 8) ** 2;
+      const fade = (1 - age / SWING.opponentHitFrames) ** 2;
       const radius = 16 + effect.power * 12 + age * 2;
       const start = p.id === 1 ? -Math.PI * 0.7 : Math.PI * 0.3;
       const end = start + Math.PI * 0.9;
@@ -484,6 +454,54 @@ export class Renderer {
       ctx.beginPath();
       ctx.arc(finger.x, finger.y, radius + 8, start + 0.2, end - 0.2);
       ctx.stroke();
+      const head = interp.pose(p.head, alpha);
+      const sign = p.id === 1 ? 1 : -1;
+      const travel = SWING.opponentReachPx * Math.min(1, (age + 1) / (SWING.counterWindowFrames + 1));
+      const waveX = head.x + sign * travel;
+      ctx.strokeStyle = `rgba(255,235,155,${0.7 * fade})`;
+      ctx.lineWidth = 2 + 2 * effect.power;
+      ctx.beginPath();
+      ctx.moveTo(waveX - sign * 14, head.y - 30);
+      ctx.quadraticCurveTo(waveX + sign * 12, head.y, waveX - sign * 14, head.y + 30);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  /** Orbiting stars and a draining bar remain visible for the whole stun. */
+  private drawStunEffects(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: Interpolator, alpha: number): void {
+    const now = gw.frame - 1 + alpha;
+    for (const p of [gw.p1, gw.p2]) {
+      if (p.stunFrames <= 0) continue;
+      const head = interp.pose(p.head, alpha);
+      ctx.save();
+      ctx.fillStyle = '#ffe36d';
+      ctx.strokeStyle = '#a06a14';
+      ctx.lineWidth = 0.9;
+      for (let star = 0; star < 3; star++) {
+        const angle = now * 0.16 + star * Math.PI * 2 / 3;
+        const x = head.x + Math.cos(angle) * 23 * p.sizeScale;
+        const y = head.y - 25 * p.sizeScale + Math.sin(angle) * 6;
+        ctx.beginPath();
+        for (let point = 0; point < 10; point++) {
+          const a = -Math.PI / 2 + point * Math.PI / 5;
+          const radius = point % 2 === 0 ? 5 : 2.3;
+          const px = x + Math.cos(a) * radius;
+          const py = y + Math.sin(a) * radius;
+          if (point === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+      const y = head.y - 40 * p.sizeScale;
+      ctx.fillStyle = 'rgba(25,30,45,0.55)';
+      roundRect(ctx, head.x - 16, y, 32, 3, 1.5);
+      ctx.fill();
+      ctx.fillStyle = '#ffe36d';
+      roundRect(ctx, head.x - 16, y, 32 * p.stunFrames / STUN.frames, 3, 1.5);
+      ctx.fill();
       ctx.restore();
     }
   }

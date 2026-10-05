@@ -529,7 +529,7 @@ describe('fixed serve and charged outside-arm swing', () => {
 
     const from = gw.p1.head.getWorldCenter();
     const target = gw.p2.tors.getWorldCenter();
-    const shift = toM(170) - (target.x - from.x);
+    const shift = toM(215) - (target.x - from.x);
     for (const body of [...gw.p2.bodies, gw.p2.prismBody]) {
       const position = body.getPosition();
       body.setTransform(Vec2(position.x + shift, position.y), body.getAngle());

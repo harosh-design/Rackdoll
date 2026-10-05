@@ -56,7 +56,6 @@ function createWorld(demo = false): GameWorld {
     p1Level: settings.p1Level,
     hazards: settings.hazards,
     bindings: toKeyBindings(settings.bindings),
-    powerSeed: Math.floor(Math.random() * 0x100000000),
     executerSeed: Math.floor(Math.random() * 0x100000000),
     events: {
       onPoint: (winner, reason) => onPoint(winner, reason),
@@ -334,7 +333,6 @@ function simFrame(): void {
   const opponentHits = { 1: gw.opponentHitEffects[1].frame, 2: gw.opponentHitEffects[2].frame };
   const perfects = { 1: gw.perfectEffects[1].frame, 2: gw.perfectEffects[2].frame };
   const counter = gw.counterEffect.frame;
-  const gift = gw.powerUps.gift;
   const powers = { 1: gw.powerUps.active[1], 2: gw.powerUps.active[2] };
   const beeLaunches = gw.bees.launches;
   pendingHit = null;
@@ -372,7 +370,6 @@ function simFrame(): void {
   }
   const counterSound = gw.counterEffect.frame !== counter;
   if (counterSound) sfx.counter();
-  if (gw.powerUps.gift && gw.powerUps.gift !== gift) sfx.giftSpawn();
   const newestBee = gw.bees.bees.at(-1);
   if (gw.bees.launches > beeLaunches && newestBee) sfx.beeBuzz(BEE_FLIGHT[newestBee.kind].scale);
   for (const id of [1, 2] as const) {

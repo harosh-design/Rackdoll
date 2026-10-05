@@ -1,6 +1,6 @@
 import { Vec2 } from 'planck';
 import { describe, expect, it } from 'vitest';
-import { FEATHER, GIFT, JOINTS, MAX_TOUCHES, NET_X_PX, PARTS, toM, toPx } from '../src/sim/constants';
+import { FEATHER, JOINTS, MAX_TOUCHES, NET_X_PX, PARTS, POWER, toM, toPx } from '../src/sim/constants';
 import type { Player } from '../src/sim/player';
 import { POWERS, type PowerId } from '../src/sim/powerUps';
 import { jointErrPx, rng, run, world } from './helpers';
@@ -22,8 +22,8 @@ function anchorDriftPx(p: Player): number {
   return max;
 }
 
-describe('goal gifts', () => {
-  it('counts every scored point in threes, alternates sides, and expires after ten seconds', () => {
+describe('bee powers without floor gifts', () => {
+  it('never grants floor pickups after goals, including every third point', () => {
     const gw = world();
     for (let goal = 1; goal <= 6; goal++) {
       const grip = gw.p1.holdingJoint ?? gw.p2.holdingJoint;
@@ -31,6 +31,8 @@ describe('goal gifts', () => {
       gw.p1.forgetBallJoint();
       gw.p2.forgetBallJoint();
       gw.ball.ballOfPlayer = 0;
+      // A prior physics step can leave a held-ball contact in the list.
+      gw.p1.bContact = gw.p2.bContact = true;
       if (goal % 2 === 0) {
         // A four-touch fault scores just like a landed ball.
         gw.p2.contact = MAX_TOUCHES + 1;
@@ -41,39 +43,26 @@ describe('goal gifts', () => {
       gw.game.update();
       expect(gw.game.score[1]).toBe(goal);
       gw.game.newRound();
-      if (goal % 3 === 0) {
-        expect(gw.powerUps.gift?.side).toBe(goal === 3 ? 1 : 2);
-      } else {
-        expect(gw.powerUps.gift).toBeNull();
-      }
-      if (goal === 3) gw.powerUps.tick(gw.frame + GIFT.lifeFrames, false);
+      // Walking over the former gift locations no longer awards a power.
+      gw.p1.standPlayer(220, 256);
+      gw.p2.standPlayer(420, 256);
+      gw.step();
+      expect(gw.powerUps.active).toEqual({ 1: null, 2: null });
+      expect(gw.p1.power).toBeNull();
+      expect(gw.p2.power).toBeNull();
     }
-    expect(gw.powerUps.gift?.side).toBe(2);
-    gw.powerUps.tick(gw.frame + GIFT.lifeFrames - 1, false);
-    expect(gw.powerUps.gift).not.toBeNull();
-    gw.powerUps.tick(gw.frame + GIFT.lifeFrames, false);
-    expect(gw.powerUps.gift).toBeNull();
   });
 
-  it('collects only on the selected side and restores the player after 30 seconds', () => {
+  it.each(POWERS)('restores the player thirty seconds after collecting %s', (kind) => {
     const gw = world();
-    gw.powerUps.onGoal();
-    gw.powerUps.onGoal();
-    gw.powerUps.onGoal();
-    gw.powerUps.onNewRound(0);
-    gw.p2.standPlayer(GIFT.xPx[1], 256);
-    gw.powerUps.tick(1, true);
-    expect(gw.powerUps.gift?.side).toBe(1);
-    gw.p1.standPlayer(GIFT.xPx[1], 256);
-    gw.powerUps.tick(2, true);
-    expect(gw.powerUps.gift).toBeNull();
-    expect(POWERS).toContain(gw.powerUps.active[1]?.kind);
+    gw.powerUps.activate(1, kind, 2);
+    expect(gw.powerUps.active[1]?.kind).toBe(kind);
     expect(gw.powerUps.active[2]).toBeNull();
     const active = gw.powerUps.active[1]!;
     expect(active.expiresAt - active.startedAt).toBe(30 * 30);
-    gw.powerUps.tick(active.expiresAt - 1, false);
+    gw.powerUps.tick(active.expiresAt - 1);
     expect(gw.powerUps.active[1]).not.toBeNull();
-    gw.powerUps.tick(active.expiresAt, false);
+    gw.powerUps.tick(active.expiresAt);
     expect(gw.powerUps.active[1]).toBeNull();
     expect(gw.p1.power).toBeNull();
     expect(gw.p1.targetScale).toBe(1);
@@ -123,7 +112,7 @@ describe('goal gifts', () => {
       // Swap again before the resize has finished, as well as after.
       run(gw, kind === 'giant' ? 5 : 25);
       expect(gw.p1.power).toBe(kind);
-      expect(gw.powerUps.active[1]).toMatchObject({ kind, expiresAt: gw.frame - (kind === 'giant' ? 5 : 25) + GIFT.powerFrames });
+      expect(gw.powerUps.active[1]).toMatchObject({ kind, expiresAt: gw.frame - (kind === 'giant' ? 5 : 25) + POWER.durationFrames });
       expect(gw.p1.targetScale).toBe(kind === 'giant' ? 1.5 : kind === 'tiny' ? 1 / 1.5 : 1);
       expect(counts()).toEqual(before);
     }

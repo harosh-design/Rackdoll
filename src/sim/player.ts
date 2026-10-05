@@ -6,7 +6,7 @@ import {
   ACTIONS, BODYTYPE, clamp01, DEG, FLOOR_TOP_PX, JOINTS, PARTS, PLAYER_FRICTION, powerScale,
   PRISM_DENSITY, PRISM_FRICTION, PRISM_HALF_PX, PRISM_RESTITUTION, PRISM_Y_PX,
   RAIL_H_LIMITS, RAIL_V_LIMITS, SERVE, SIZE, SPAWN_P1_PX, SPAWN_P2_PX, STAND_POSE,
-  SWING, toM, toPx, type JointDef, type PartName, WINDUP,
+  STUN, SWING, toM, toPx, type JointDef, type PartName, WINDUP,
 } from './constants';
 import type { BodyUserData } from './types';
 import type { PowerId } from './powerUps';
@@ -60,6 +60,8 @@ export class Player {
   bContact = false;
   /** A short stumble after a hazard's blow: steering is locked while it runs. */
   recoilFrames = 0;
+  /** Head-hit dizziness weakens actions without disabling the controls. */
+  stunFrames = 0;
   power: PowerId | null = null;
   /** Current collision scale. Eases toward targetScale in tickSize(). */
   sizeScale = 1;
@@ -207,6 +209,7 @@ export class Player {
   get head(): Body { return this.part('Head'); }
   get tors(): Body { return this.part('Tors'); }
   get ass(): Body { return this.part('Ass'); }
+  get controlScale(): number { return this.stunFrames > 0 ? STUN.controlScale : 1; }
   private get massFactor(): number { return this.sizeScale * this.sizeScale; }
   /**
    * A shrunken doll's head starts lower, so it gets extra lift to peak at a
@@ -337,10 +340,10 @@ export class Player {
 
     const head = this.head;
     const d = Vec2.sub(head.getWorldCenter(), this.tors.getWorldCenter());
-    const v = Vec2.mul(norm(d), ACTIONS.jumpLeanImpulse * this.massFactor);
+    const v = Vec2.mul(norm(d), ACTIONS.jumpLeanImpulse * this.massFactor * this.controlScale);
     // The rail and ragdoll joints absorb much of the extra impulse. A 2x
     // launch impulse produces about 1.5x measured head height.
-    const lift = ACTIONS.jumpLift * this.massFactor * this.jumpBoost * (this.power === 'highJump' ? 2 : 1);
+    const lift = ACTIONS.jumpLift * this.massFactor * this.jumpBoost * (this.power === 'highJump' ? 2 : 1) * this.controlScale;
 
     ass.setLinearVelocity(Vec2(0, 0));
     head.setLinearVelocity(Vec2(0, 0));
@@ -360,7 +363,7 @@ export class Player {
     const ass = this.ass;
     const head = this.head;
     ass.setLinearVelocity(Vec2(0, 0));
-    const boost = this.massFactor * (this.power === 'speed' ? 1.5 : 1);
+    const boost = this.massFactor * (this.power === 'speed' ? 1.5 : 1) * this.controlScale;
     const moved = Vec2(impulse.x * boost, impulse.y * boost);
     if (this.grounded) {
       ass.applyLinearImpulse(moved, ass.getWorldCenter(), true); // grounded
@@ -376,7 +379,7 @@ export class Player {
     const head = this.head;
     ass.setLinearVelocity(Vec2(0, 0));
     head.setLinearVelocity(Vec2(0, 0));
-    const boost = this.massFactor * (this.power === 'speed' ? 1.5 : 1);
+    const boost = this.massFactor * (this.power === 'speed' ? 1.5 : 1) * this.controlScale;
     const moved = Vec2(impulse.x * boost, impulse.y * boost);
     if (this.grounded) {
       const half = Vec2(moved.x * 0.5, moved.y * 0.5);
@@ -391,14 +394,14 @@ export class Player {
   turnUp(): void {
     const head = this.head;
     if (head.getWorldCenter().y * 30 > ACTIONS.turnUpHeadPx) {
-      head.applyLinearImpulse(Vec2(0, -ACTIONS.turnUpImpulse), head.getWorldCenter(), true);
+      head.applyLinearImpulse(Vec2(0, -ACTIONS.turnUpImpulse * this.controlScale), head.getWorldCenter(), true);
     }
   }
 
   turnDown(): void {
     const fl = this.part('FootLeft');
     const fr = this.part('FootRight');
-    const impulse = ACTIONS.turnDownImpulse * this.massFactor;
+    const impulse = ACTIONS.turnDownImpulse * this.massFactor * this.controlScale;
     fl.applyLinearImpulse(Vec2(0, impulse), fl.getWorldCenter(), true);
     fr.applyLinearImpulse(Vec2(0, impulse), fr.getWorldCenter(), true);
   }
@@ -407,7 +410,7 @@ export class Player {
   turnHands(target: Body): void {
     const head = this.head;
     const d = Vec2.sub(target.getWorldCenter(), head.getWorldCenter());
-    const v = Vec2.mul(norm(d), ACTIONS.turnHandsImpulse);
+    const v = Vec2.mul(norm(d), ACTIONS.turnHandsImpulse * this.controlScale);
     head.applyLinearImpulse(v, head.getWorldCenter(), true);
     head.applyLinearImpulse(v, head.getWorldCenter(), true);
   }
@@ -443,9 +446,18 @@ export class Player {
     if (this.recoilFrames > 0) this.recoilFrames -= 1;
   }
 
+  stun(): void {
+    if (this.power !== 'shield') this.stunFrames = STUN.frames;
+  }
+
+  tickStun(): void {
+    if (this.stunFrames > 0) this.stunFrames -= 1;
+  }
+
   /** §8 standPlayer(x, y) — the round reset. */
   standPlayer(xPx: number, yPx: number): void {
     this.recoilFrames = 0;
+    this.stunFrames = 0;
     this.setLinVelZero();
     for (const p of STAND_POSE) {
       const footOffset = 101;
@@ -513,12 +525,12 @@ export class Player {
 
     const hand = this.servingFinger;
     hand.applyLinearImpulse(
-      Vec2(sign * SERVE.handImpulseX * this.massFactor, SERVE.handImpulseY * this.massFactor),
+      Vec2(sign * SERVE.handImpulseX * this.massFactor * this.controlScale, SERVE.handImpulseY * this.massFactor * this.controlScale),
       hand.getWorldCenter(),
       true,
     );
     ballBody.applyLinearImpulse(
-      Vec2(sign * SERVE.ballImpulseX, SERVE.ballImpulseY),
+      Vec2(sign * SERVE.ballImpulseX * this.controlScale, SERVE.ballImpulseY * this.controlScale),
       ballBody.getWorldCenter(),
       true,
     );
@@ -535,7 +547,7 @@ export class Player {
    */
   swingArm(power = 1, swingHand: SwingHand = 'outside'): void {
     const sign = this.id === 1 ? 1 : -1;
-    const scale = powerScale(power) * this.massFactor;
+    const scale = powerScale(power) * this.massFactor * this.controlScale;
     const side = this.swingSide(swingHand);
     const finger = this.part(`Finger${side}`);
     const hand = this.part(`Hand${side}`);
@@ -568,7 +580,7 @@ export class Player {
   windUpArm(power: number, swingHand: SwingHand = 'outside'): void {
     const sign = this.id === 1 ? 1 : -1; // the swing's forward direction
     // Scaled with the limb's mass, so a giant's or tiny's arm cocks back as far.
-    const k = clamp01(power) * this.massFactor;
+    const k = clamp01(power) * this.massFactor * this.controlScale;
     const side = this.swingSide(swingHand);
     const finger = this.part(`Finger${side}`);
     const hand = this.part(`Hand${side}`);

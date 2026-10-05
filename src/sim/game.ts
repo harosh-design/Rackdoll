@@ -233,6 +233,7 @@ export class Game {
     this.flags.onBallDown = false;
     this.flags.bYesPrize = false;
     if (this.flags.ballPlayerHits) this.flags.ballPlayerHits.length = 0;
+    if (this.flags.playerHeadHits) this.flags.playerHeadHits.length = 0;
 
     // The winner of the last point takes the ball. takeBall() refuses a ball
     // that already has a joint, so drop any grip first. Normal play never

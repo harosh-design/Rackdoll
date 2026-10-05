@@ -39,8 +39,6 @@ export interface GameWorldOptions {
   executerOrder?: readonly ExecuterId[];
   /** Physical keyboard bindings for each human player. */
   bindings?: KeyBindings;
-  /** Optional random seed for reproducible gift abilities. */
-  powerSeed?: number;
   /** Bees fly in now and then with a power for whoever hits one with the ball. On by default. */
   bees?: boolean;
   /** Seed for when bees come, where they fly and what they carry. */
@@ -50,6 +48,16 @@ export interface GameWorldOptions {
   /** Seed for the CPU players' choices (when to set, jump or smash, their aim). */
   aiSeed?: number;
   events?: GameEvents;
+}
+
+interface Strike {
+  frame: number;
+  power: number;
+  strength: number;
+  hand: SwingHand;
+  ballHit: boolean;
+  opponentHit: boolean;
+  hitExecuters: Set<Executer>;
 }
 
 /**
@@ -69,7 +77,7 @@ export class GameWorld {
   /** The AI driving each side, or null for a human. */
   readonly ais: Record<PlayerId, AI | null>;
   readonly timers = new TimerSet();
-  readonly flags: ContactFlags = { onBallDown: false, bYesPrize: false, prizeHits: [], ballPlayerHits: [] };
+  readonly flags: ContactFlags = { onBallDown: false, bYesPrize: false, prizeHits: [], ballPlayerHits: [], playerHeadHits: [] };
   readonly executers: Executer[] = [];
   /** Total hazard launches this match, shared by both buttons. */
   executerLaunches = 0;
@@ -101,7 +109,7 @@ export class GameWorld {
   private readonly executerTuning?: Partial<ExecuterTuning>;
   private readonly contactIterations: number;
   private readonly executerRandom: () => number;
-  private readonly strikes: Record<PlayerId, { frame: number; power: number; hand: SwingHand; ballHit: boolean; opponentHit: boolean; hitExecuters: Set<Executer> } | null> = {
+  private readonly strikes: Record<PlayerId, Strike | null> = {
     1: null, 2: null,
   };
   private counter: { framesLeft: number; direction: 1 | -1 } | null = null;
@@ -132,7 +140,7 @@ export class GameWorld {
     this.p1 = new Player(this.world, railAnchor, SPAWN_P1_PX.x, SPAWN_P1_PX.y, 1);
     this.p2 = new Player(this.world, railAnchor, SPAWN_P2_PX.x, SPAWN_P2_PX.y, 2);
     this.ball = new Ball(this.world);
-    this.powerUps = new PowerUps({ 1: this.p1, 2: this.p2 }, opts.powerSeed);
+    this.powerUps = new PowerUps({ 1: this.p1, 2: this.p2 });
     this.bees = new Bees(this.powerUps, seededRandom(opts.beeSeed ?? 0x5bd1e995), opts.bees ?? true, opts.beeOrder);
 
     installContactListener(this.world, this.flags);
@@ -141,13 +149,11 @@ export class GameWorld {
     const events: GameEvents = {
       ...opts.events,
       onPoint: (winner, reason) => {
-        this.powerUps.onGoal();
         this.strikes[1] = this.strikes[2] = null;
         this.counter = null;
         opts.events?.onPoint?.(winner, reason);
       },
       onNewRound: () => {
-        this.powerUps.onNewRound(this.frame);
         this.ais[1]?.reset();
         this.ais[2]?.reset();
         this.strikes[1] = this.strikes[2] = null;
@@ -222,7 +228,10 @@ export class GameWorld {
     if (!this.canSwing(player) || this.game.phase !== 'play' || this.ball.ballOfPlayer !== 0) return false;
     player.swingArm(power, hand);
     this.swingEffects[player.id] = { frame: this.frame, power, hand };
-    this.strikes[player.id] = { frame: this.frame, power, hand, ballHit: false, opponentHit: false, hitExecuters: new Set() };
+    this.strikes[player.id] = {
+      frame: this.frame, power, strength: powerScale(power) * player.controlScale, hand,
+      ballHit: false, opponentHit: false, hitExecuters: new Set(),
+    };
     this.nextSwingFrame[player.id] = this.frame + SWING.cooldownFrames;
     return true;
   };
@@ -235,6 +244,8 @@ export class GameWorld {
     if (this.paused) return;
     this.p1.tickRecoil();
     this.p2.tickRecoil();
+    this.p1.tickStun();
+    this.p2.tickStun();
     // Before the step, so the solver settles each size change straight away.
     this.p1.tickSize();
     this.p2.tickSize();
@@ -266,7 +277,7 @@ export class GameWorld {
 
     // 4. Rules.
     this.game.update();
-    this.powerUps.tick(this.frame, this.game.phase === 'play');
+    this.powerUps.tick(this.frame);
     this.applyMagnetPower();
     // A ball meeting a bee gives its power to whoever holds it or touched it last.
     this.bees.update(dt, this.frame, this.game.phase === 'play',
@@ -296,17 +307,33 @@ export class GameWorld {
   /** Resolve simultaneous counters before individual ball and player hits. */
   private resolveStrikes(): void {
     const contacts = this.flags.ballPlayerHits;
+    const headHits = this.flags.playerHeadHits;
     if (this.game.phase !== 'play') {
       this.strikes[1] = this.strikes[2] = null;
       if (contacts) contacts.length = 0;
+      if (headHits) headHits.length = 0;
       return;
     }
 
     if (this.tryCounter()) {
       this.strikes[1] = this.strikes[2] = null;
       if (contacts) contacts.length = 0;
+      if (headHits) headHits.length = 0;
       return;
     }
+
+    for (const hit of headHits ?? []) {
+      const strike = this.strikes[hit.attackerId];
+      if (!strike || strike.opponentHit) continue;
+      const age = this.frame - strike.frame;
+      if (age < 0 || age >= SWING.opponentHitFrames) continue;
+      const attacker = hit.attackerId === 1 ? this.p1 : this.p2;
+      const side = attacker.swingSide(strike.hand);
+      if (hit.part !== `Finger${side}` && hit.part !== `Hand${side}`) continue;
+      this.applyOpponentHit(hit.attackerId, strike.power, strike.strength, true);
+      strike.opponentHit = true;
+    }
+    if (headHits) headHits.length = 0;
 
     for (const contact of contacts ?? []) {
       const strike = this.strikes[contact.playerId];
@@ -318,7 +345,7 @@ export class GameWorld {
       strike.ballHit = true;
       if (age <= SWING.perfectFrames) {
         const sign = contact.playerId === 1 ? 1 : -1;
-        const scale = powerScale(strike.power);
+        const scale = strike.strength;
         this.ball.body.applyLinearImpulse(
           Vec2(sign * SWING.perfectBallImpulseX * scale, SWING.perfectBallImpulseY * scale),
           this.ball.position,
@@ -338,7 +365,7 @@ export class GameWorld {
       } else {
         this.hitExecuters(id, strike);
         if (age >= SWING.counterWindowFrames && !strike.opponentHit) {
-          strike.opponentHit = this.hitOpponent(id, strike.power);
+          strike.opponentHit = this.hitOpponent(id, strike);
         }
       }
     }
@@ -347,7 +374,7 @@ export class GameWorld {
   /** A swing must meet an executer with the striking hand to knock it back. */
   private hitExecuters(
     attackerId: PlayerId,
-    strike: { power: number; hand: SwingHand; hitExecuters: Set<Executer> },
+    strike: Strike,
   ): void {
     const attacker = attackerId === 1 ? this.p1 : this.p2;
     const side = attacker.swingSide(strike.hand);
@@ -366,7 +393,7 @@ export class GameWorld {
       if (!touched) continue;
       const c = e.body.getWorldCenter();
       const dx = c.x - origin.x;
-      const speed = SWING.executerKnockSpeed * powerScale(strike.power);
+      const speed = SWING.executerKnockSpeed * strike.strength;
       const desired = Vec2((dx >= 0 ? 1 : -1) * speed, -speed * 0.2);
       const current = e.body.getLinearVelocity();
       const mass = e.body.getMass();
@@ -393,9 +420,9 @@ export class GameWorld {
     const midY = (head1.y + head2.y) / 2;
     if (Math.abs(ball.y - midY) > toM(SWING.counterBallHeightPx)) return false;
 
-    const direction: 1 | -1 = left.power === right.power
+    const direction: 1 | -1 = left.strength === right.strength
       ? (this.ball.velocity.x >= 0 ? -1 : 1)
-      : (left.power > right.power ? 1 : -1);
+      : (left.strength > right.strength ? 1 : -1);
     this.counter = { framesLeft: SWING.counterHoldFrames, direction };
     this.counterEffect = { frame: this.frame, power: Math.max(left.power, right.power) };
     return true;
@@ -437,7 +464,7 @@ export class GameWorld {
     }
     const humanCharge = this.control.chargeLevel(humanId);
     if (humanCharge) {
-      this.aiCounterWindupFrames[id] = Math.min(this.aiCounterWindupFrames[id] + 1, CHARGE.maxFrames);
+      this.aiCounterWindupFrames[id] = Math.min(this.aiCounterWindupFrames[id] + cpu.controlScale, CHARGE.maxFrames);
       cpu.windUpArm(Math.min(humanCharge.power, 0.8));
       return;
     }
@@ -449,23 +476,33 @@ export class GameWorld {
   }
 
   /** A near, forward-facing opponent receives one charge-scaled knockback. */
-  private hitOpponent(attackerId: PlayerId, power: number): boolean {
+  private hitOpponent(attackerId: PlayerId, strike: Strike): boolean {
     const attacker = attackerId === 1 ? this.p1 : this.p2;
     const defender = attackerId === 1 ? this.p2 : this.p1;
     const sign = attackerId === 1 ? 1 : -1;
     const from = attacker.head.getWorldCenter();
     const target = defender.tors.getWorldCenter();
     const forward = sign * (target.x - from.x);
-    if (forward <= 0 || forward > toM(SWING.opponentReachPx)) return false;
-    if (Math.abs(target.y - from.y) > toM(SWING.opponentHeightPx)) return false;
-    if (defender.power === 'shield') return true;
+    const bodyHit = forward > 0 && forward <= toM(SWING.opponentReachPx)
+      && Math.abs(target.y - from.y) <= toM(SWING.opponentHeightPx);
+    const head = defender.head.getWorldCenter();
+    const headForward = sign * (head.x - from.x);
+    const headHit = headForward > 0 && headForward <= toM(SWING.opponentReachPx)
+      && Math.abs(head.y - from.y) <= toM(SWING.opponentHeadHeightPx) + defender.head.getFixtureList()!.getShape().getRadius();
+    if (!bodyHit && !headHit) return false;
+    this.applyOpponentHit(attackerId, strike.power, strike.strength, headHit);
+    return true;
+  }
 
-    const scale = powerScale(power);
-    const impulse = Vec2(sign * SWING.opponentImpulseX * scale, SWING.opponentImpulseY * scale);
+  private applyOpponentHit(attackerId: PlayerId, power: number, strength: number, headHit: boolean): void {
+    const defender = attackerId === 1 ? this.p2 : this.p1;
+    if (defender.power === 'shield') return;
+    const sign = attackerId === 1 ? 1 : -1;
+    const impulse = Vec2(sign * SWING.opponentImpulseX * strength, SWING.opponentImpulseY * strength);
     defender.head.applyLinearImpulse(impulse, defender.head.getWorldCenter(), true);
     defender.ass.applyLinearImpulse(impulse, defender.ass.getWorldCenter(), true);
     this.opponentHitEffects[defender.id] = { frame: this.frame, power };
-    return true;
+    if (headHit) defender.stun();
   }
 
   /** A local, gentle pull that makes a charged swing easier to connect. */
@@ -479,7 +516,7 @@ export class GameWorld {
       const delta = Vec2.sub(player.swingFinger(charge.hand).getWorldCenter(), ballPos);
       const distance = delta.length();
       if (distance < 0.001 || distance >= radius) continue;
-      const impulse = CHARGE.attractImpulse * charge.power * (1 - distance / radius) / distance;
+      const impulse = CHARGE.attractImpulse * charge.power * player.controlScale * (1 - distance / radius) / distance;
       this.ball.body.applyLinearImpulse(Vec2.mul(delta, impulse), ballPos, true);
     }
   }

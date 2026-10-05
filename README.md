@@ -78,8 +78,13 @@ to hit. Hold Shift (or E for player 2) to hit with the other arm instead.
 The windup briefly slows the physics and gently draws a nearby free
 ball toward the striking hand. A full charge delivers a stronger hit. Both hands
 share a 45-second cooldown after each swing, which resets at the start of every
-round; serving remains available. A swing that reaches a nearby opponent
-also knocks them back, with force set by the charge.
+round; serving remains available. The punch wave reaches 225 px forward
+and knocks an opponent back, with force set by the charge. A wave at head
+height or a direct hit on the head with the selected hand stuns them for
+three seconds: movement, jumping, crouching, serving, and arm actions work
+at 20% strength, and swing charging is five times slower. Stars and a draining
+bar above the head show the stun. Body hits only knock back; a shield blocks
+both knockback and stun. Pausing freezes the stun, and a new round clears it.
 
 Releasing a swing within two frames of contact between the selected hand and
 ball adds a perfect-hit boost. Nearly simultaneous swings by the net trap the
@@ -88,12 +93,11 @@ ball briefly before the stronger side sends it across.
 Holding jump bunny-hops. That is deliberate: Flash re-fired key-down on OS key
 repeat, which re-armed the consumed jump flag.
 
-## Goal gifts
+## Powers
 
-Every third point, however it was scored, produces a gift in the next round.
-Gifts alternate between player 1's and player 2's side, stay for 10 seconds,
-and can be collected only by the player on that side. Pickup grants one random
-ability for 30 seconds: 1.5× body size, ⅔ body size, feather ball (a free ball
+Powers come from bees; gifts no longer appear on the floor after goals.
+Hitting a bee with the ball grants its ability for 30 seconds: 1.5× body size,
+⅔ body size, feather ball (a free ball
 over your half falls at 40% gravity), 1.5× jump, faster movement, a nearby-ball
 magnet, or protection against knockback from the opponent and the hazards. The player then returns to normal. The HUD shows the ability and its
 remaining time.
@@ -113,12 +117,12 @@ grounded checks scale with the doll as well.
 
 ## Bee gifts
 
-Bees also bring powers, separately from the goal gifts. During play a bee flies in from
+During play a bee flies in from
 beyond the left or right screen edge every 12–20 seconds, with at most two in
 the air. It crosses above the net and leaves by the other edge. Each bee carries one of
 the seven abilities, and every ability turns up once in each run of seven. Hit
 a bee with the ball and its ability goes to whoever holds the ball or touched
-it last, on the same terms as a goal gift: 30 seconds, and it replaces any
+it last for 30 seconds, and it replaces any
 current ability. The ball passes straight through, so the rally is unchanged.
 A bee is only popped in play. During the goal replay the bees slow down with
 the physics.
