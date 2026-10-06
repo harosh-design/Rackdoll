@@ -96,6 +96,10 @@ function hookSounds(w: GameWorld): void {
     const ballA = fa.getFriction() === BALL.friction;
     const ballB = fb.getFriction() === BALL.friction;
     if (ballA === ballB) return;
+     // A held ball is being served, not hit: as the server moves it scrapes the
+    // doll's own limbs and the walls or net into a bump we don't want. Only a
+    // free ball makes the contact sound — serving stays quiet.
+    if (w.ball.held) return;
     const other = ballA ? fb : fa;
     const type = bodyTypeOf(other.getBody());
     if (type === BODYTYPE.GROUND) return; // the floor gets its own thud
