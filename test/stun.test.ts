@@ -1,20 +1,19 @@
 import { Box, Circle, Vec2, World } from 'planck';
 import { describe, expect, it } from 'vitest';
-import { ACTIONS, BODYTYPE, CHARGE, STUN, SWING } from '../src/sim/constants';
+import { ACTIONS, BODYTYPE, CHARGE, FLIP, STUN } from '../src/sim/constants';
 import { installContactListener, type ContactFlags } from '../src/sim/contacts';
-import type { PlayerId, SwingHand } from '../src/sim/player';
-import { hazardWorld, run, world } from './helpers';
+import type { PlayerId } from '../src/sim/player';
+import { hazardWorld, run, untilOpponentHit, world } from './helpers';
 
 describe('head-hit stun', () => {
-  it.each([1, 2] as const)('stuns player %s when the longer punch wave reaches their head', (defenderId) => {
+  it.each([1, 2] as const)('stuns player %s when the flip kick reaches their head', (defenderId) => {
     const gw = hazardWorld({ hazards: false });
     gw.p1.standPlayer(210, 256);
     gw.p2.standPlayer(420, 256);
     const defender = defenderId === 1 ? gw.p1 : gw.p2;
     const attacker = defenderId === 1 ? gw.p2 : gw.p1;
     gw.swing(attacker);
-    run(gw, SWING.counterWindowFrames + 1);
-    expect(gw.opponentHitEffects[defenderId].frame).toBe(gw.frame - 1);
+    expect(untilOpponentHit(gw, defenderId)).toBeGreaterThan(0);
     expect(defender.stunFrames).toBe(STUN.frames);
     expect(defender.controlScale).toBe(0.2);
     run(gw, STUN.frames - 1);
@@ -24,65 +23,63 @@ describe('head-hit stun', () => {
     expect(defender.controlScale).toBe(1);
   });
 
-  it('knocks back a body hit without stunning, and misses beyond the wave range', () => {
+  it('knocks back a body hit without stunning, and misses beyond the kick range', () => {
     const body = hazardWorld({ hazards: false });
     body.world.setGravity(Vec2(0, 0));
     body.p1.standPlayer(210, 190);
     body.p2.standPlayer(420, 256);
     body.swing(body.p1);
-    run(body, 3);
-    expect(body.opponentHitEffects[2].frame).toBe(body.frame - 1);
+    expect(untilOpponentHit(body, 2)).toBeGreaterThan(0);
     expect(body.p2.stunFrames).toBe(0);
 
     const far = hazardWorld({ hazards: false });
     far.swing(far.p1);
-    run(far, SWING.opponentHitFrames + 1);
+    run(far, FLIP.maxFrames + 1);
     expect(far.opponentHitEffects[2].frame).toBe(-100);
     expect(far.p2.stunFrames).toBe(0);
   });
 
-  it('records physical opposing hand-head contacts without involving the ball', () => {
+  it('records physical opposing leg-head contacts without involving the ball', () => {
     const physics = new World({ gravity: Vec2(0, 0) });
     const head = physics.createDynamicBody(Vec2(0, 0));
     head.createFixture(Circle(0.3), { density: 1, friction: 0.51 });
     head.setUserData({ e_bodytype: BODYTYPE.PLAYER, playerId: 2, part: 'Head' });
     const hand = physics.createDynamicBody(Vec2(0.25, 0));
     hand.createFixture(Box(0.1, 0.1), { density: 1, friction: 0.5 });
-    hand.setUserData({ e_bodytype: BODYTYPE.PLAYER, playerId: 1, part: 'FingerRight' });
+    hand.setUserData({ e_bodytype: BODYTYPE.PLAYER, playerId: 1, part: 'FootRight' });
     const flags: ContactFlags = { onBallDown: false, bYesPrize: false, prizeHits: [], playerHeadHits: [] };
     installContactListener(physics, flags);
     physics.step(1 / 30);
-    expect(flags.playerHeadHits).toContainEqual({ attackerId: 1, part: 'FingerRight' });
+    expect(flags.playerHeadHits).toContainEqual({ attackerId: 1, part: 'FootRight' });
   });
 
-  const hands: Array<[PlayerId, SwingHand]> = [[1, 'outside'], [1, 'inside'], [2, 'outside'], [2, 'inside']];
-  it.each(hands)('recognizes a direct head hit by player %s with the %s hand', (id, hand) => {
+  const kicks: Array<[PlayerId, 'FootLeft' | 'LegRight']> = [[1, 'FootLeft'], [1, 'LegRight'], [2, 'FootLeft'], [2, 'LegRight']];
+  it.each(kicks)('recognizes a direct head hit by player %s with the %s', (id, part) => {
     const gw = hazardWorld({ hazards: false });
     const attacker = id === 1 ? gw.p1 : gw.p2;
     const defender = id === 1 ? gw.p2 : gw.p1;
-    const side = attacker.swingSide(hand);
-    // The players are outside wave range, isolating the direct contact path.
-    gw.flags.playerHeadHits!.push({ attackerId: id, part: `Finger${side}` });
+    // The players are outside kick range, isolating the direct contact path.
+    gw.flags.playerHeadHits!.push({ attackerId: id, part });
     gw.step();
     expect(defender.stunFrames).toBe(0);
-    gw.swing(attacker, 1, hand);
-    gw.flags.playerHeadHits!.push({ attackerId: id, part: `Hand${side === 'Left' ? 'Right' : 'Left'}` });
+    gw.swing(attacker, 1);
+    gw.flags.playerHeadHits!.push({ attackerId: id, part: 'HandLeft' });
     gw.step();
     expect(defender.stunFrames).toBe(0);
-    gw.flags.playerHeadHits!.push({ attackerId: id, part: `Hand${side}` });
+    gw.flags.playerHeadHits!.push({ attackerId: id, part });
     gw.step();
     expect(defender.stunFrames).toBe(STUN.frames);
     run(gw, 5);
     expect(defender.stunFrames).toBe(STUN.frames - 5);
   });
 
-  it('keeps the shield immune to both the wave and a direct head hit', () => {
+  it('keeps the shield immune to both the kick and a direct head hit', () => {
     const gw = hazardWorld({ hazards: false });
     gw.p1.standPlayer(210, 256);
     gw.p2.standPlayer(420, 256);
     gw.powerUps.activate(2, 'shield', gw.frame);
     gw.swing(gw.p1);
-    run(gw, 3);
+    run(gw, FLIP.maxFrames);
     expect(gw.p2.stunFrames).toBe(0);
     expect(gw.opponentHitEffects[2].frame).toBe(-100);
     gw.game.newRound();
@@ -93,7 +90,7 @@ describe('head-hit stun', () => {
     gw.p2.forgetBallJoint();
     gw.ball.ballOfPlayer = 0;
     gw.swing(gw.p1);
-    gw.flags.playerHeadHits!.push({ attackerId: 1, part: 'FingerLeft' });
+    gw.flags.playerHeadHits!.push({ attackerId: 1, part: 'FootLeft' });
     gw.step();
     expect(gw.p2.stunFrames).toBe(0);
     expect(gw.opponentHitEffects[2].frame).toBe(-100);
@@ -143,7 +140,7 @@ describe('weakened controls while stunned', () => {
     expect(dazed).toBeLessThan(normal * 0.4);
   });
 
-  it('weakens jumping, crouching and either arm, including windup', () => {
+  it('weakens jumping, crouching and the flip windup', () => {
     const normal = world();
     const dazed = world();
     dazed.p1.stun();
@@ -153,13 +150,12 @@ describe('weakened controls while stunned', () => {
     normal.p1.turnDown();
     dazed.p1.turnDown();
     expect(dazed.p1.part('FootLeft').getLinearVelocity().y).toBeCloseTo(normal.p1.part('FootLeft').getLinearVelocity().y * 0.2);
-    for (const hand of ['outside', 'inside'] as const) {
-      normal.p1.windUpArm(1, hand);
-      dazed.p1.windUpArm(1, hand);
-      normal.p1.swingArm(1, hand);
-      dazed.p1.swingArm(1, hand);
-      expect(dazed.p1.swingFinger(hand).getLinearVelocity().x).toBeCloseTo(normal.p1.swingFinger(hand).getLinearVelocity().x * 0.2);
-    }
+    const foot = (gw: typeof normal) => gw.p1.part('FootRight').getLinearVelocity().x;
+    const n0 = foot(normal);
+    const d0 = foot(dazed);
+    normal.p1.windUp(1);
+    dazed.p1.windUp(1);
+    expect(foot(dazed) - d0).toBeCloseTo((foot(normal) - n0) * 0.2);
   });
 
   it('charges five times slower and restores the normal rate after stun expires', () => {

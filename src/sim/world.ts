@@ -3,7 +3,7 @@ import { AI } from './ai';
 import { Ball } from './ball';
 import { Bees } from './bees';
 import {
-  CHARGE, EXECUTER, EXECUTER_ITERATIONS, FEATHER, GRAVITY, ITERATIONS, LANDING_CENTRE_M,
+  CHARGE, EXECUTER, EXECUTER_ITERATIONS, FEATHER, FLIP, GRAVITY, ITERATIONS, LANDING_CENTRE_M,
   MS_PER_FRAME, OPTIONS, PRIZE_ANIM, NET_X_PX, powerScale,
   SERVE_CENTRE_M, SPAWN_P1_PX, SPAWN_P2_PX, SWING, toM, toPx,
 } from './constants';
@@ -13,7 +13,7 @@ import { Executer, type ExecuterTuning } from './executer';
 import { ExecuterQueue, seededRandom, type ExecuterId, type ExecuterVariant } from './executerVariants';
 import { Game, type GameEvents } from './game';
 import { Ground } from './ground';
-import { Player, type PlayerId, type SwingHand } from './player';
+import { Player, type PlayerId } from './player';
 import { PowerUps, type PowerId } from './powerUps';
 import type { PrizeButton } from './prizeButton';
 import { FrameTimer, TimerSet } from './timer';
@@ -54,7 +54,8 @@ interface Strike {
   frame: number;
   power: number;
   strength: number;
-  hand: SwingHand;
+  /** The attacker's head at take-off: the kick wave is measured from here. */
+  origin: Vec2;
   ballHit: boolean;
   opponentHit: boolean;
   hitExecuters: Set<Executer>;
@@ -85,9 +86,9 @@ export class GameWorld {
   readonly executerQueue: ExecuterQueue;
   /** The last launch, for the HUD's queue animation. */
   executerLaunchEffect: { frame: number; variant: ExecuterVariant | null } = { frame: -100, variant: null };
-  readonly swingEffects: Record<PlayerId, { frame: number; power: number; hand: SwingHand }> = {
-    1: { frame: -100, power: 0, hand: 'outside' },
-    2: { frame: -100, power: 0, hand: 'outside' },
+  readonly swingEffects: Record<PlayerId, { frame: number; power: number }> = {
+    1: { frame: -100, power: 0 },
+    2: { frame: -100, power: 0 },
   };
   readonly opponentHitEffects: Record<PlayerId, { frame: number; power: number }> = {
     1: { frame: -100, power: 0 },
@@ -97,6 +98,11 @@ export class GameWorld {
     1: { frame: -100, power: 0 }, 2: { frame: -100, power: 0 },
   };
   counterEffect = { frame: -100, power: 0 };
+  /**
+   * The ball wears the colour of whoever touched or holds it: `player` now,
+   * `previous` before the change at `frame`. 0 is the plain white ball.
+   */
+  ballTint: { player: 0 | PlayerId; previous: 0 | PlayerId; frame: number } = { player: 0, previous: 0, frame: -100 };
 
   /** Frames simulated since construction. */
   frame = 0;
@@ -184,7 +190,7 @@ export class GameWorld {
 
     const aiSeed = opts.aiSeed ?? 0x51f15e;
     const bot = (p: Player) => new AI(p, this.ball,
-      (q) => this.serve(q), (q, power, hand) => this.swing(q, power, hand), this.canSwing,
+      (q) => this.serve(q), (q, power) => this.swing(q, power), this.canSwing,
       p === this.p1 ? this.p2 : this.p1, seededRandom(aiSeed ^ Math.imul(p.id, 0x9e3779b9)));
     this.ais = {
       1: this.botVsBot ? bot(this.p1) : null,
@@ -223,13 +229,14 @@ export class GameWorld {
 
   canSwing = (player: Player): boolean => this.swingCooldownFramesLeft(player.id) === 0;
 
-  /** Not in the original: the rally hit, routed the same way as serve(). */
-  swing = (player: Player, power = 1, hand: SwingHand = 'outside'): boolean => {
+  /** Not in the original: the rally flip, routed the same way as serve(). */
+  swing = (player: Player, power = 1): boolean => {
     if (!this.canSwing(player) || this.game.phase !== 'play' || this.ball.ballOfPlayer !== 0) return false;
-    player.swingArm(power, hand);
-    this.swingEffects[player.id] = { frame: this.frame, power, hand };
+    if (!player.flip()) return false;
+    this.swingEffects[player.id] = { frame: this.frame, power };
     this.strikes[player.id] = {
-      frame: this.frame, power, strength: powerScale(power) * player.controlScale, hand,
+      frame: this.frame, power, strength: powerScale(power) * player.controlScale,
+      origin: player.head.getWorldCenter().clone(),
       ballHit: false, opponentHit: false, hitExecuters: new Set(),
     };
     this.nextSwingFrame[player.id] = this.frame + SWING.cooldownFrames;
@@ -260,6 +267,8 @@ export class GameWorld {
     // 10 iterations the joints visibly stretch.
     const it = this.executerNearDoll() ? this.contactIterations : ITERATIONS;
     this.world.step(dt, it, it);
+    this.p1.tickFlip();
+    this.p2.tickFlip();
 
     // 1b. A button hit during that step launches its executer now — the
     //     earliest moment, since bodies can't be created mid-step.
@@ -277,6 +286,7 @@ export class GameWorld {
 
     // 4. Rules.
     this.game.update();
+    this.updateBallTint();
     this.powerUps.tick(this.frame);
     this.applyMagnetPower();
     // A ball meeting a bee gives its power to whoever holds it or touched it last.
@@ -304,6 +314,13 @@ export class GameWorld {
     this.frame += 1;
   }
 
+  private updateBallTint(): void {
+    const owner = this.game.ballOwner;
+    if (owner !== null && owner !== this.ballTint.player) {
+      this.ballTint = { player: owner, previous: this.ballTint.player, frame: this.frame };
+    }
+  }
+
   /** Resolve simultaneous counters before individual ball and player hits. */
   private resolveStrikes(): void {
     const contacts = this.flags.ballPlayerHits;
@@ -324,12 +341,9 @@ export class GameWorld {
 
     for (const hit of headHits ?? []) {
       const strike = this.strikes[hit.attackerId];
-      if (!strike || strike.opponentHit) continue;
-      const age = this.frame - strike.frame;
-      if (age < 0 || age >= SWING.opponentHitFrames) continue;
+      if (!strike || strike.opponentHit || !this.strikeLive(hit.attackerId, strike)) continue;
       const attacker = hit.attackerId === 1 ? this.p1 : this.p2;
-      const side = attacker.swingSide(strike.hand);
-      if (hit.part !== `Finger${side}` && hit.part !== `Hand${side}`) continue;
+      if (!attacker.isStrikingPart(hit.part)) continue;
       this.applyOpponentHit(hit.attackerId, strike.power, strike.strength, true);
       strike.opponentHit = true;
     }
@@ -338,54 +352,55 @@ export class GameWorld {
     for (const contact of contacts ?? []) {
       const strike = this.strikes[contact.playerId];
       if (!strike || strike.ballHit || this.ball.ballOfPlayer !== 0) continue;
-      const strikingSide = (contact.playerId === 1 ? this.p1 : this.p2).swingSide(strike.hand);
-      if (contact.part !== `Finger${strikingSide}` && contact.part !== `Hand${strikingSide}`) continue;
-      const age = this.frame - strike.frame;
-      if (age < 0 || age >= SWING.opponentHitFrames) continue;
+      if (!(contact.playerId === 1 ? this.p1 : this.p2).isStrikingPart(contact.part)) continue;
+      if (!this.strikeLive(contact.playerId, strike)) continue;
+      // The legs met the ball on the way round: kick it over, harder with more charge.
       strike.ballHit = true;
-      if (age <= SWING.perfectFrames) {
-        const sign = contact.playerId === 1 ? 1 : -1;
-        const scale = strike.strength;
-        this.ball.body.applyLinearImpulse(
-          Vec2(sign * SWING.perfectBallImpulseX * scale, SWING.perfectBallImpulseY * scale),
-          this.ball.position,
-          true,
-        );
-        this.perfectEffects[contact.playerId] = { frame: this.frame, power: strike.power };
-      }
+      const sign = contact.playerId === 1 ? 1 : -1;
+      const scale = strike.strength;
+      this.ball.body.setLinearVelocity(Vec2(sign * FLIP.kickSpeedX * scale, FLIP.kickSpeedY * scale));
+      this.perfectEffects[contact.playerId] = { frame: this.frame, power: strike.power };
     }
     if (contacts) contacts.length = 0;
 
     for (const id of [1, 2] as const) {
       const strike = this.strikes[id];
       if (!strike) continue;
-      const age = this.frame - strike.frame;
-      if (age >= SWING.opponentHitFrames) {
+      if (!this.strikeLive(id, strike)) {
         this.strikes[id] = null;
       } else {
         this.hitExecuters(id, strike);
-        if (age >= SWING.counterWindowFrames && !strike.opponentHit) {
+        const attacker = id === 1 ? this.p1 : this.p2;
+        if (attacker.flipProgress * Math.PI * 2 >= FLIP.opponentFromRad && !strike.opponentHit) {
           strike.opponentHit = this.hitOpponent(id, strike);
         }
       }
     }
   }
 
-  /** A swing must meet an executer with the striking hand to knock it back. */
+  /** A strike lasts as long as its flip, and at least the frame it began. */
+  private strikeLive(id: PlayerId, strike: Strike): boolean {
+    const age = this.frame - strike.frame;
+    if (age < 0) return false;
+    return age === 0 || (id === 1 ? this.p1 : this.p2).flipping;
+  }
+
+  /**
+   * A flip must meet an executer with the legs to knock it back. Slime glued
+   * to the flipper is spun off whatever it is stuck to.
+   */
   private hitExecuters(
     attackerId: PlayerId,
     strike: Strike,
   ): void {
     const attacker = attackerId === 1 ? this.p1 : this.p2;
-    const side = attacker.swingSide(strike.hand);
-    const finger = attacker.part(`Finger${side}`);
-    const hand = attacker.part(`Hand${side}`);
+    const legs = FLIP.strikingParts.map((name) => attacker.part(name));
     const origin = attacker.head.getWorldCenter();
     for (const e of this.executers) {
       if (e.dead || !e.solid || e.target !== attacker || strike.hitExecuters.has(e)) continue;
-      let touched = false;
-      for (let edge = e.body.getContactList(); edge; edge = edge.next) {
-        if (edge.contact.isTouching() && (edge.other === finger || edge.other === hand)) {
+      let touched = e.phase === 'stuck';
+      for (let edge = e.body.getContactList(); edge && !touched; edge = edge.next) {
+        if (edge.contact.isTouching() && edge.other && legs.includes(edge.other)) {
           touched = true;
           break;
         }
@@ -465,7 +480,7 @@ export class GameWorld {
     const humanCharge = this.control.chargeLevel(humanId);
     if (humanCharge) {
       this.aiCounterWindupFrames[id] = Math.min(this.aiCounterWindupFrames[id] + cpu.controlScale, CHARGE.maxFrames);
-      cpu.windUpArm(Math.min(humanCharge.power, 0.8));
+      cpu.windUp(Math.min(humanCharge.power, 0.8));
       return;
     }
     const humanStrike = this.strikes[humanId];
@@ -477,10 +492,10 @@ export class GameWorld {
 
   /** A near, forward-facing opponent receives one charge-scaled knockback. */
   private hitOpponent(attackerId: PlayerId, strike: Strike): boolean {
-    const attacker = attackerId === 1 ? this.p1 : this.p2;
     const defender = attackerId === 1 ? this.p2 : this.p1;
     const sign = attackerId === 1 ? 1 : -1;
-    const from = attacker.head.getWorldCenter();
+    // From where the flip took off: the head itself swings back and down.
+    const from = strike.origin;
     const target = defender.tors.getWorldCenter();
     const forward = sign * (target.x - from.x);
     const bodyHit = forward > 0 && forward <= toM(SWING.opponentReachPx)
@@ -505,7 +520,7 @@ export class GameWorld {
     if (headHit) defender.stun();
   }
 
-  /** A local, gentle pull that makes a charged swing easier to connect. */
+  /** A local, gentle pull that makes a charged flip easier to connect. */
   private attractBallDuringWindup(): void {
     if (this.game.phase !== 'play' || this.ball.ballOfPlayer !== 0 || this.ball.held || this.counter) return;
     const radius = toM(CHARGE.attractRadiusPx);
@@ -513,7 +528,7 @@ export class GameWorld {
       const charge = this.control.chargeLevel(player.id);
       if (!charge || charge.power <= 0 || charge.power >= 1) continue;
       const ballPos = this.ball.position;
-      const delta = Vec2.sub(player.swingFinger(charge.hand).getWorldCenter(), ballPos);
+      const delta = Vec2.sub(player.kickPoint, ballPos);
       const distance = delta.length();
       if (distance < 0.001 || distance >= radius) continue;
       const impulse = CHARGE.attractImpulse * charge.power * player.controlScale * (1 - distance / radius) / distance;

@@ -1,18 +1,19 @@
 import {
-  Box, Circle, PrismaticJoint, RevoluteJoint, Vec2,
+  Box, Circle, PrismaticJoint, RevoluteJoint, Vec2, WheelJoint,
   type Body, type RevoluteJoint as RevoluteJointT, type Vec2Value, type World,
 } from 'planck';
 import {
-  ACTIONS, BODYTYPE, clamp01, DEG, FLOOR_TOP_PX, JOINTS, PARTS, PLAYER_FRICTION, powerScale,
+  ACTIONS, BODYTYPE, clamp01, DEG, FLIP, FLOOR_TOP_PX, JOINTS, PARTS, PLAYER_FRICTION,
   PRISM_DENSITY, PRISM_FRICTION, PRISM_HALF_PX, PRISM_RESTITUTION, PRISM_Y_PX,
   RAIL_H_LIMITS, RAIL_V_LIMITS, SERVE, SIZE, SPAWN_P1_PX, SPAWN_P2_PX, STAND_POSE,
-  STUN, SWING, toM, toPx, type JointDef, type PartName, WINDUP,
+  STUN, toM, toPx, type JointDef, type PartName, WINDUP,
 } from './constants';
 import type { BodyUserData } from './types';
 import type { PowerId } from './powerUps';
 
 export type PlayerId = 1 | 2;
-export type SwingHand = 'outside' | 'inside';
+
+const TURN = Math.PI * 2;
 
 const PART_DEFS = new Map(PARTS.map((p) => [p.name, p]));
 
@@ -51,7 +52,8 @@ export class Player {
   /** The sensor body that rides the horizontal rail (§6). */
   readonly prismBody: Body;
   readonly railH: PrismaticJoint;
-  readonly railV: PrismaticJoint;
+  /** Swapped for a wheel joint while the doll flips, so it is not readonly. */
+  railV: PrismaticJoint;
   readonly revolutes: RevoluteJointT[] = [];
 
   /** Consecutive touches this rally. > 3 gives the point away (§11.3). */
@@ -69,6 +71,12 @@ export class Player {
 
   private readonly world: World;
   private ballJoint: RevoluteJointT | null = null;
+  /** The flip in progress: the wheel joint standing in for railV, and how far round. */
+  private flipState: { joint: WheelJoint; startAngle: number; dir: 1 | -1; frames: number } | null = null;
+  /** railV's frame, kept so the rail can be rebuilt exactly after a flip. */
+  private readonly railAnchorA: Vec2;
+  private readonly railAnchorB: Vec2;
+  private readonly railReference: number;
 
   constructor(
     world: World,
@@ -198,6 +206,9 @@ export class Player {
         Vec2(0, -1),
       ),
     )!;
+    this.railAnchorA = this.railV.getLocalAnchorA();
+    this.railAnchorB = this.railV.getLocalAnchorB();
+    this.railReference = this.railV.getReferenceAngle();
   }
 
   part(name: PartName): Body {
@@ -303,7 +314,8 @@ export class Player {
       }))!);
     });
     this.sizeScale = scale;
-    this.railV.setLimits(railLowerFor(scale), RAIL_V_LIMITS.upper);
+    // Mid-flip the rail is a wheel joint; endFlip() rebuilds it at this size.
+    if (!this.flipState) this.railV.setLimits(railLowerFor(scale), RAIL_V_LIMITS.upper);
     if (this.ballJoint) {
       this.ballJoint.getBodyB().setTransform(this.servingFinger.getWorldCenter(), 0);
     }
@@ -312,19 +324,6 @@ export class Player {
   get servingFinger(): Body {
     return this.id === 1 ? this.part('FingerRight') : this.part('FingerLeft');
   }
-  /** The outside hand winds up and swings across the body. */
-  get strikingFinger(): Body {
-    return this.id === 1 ? this.part('FingerLeft') : this.part('FingerRight');
-  }
-
-  swingSide(hand: SwingHand): 'Left' | 'Right' {
-    return (this.id === 1) === (hand === 'outside') ? 'Left' : 'Right';
-  }
-
-  swingFinger(hand: SwingHand): Body {
-    return this.part(`Finger${this.swingSide(hand)}`);
-  }
-
   // -------------------------------------------------------------------------
   // §8 Player actions. Exact, in the original's order.
   //
@@ -334,6 +333,7 @@ export class Player {
   // -------------------------------------------------------------------------
 
   jump(): void {
+    if (this.flipState) return; // it would stop the spin dead
     const ass = this.ass;
     // Only when the hips are low, i.e. grounded.
     if (!(ass.getWorldCenter().y > toM(this.scaledFromFloor(ACTIONS.jumpHipsBelowPx)))) return;
@@ -359,7 +359,8 @@ export class Player {
    * what gives the game its twitchy feel (§1.6).
    */
   turn(impulse: Vec2Value): void {
-    if (this.recoilFrames > 0) return;
+    // Zeroing the hips mid-flip would stop the spin dead.
+    if (this.recoilFrames > 0 || this.flipState) return;
     const ass = this.ass;
     const head = this.head;
     ass.setLinearVelocity(Vec2(0, 0));
@@ -374,7 +375,7 @@ export class Player {
 
   /** The AI's softer variant. Note the inverted grounded/airborne branches. */
   turnComp(impulse: Vec2Value): void {
-    if (this.recoilFrames > 0) return;
+    if (this.recoilFrames > 0 || this.flipState) return;
     const ass = this.ass;
     const head = this.head;
     ass.setLinearVelocity(Vec2(0, 0));
@@ -456,6 +457,7 @@ export class Player {
 
   /** §8 standPlayer(x, y) — the round reset. */
   standPlayer(xPx: number, yPx: number): void {
+    this.endFlip();
     this.recoilFrames = 0;
     this.stunFrames = 0;
     this.setLinVelZero();
@@ -537,72 +539,193 @@ export class Player {
     return true;
   }
 
-  /**
-   * The rally hit uses the selected arm. Arm/Hand/Finger
-   * are all flung together so the
-   * whole limb whips forward instead of just the fingertip. `power` is the
-   * 0..1 charge fraction the button was held for, scaled via powerScale() —
-   * a fully charged swing hits hard enough to knock back anything it connects
-   * with (the opponent, an executer).
-   */
-  swingArm(power = 1, swingHand: SwingHand = 'outside'): void {
-    const sign = this.id === 1 ? 1 : -1;
-    const scale = powerScale(power) * this.massFactor * this.controlScale;
-    const side = this.swingSide(swingHand);
-    const finger = this.part(`Finger${side}`);
-    const hand = this.part(`Hand${side}`);
-    const arm = this.part(`Arm${side}`);
+  // -------------------------------------------------------------------------
+  // The flip — not in the original
+  // -------------------------------------------------------------------------
 
-    finger.applyLinearImpulse(
-      Vec2(sign * SWING.fingerImpulseX * scale, SWING.fingerImpulseY * scale),
-      finger.getWorldCenter(),
-      true,
-    );
-    hand.applyLinearImpulse(
-      Vec2(sign * SWING.handImpulseX * scale, SWING.handImpulseY * scale),
-      hand.getWorldCenter(),
-      true,
-    );
-    arm.applyLinearImpulse(
-      Vec2(sign * SWING.armImpulseX * scale, SWING.armImpulseY * scale),
-      arm.getWorldCenter(),
-      true,
-    );
+  get flipping(): boolean { return this.flipState !== null; }
+
+  /** How far round the flip is, 0..1, or 0 when not flipping. */
+  get flipProgress(): number {
+    const f = this.flipState;
+    return f ? clamp01(this.flipTurned(f) / TURN) : 0;
+  }
+
+  /**
+   * Where the feet will sweep through: in front of the doll, level with the
+   * head. A charging flip draws a nearby ball toward it.
+   */
+  get kickPoint(): Vec2 {
+    const h = this.head.getWorldCenter();
+    const sign = this.id === 1 ? 1 : -1;
+    return Vec2(h.x + sign * toM(FLIP.kickAheadPx * this.sizeScale), h.y);
+  }
+
+  /** The legs: what a flip strikes with. */
+  isStrikingPart(part: PartName): boolean {
+    return (FLIP.strikingParts as readonly PartName[]).includes(part);
+  }
+
+  /**
+   * The rally attack: a backflip. The doll hops and turns once, feet swinging
+   * forward and up in front of it. The head's rail forbids rotation, so it is
+   * swapped for a wheel joint on the same line — the head still slides along
+   * it and still drags the horizontal rail, but may now turn — whose motor
+   * keeps the spin going. The whole doll is set spinning about its centre of
+   * mass as one rigid body, so no joint is wrenched at take-off. Returns
+   * false if a flip is already under way.
+   */
+  flip(): boolean {
+    if (this.flipState) return false;
+    // A backflip: player 1 faces +x, so its feet come round anticlockwise.
+    const dir: 1 | -1 = this.id === 1 ? -1 : 1;
+    const head = this.head;
+    this.world.destroyJoint(this.railV);
+    const joint = this.world.createJoint(new WheelJoint({
+      bodyA: this.prismBody,
+      bodyB: head,
+      localAnchorA: this.railAnchorA,
+      localAnchorB: this.railAnchorB,
+      localAxisA: Vec2(0, -1),
+      frequencyHz: 0, // no suspension: free to slide along the rail
+      enableMotor: true,
+      maxMotorTorque: FLIP.maxMotorTorque * this.massFactor * this.massFactor,
+      motorSpeed: dir * FLIP.spin,
+    }))!;
+    // planck only sets these spring terms when frequencyHz > 0, yet always
+    // reads them, so an unsprung wheel turns the whole doll to NaN.
+    Object.assign(joint, { m_sAx: 0, m_sBx: 0 });
+    this.flipState = { joint, startAngle: head.getAngle() - this.prismBody.getAngle(), dir, frames: 0 };
+
+    let mass = 0;
+    let cx = 0, cy = 0, vx = 0, vy = 0;
+    for (const b of this.bodies) {
+      const m = b.getMass();
+      const p = b.getWorldCenter();
+      const v = b.getLinearVelocity();
+      mass += m; cx += m * p.x; cy += m * p.y; vx += m * v.x; vy += m * v.y;
+    }
+    cx /= mass; cy /= mass; vx /= mass; vy /= mass;
+    const w = dir * FLIP.spin;
+    const lift = FLIP.lift * Math.sqrt(this.sizeScale) * this.jumpBoost;
+    const up = Math.min(vy, 0) - lift;
+    for (const b of this.bodies) {
+      const p = b.getWorldCenter();
+      b.setLinearVelocity(Vec2(vx - w * (p.y - cy), up + w * (p.x - cx)));
+      b.setAngularVelocity(w);
+    }
+    this.prismBody.setLinearVelocity(Vec2(vx, 0));
+    return true;
+  }
+
+  private flipTurned(f: NonNullable<Player['flipState']>): number {
+    return (this.head.getAngle() - this.prismBody.getAngle() - f.startAngle) * f.dir;
+  }
+
+  /** Once per frame: ease the spin into a full turn, then lock the rail. */
+  tickFlip(): void {
+    const f = this.flipState;
+    if (!f) return;
+    f.frames += 1;
+    const left = TURN - this.flipTurned(f);
+    if (left <= FLIP.settleRad || f.frames >= FLIP.maxFrames) {
+      this.endFlip();
+      return;
+    }
+    f.joint.setMotorSpeed(f.dir * Math.min(FLIP.spin, Math.max(FLIP.minSpin, left * FLIP.easeGain)));
+  }
+
+  /**
+   * Put the prismatic rail back. Every part's angle is wound back by the
+   * whole turns it made, which leaves every joint angle unchanged, so the
+   * rebuilt rail sees an upright head and only trims what is left over.
+   */
+  endFlip(): void {
+    const f = this.flipState;
+    if (!f) return;
+    this.world.destroyJoint(f.joint);
+    this.flipState = null;
+    const head = this.head;
+    this.stopSpin();
+    // Wind back the whole turns, and turn the doll rigidly about the head by
+    // whatever is left over, so the rail starts with nothing to correct.
+    const off = head.getAngle() - this.prismBody.getAngle() - this.railReference;
+    const turns = Math.round(off / TURN);
+    const residual = off - turns * TURN;
+    const pivot = head.getWorldCenter().clone();
+    const c = Math.cos(-residual);
+    const sn = Math.sin(-residual);
+    for (const b of this.bodies) {
+      const p = b.getPosition();
+      const dx = p.x - pivot.x;
+      const dy = p.y - pivot.y;
+      b.setTransform(Vec2(pivot.x + c * dx - sn * dy, pivot.y + sn * dx + c * dy), b.getAngle() - turns * TURN - residual);
+    }
+    this.railV = this.world.createJoint(new PrismaticJoint({
+      bodyA: this.prismBody,
+      bodyB: head,
+      localAnchorA: this.railAnchorA,
+      localAnchorB: this.railAnchorB,
+      localAxisA: Vec2(0, -1),
+      referenceAngle: this.railReference,
+      enableLimit: true,
+      lowerTranslation: railLowerFor(this.sizeScale),
+      upperTranslation: RAIL_V_LIMITS.upper,
+      enableMotor: false,
+      maxMotorForce: 0,
+      motorSpeed: 0,
+    }))!;
+  }
+
+  /**
+   * Take the doll's spin about its centre of mass out of every part, keeping
+   * its flight. Otherwise the torso carries on round after the head has
+   * landed upright and wrenches it against the rail.
+   */
+  private stopSpin(): void {
+    let mass = 0;
+    let cx = 0, cy = 0, vx = 0, vy = 0;
+    for (const b of this.bodies) {
+      const m = b.getMass();
+      const p = b.getWorldCenter();
+      const v = b.getLinearVelocity();
+      mass += m; cx += m * p.x; cy += m * p.y; vx += m * v.x; vy += m * v.y;
+    }
+    cx /= mass; cy /= mass; vx /= mass; vy /= mass;
+    let momentum = 0;
+    let inertia = 0;
+    for (const b of this.bodies) {
+      const m = b.getMass();
+      const p = b.getWorldCenter();
+      const v = b.getLinearVelocity();
+      const rx = p.x - cx;
+      const ry = p.y - cy;
+      momentum += m * (rx * (v.y - vy) - ry * (v.x - vx)) + b.getInertia() * b.getAngularVelocity();
+      inertia += m * (rx * rx + ry * ry) + b.getInertia();
+    }
+    const w = momentum / inertia;
+    for (const b of this.bodies) {
+      const p = b.getWorldCenter();
+      const v = b.getLinearVelocity();
+      b.setLinearVelocity(Vec2(v.x + w * (p.y - cy), v.y - w * (p.x - cx)));
+      b.setAngularVelocity(b.getAngularVelocity() - w);
+    }
   }
 
   /**
    * Not in the original, and never called for a serve charge — only while
-   * charging a swing. A small tug away from the opponent and upward, meant to
-   * be called every held frame with the current 0..1 charge fraction: the arm
-   * visibly winds up (cocks back) as the power builds, settling against its
-   * joint limits rather than flying anywhere.
+   * charging a flip. Called every held frame with the 0..1 charge fraction:
+   * the doll tucks, drawing its feet up and back as the power builds.
    */
-  windUpArm(power: number, swingHand: SwingHand = 'outside'): void {
-    const sign = this.id === 1 ? 1 : -1; // the swing's forward direction
-    // Scaled with the limb's mass, so a giant's or tiny's arm cocks back as far.
+  windUp(power: number): void {
+    if (this.flipState) return;
+    const back = this.id === 1 ? -1 : 1;
+    // Scaled with the limb's mass, so a giant's or tiny's legs tuck as far.
     const k = clamp01(power) * this.massFactor * this.controlScale;
-    const side = this.swingSide(swingHand);
-    const finger = this.part(`Finger${side}`);
-    const hand = this.part(`Hand${side}`);
-    const arm = this.part(`Arm${side}`);
-
-    finger.applyLinearImpulse(
-      Vec2(-sign * WINDUP.fingerImpulseX * k, -WINDUP.fingerImpulseY * k),
-      finger.getWorldCenter(),
-      true,
-    );
-    hand.applyLinearImpulse(
-      Vec2(-sign * WINDUP.handImpulseX * k, -WINDUP.handImpulseY * k),
-      hand.getWorldCenter(),
-      true,
-    );
-    arm.applyLinearImpulse(
-      Vec2(-sign * WINDUP.armImpulseX * k, -WINDUP.armImpulseY * k),
-      arm.getWorldCenter(),
-      true,
-    );
+    for (const foot of [this.part('FootLeft'), this.part('FootRight')]) {
+      foot.applyLinearImpulse(Vec2(back * WINDUP.footImpulseX * k, -WINDUP.footImpulseY * k), foot.getWorldCenter(), true);
+    }
   }
-
 }
 
 export const spawnFor = (id: PlayerId) => (id === 1 ? SPAWN_P1_PX : SPAWN_P2_PX);

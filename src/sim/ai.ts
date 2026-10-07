@@ -5,7 +5,7 @@ import {
   RIGHT_WALL_INNER_PX, SERVE_CENTRE_M, TIME_STEP, TOUCH_IMPULSE, toM, toPx,
 } from './constants';
 import type { Ball } from './ball';
-import type { Player, SwingHand } from './player';
+import type { Player } from './player';
 
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 
@@ -171,7 +171,7 @@ export class AI {
   private readonly computer: Player;
   private readonly ball: Ball;
   private readonly serve: (p: Player) => void;
-  private readonly swing: (p: Player, power: number, hand: SwingHand) => void;
+  private readonly swing: (p: Player, power: number) => void;
   private readonly canSwing: (p: Player) => boolean;
   private readonly random: () => number;
   /** True when driving player 1, whose court is the mirror image. */
@@ -195,7 +195,7 @@ export class AI {
     computer: Player,
     ball: Ball,
     serve: (p: Player) => void,
-    swing: (p: Player, power: number, hand: SwingHand) => void = () => {},
+    swing: (p: Player, power: number) => void = () => {},
     canSwing: (p: Player) => boolean = () => true,
     private readonly opponent: Player | null = null,
     random: () => number = Math.random,
@@ -591,8 +591,8 @@ export class AI {
       if (plan.frame <= BOT.jump.leadFrames && err < 14 * c.sizeScale) c.jump();
       return;
     }
-    // Its head will not make it: throw a hand at the ball instead.
-    if (this.skill.lunges && plan.latePx > BOT.lunge.latePx) this.strikeIfInZone(BOT.swingZone, BOT.lunge.power);
+    // Its head will not make it: flip at the ball instead.
+    if (this.skill.lunges && plan.latePx > BOT.lunge.latePx) this.strikeIfInZone(BOT.lunge.power);
   }
 
   private smash(plan: ReturnPlan): void {
@@ -601,23 +601,31 @@ export class AI {
     const { smash } = BOT;
     if (plan.frame <= smash.windupFrames + 2) {
       this.windupFrames = Math.min(this.windupFrames + 1, smash.windupFrames);
-      c.windUpArm(smash.power * this.windupFrames / smash.windupFrames, 'inside');
+      c.windUp(smash.power * this.windupFrames / smash.windupFrames);
     }
-    this.strikeIfInZone({ aheadPx: smash.zoneAheadPx, belowPx: smash.zoneBelowPx }, smash.power);
+    this.strikeIfInZone(smash.power);
   }
 
-  /** Swing the net-side hand the moment the ball is in the box in front of the head. */
-  private strikeIfInZone(zone: { aheadPx: readonly number[]; belowPx: readonly number[] }, power: number): void {
+  /**
+   * Flip when the ball will be in the box in front of the head by the time
+   * the legs come round to it.
+   */
+  private strikeIfInZone(power: number): void {
     const c = this.computer;
     if (!this.canSwing(c) || c.contact >= MAX_TOUCHES) return;
     const s = c.sizeScale;
+    const zone = BOT.flipZone;
     const head = this.local(c.head.getWorldCenter());
-    const ball = this.local(this.ball.position);
-    if (ball.x < NET_M) return;
+    const t = zone.leadFrames * TIME_STEP;
+    const p = this.ball.position;
+    const v = this.ball.velocity;
+    const g = GRAVITY.y * this.ball.body.getGravityScale();
+    const ball = this.local({ x: p.x + v.x * t, y: p.y + v.y * t + 0.5 * g * t * t });
+    if (ball.x < NET_M || this.local(p).x < NET_M) return;
     const ahead = toPx(head.x - ball.x) / s;
     const below = toPx(ball.y - head.y) / s;
     if (ahead >= zone.aheadPx[0] && ahead <= zone.aheadPx[1] && below >= zone.belowPx[0] && below <= zone.belowPx[1]) {
-      this.swing(c, power, 'inside');
+      this.swing(c, power);
       this.windupFrames = 0;
     }
   }

@@ -73,22 +73,27 @@ assigned again.
 
 **Serve in the air.** The held ball hangs at your feet. Tap Space (or R for
 player 2) to serve with a fixed underhand flick. Jump first to clear the net.
-Once the ball is free, hold the same key to wind up the outside arm and release
-to hit. Hold Shift (or E for player 2) to hit with the other arm instead.
-The windup briefly slows the physics and gently draws a nearby free
-ball toward the striking hand. A full charge delivers a stronger hit. Both hands
-share a 45-second cooldown after each swing, which resets at the start of every
-round; serving remains available. The punch wave reaches 225 px forward
-and knocks an opponent back, with force set by the charge. A wave at head
-height or a direct hit on the head with the selected hand stuns them for
-three seconds: movement, jumping, crouching, serving, and arm actions work
-at 20% strength, and swing charging is five times slower. Stars and a draining
-bar above the head show the stun. Body hits only knock back; a shield blocks
-both knockback and stun. Pausing freezes the stun, and a new round clears it.
+Once the ball is free, the same key is the one attack: hold it to tuck and
+release to backflip. The doll hops and turns one full circle, feet sweeping
+forward and up in front of it. The head normally rides a rail that forbids it
+to rotate; for the flip that rail becomes a wheel joint on the same line,
+whose motor keeps the spin going until the doll is back upright, when the
+rail locks again. The tuck briefly slows the physics and gently draws a
+nearby free ball to where the feet will pass. Legs that meet the ball kick
+it toward the opponent, harder with more charge. A flip has a 45-second
+cooldown, which resets at the start of every round; serving remains
+available. Once the legs come round, the kick reaches 225 px forward from
+where the flip took off and knocks an opponent back, with force set by the
+charge. A kick at head height or a leg meeting the head stuns them for three
+seconds: movement, jumping, crouching, serving and the tuck work at 20%
+strength, and charging is five times slower. Stars and a draining bar above
+the head show the stun. Body hits only knock back; a shield blocks both
+knockback and stun. Pausing freezes the stun, and a new round clears it.
+Nearly simultaneous flips by the net trap the ball briefly before the
+stronger side sends it across.
 
-Releasing a swing within two frames of contact between the selected hand and
-ball adds a perfect-hit boost. Nearly simultaneous swings by the net trap the
-ball briefly before the stronger side sends it across.
+The ball wears the jersey colour of whoever touched it last, or of the
+server holding it.
 
 Holding jump bunny-hops. That is deliberate: Flash re-fired key-down on OS key
 repeat, which re-armed the consumed jump flag.
@@ -211,7 +216,7 @@ changes that on purpose:
   comet, spring and slime, each run of five in a fresh random order, never the
   same one twice in a row. The next four are previewed at the top of the screen, in
   the order they will come out, and slide along as each launches. A new match
-  shuffles a fresh order. A player's swinging hand can knock any of them
+  shuffles a fresh order. A flipping player's legs can knock any of them
   away and briefly interrupt its attack.
 - **Magnet.** The slowest hunter (~1.4 m/s), with a strong field out to
   240 px. Its player is dragged toward it — the same sideways acceleration on
@@ -252,14 +257,14 @@ changes that on purpose:
     snaps, and each snap takes 1.5 s off the hold. A jump often tears one, but
     the slime grabs again a second later: a doll hopping every 1.3 s still
     spends about half its slimed time glued.
-  - *Getting it off:* swing the slimed arm, or any hand that reaches it, to
-    fling it away and free everything it glued. The shield won't take its
+  - *Getting it off:* flip, and the spin throws it away and frees everything
+    it glued. The shield won't take its
     glue, and a new round shakes it off, since re-standing the doll would
     yank glued parts back together across the court.
 - **Knocks.** Every blow is a change of velocity given to every part of the
   doll alike, plus a jolt to the part struck, and locks steering for a few
   frames so it carries. Shoving only the head and hips, as the opponent's
-  swing does, tore the doll at hazard strength. The shield ignores them all.
+  flip does, tore the doll at hazard strength. The shield ignores them all.
 - **No more tearing through the doll.** Measured on scripted play (standing,
   pacing, hopping, crouching), the spec's executer stretched the ragdoll's
   joints 55–134 px (p99), with tears lasting up to 9 s. That was the break-apart

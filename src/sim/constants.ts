@@ -247,7 +247,7 @@ export const CHARGE = {
   minPower: 0.35,
   /** Physics runs at 60% speed while a swing is charging. */
   windupTimeScale: 0.6,
-  /** Free balls inside this radius drift toward the striking hand during charge. */
+  /** Free balls inside this radius drift toward the kick point during charge. */
   attractRadiusPx: 110,
   /** Maximum per-frame ball impulse at full charge, faded by distance. */
   attractImpulse: 0.014,
@@ -260,37 +260,26 @@ export const powerScale = (power: number): number =>
   CHARGE.minPower + (1 - CHARGE.minPower) * clamp01(power);
 
 /**
- * The rally arm swing uses the selected side, flinging its
- * Arm/Hand/Finger together so the whole limb whips forward. At full charge
- * this is a hard smash — enough to knock back an opponent or an executer it
- * connects with; at minimum charge (a tap) it's a light dab.
+ * The rally attack is a backflip: the doll hops and spins one full turn, its
+ * feet sweeping forward and up through the space in front of it. Whatever the
+ * legs meet on the way round — the ball, the opponent, an executer — is hit.
+ * A fully charged flip hits hard; a tap is a light kick.
  */
 export const SWING = {
-  /** Both hands share a 45-second recovery after each rally swing. */
+  /** A 45-second recovery after each rally flip. */
   cooldownFrames: 45 * FPS,
-  fingerImpulseX: 3.4,
-  fingerImpulseY: -2.1,
-  handImpulseX: 5.8,
-  handImpulseY: -3.6,
-  armImpulseX: 5.8,
-  armImpulseY: -3.6,
-  /** Forgiving frontal hit zone, measured from the attacker's head. */
+  /** Frontal hit zone for the flip's kick, measured from the attacker's head. */
   opponentReachPx: 225,
   opponentHeightPx: 115,
-  /** A wave level with the head counts as a head hit; lower hits only shove. */
+  /** A kick level with the head counts as a head hit; lower hits only shove. */
   opponentHeadHeightPx: 28,
-  opponentHitFrames: 11,
   /** Split the knockback between the head rail and hips to protect joints. */
   opponentImpulseX: 7.5,
   opponentImpulseY: -1.1,
-  /** Release within two frames of a hand-ball contact for a perfect hit. */
-  perfectFrames: 2,
-  perfectBallImpulseX: 0.85,
-  perfectBallImpulseY: -0.65,
-  /** A hand contact during a swing throws an executer away from the player. */
+  /** A leg contact during a flip throws an executer away from the player. */
   executerKnockSpeed: 7,
   executerKnockFrames: 14,
-  /** Counter window when both players swing beside the net. */
+  /** Counter window when both players flip beside the net. */
   counterWindowFrames: 2,
   counterNetRangePx: 100,
   counterBallRangePx: 85,
@@ -307,20 +296,48 @@ export const STUN = {
 } as const;
 
 /**
- * Not in the original. While charging a SWING (never a serve), a small tug
- * away from the opponent and upward, reapplied every held frame and scaled
- * by the charge fraction — so the arm visibly winds up (cocks back) instead
- * of sitting still while the power builds. Tiny relative to SWING: over a
- * full charge it settles the limb back against its joint limits rather than
- * flinging it.
+ * Not in the original. The flip itself. The head normally rides a prismatic
+ * rail that forbids it to rotate; for the flip that rail is swapped for a
+ * wheel joint (same line, free rotation) whose motor keeps the spin going,
+ * then swapped back once the doll has come all the way round.
+ */
+export const FLIP = {
+  /** Spin, rad/s. Flailing limbs slow it, so a turn takes about 0.75 s. */
+  spin: 17,
+  /** The spin eases off over the last part of the turn so it lands upright. */
+  easeGain: 9,
+  minSpin: 2.5,
+  /** Within this of a full turn (rad) the rail locks again. */
+  settleRad: 0.06,
+  /** Motor torque that keeps a flailing ragdoll turning. */
+  maxMotorTorque: 300,
+  /** Upward hop, m/s, given to the whole doll at take-off. */
+  lift: 8,
+  /** Give up and lock the rail after this many frames, wherever it is. */
+  maxFrames: 30,
+  /** The feet pass this far in front of the head at the top of the turn. */
+  kickAheadPx: 45,
+  /** Legs and feet are the striking parts. */
+  strikingParts: ['FootLeft', 'FootRight', 'LegLeft', 'LegRight'] as const,
+  /**
+   * Where the legs meet the ball they send it off at this velocity (m/s,
+   * toward the opponent), scaled by the charge — whichever way the feet were
+   * moving at the time.
+   */
+  kickSpeedX: 12,
+  kickSpeedY: -9,
+  /** The opponent counts as hit once the legs have swung this far round (rad). */
+  opponentFromRad: Math.PI * 0.55,
+} as const;
+
+/**
+ * Not in the original. While charging a flip (never a serve), the doll tucks:
+ * its feet are drawn up and back a little each held frame, scaled by the
+ * charge fraction, settling against the joint limits.
  */
 export const WINDUP = {
-  fingerImpulseX: 0.18,
-  fingerImpulseY: 0.1,
-  handImpulseX: 0.14,
-  handImpulseY: 0.08,
-  armImpulseX: 0.1,
-  armImpulseY: 0.06,
+  footImpulseX: 0.06,
+  footImpulseY: 0.12,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -346,6 +363,17 @@ export const BALL = {
  * about 30% less elastic than §9's restitution 1. The head keeps its 1.2.
  */
 export const BALL_BODY_RESTITUTION = 0.7;
+
+/**
+ * Not in the original: the ball takes on the jersey colour of whoever touched
+ * it last (or holds it to serve), so it is always clear whose ball it is.
+ */
+export const BALL_TINT = {
+  /** Frames the colour takes to change over. */
+  fadeInFrames: 4,
+  /** How strongly the jersey colour covers the white ball. */
+  alpha: 0.82,
+} as const;
 
 /** §11.1 — every fresh player touch pops the ball up by 10 m/s. */
 export const TOUCH_IMPULSE = { x: 0, y: -1 };
@@ -847,12 +875,11 @@ export const BOT = {
   attackNetPx: 160,
   attackMaxVx: 6,
   /**
-   * Smash: measured over trial swings at a ball dropping onto the stance,
-   * a ~0.45 swing of the net-side hand with the ball this far ahead of and
-   * below the head sends it over hard. Full power flies to the far wall and
-   * back. Full-size px; negative "below" is above the head.
+   * Smash: the CPU stands with a ball dropping this far ahead of and below
+   * the head and kicks it over with a ~0.45 flip. Full-size px; negative
+   * "below" is above the head.
    */
-  smash: { aheadPx: 30, belowPx: -10, zoneAheadPx: [18, 44], zoneBelowPx: [-40, 16], power: 0.45, windupFrames: 10 },
+  smash: { aheadPx: 30, belowPx: -10, power: 0.45, windupFrames: 10 },
   /**
    * Jump attack: with the ball dropping ~40 px on the net side of the head,
    * the net-side arm rises into it 6–14 frames into a jump and bats it over.
@@ -860,10 +887,14 @@ export const BOT = {
    * `leadFrames`.
    */
   jump: { aheadPx: 40, leadFrames: 10, leadRisePx: 117, windowFrames: 2 },
-  /** A ball it cannot get its head under in time, it lunges at with a light swing. */
+  /** A ball it cannot get its head under in time, it lunges at with a light flip. */
   lunge: { latePx: 24, power: 0.35 },
-  /** The old catch-all strike zone: the net-side hand connects 75–98% of the time. */
-  swingZone: { aheadPx: [18, 72], belowPx: [-42, 22] },
+  /**
+   * The flip's kick zone: the legs sweep through this box in front of the
+   * head 6–14 frames after take-off, so the CPU flips when the ball will be
+   * in it `leadFrames` from now. Full-size px; negative "below" is above.
+   */
+  flipZone: { leadFrames: 9, aheadPx: [20, 70], belowPx: [-60, 20] },
 
   /** Steering: turnComp moves the head ~1.4 px per frame per unit impulse. */
   pxPerImpulse: 1.4,

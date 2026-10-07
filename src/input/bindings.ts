@@ -2,14 +2,14 @@ import type { ControlAction, KeyBindings } from '../sim/control';
 import type { PlayerId } from '../sim/player';
 import { controlKey } from './keyboard';
 
-export const ACTIONS: readonly ControlAction[] = ['left', 'right', 'jump', 'down', 'serve', 'otherHit'];
+export const ACTIONS: readonly ControlAction[] = ['left', 'right', 'jump', 'down', 'serve'];
 export const PLAYERS: readonly PlayerId[] = [1, 2];
 export type PhysicalBindings = Record<PlayerId, Record<ControlAction, string>>;
 
 const STORAGE_KEY = 'rackdoll-controls-v1';
 export const DEFAULT_BINDINGS: PhysicalBindings = {
-  1: { left: 'ArrowLeft', right: 'ArrowRight', jump: 'ArrowUp', down: 'ArrowDown', serve: 'Space', otherHit: 'ShiftLeft' },
-  2: { left: 'KeyA', right: 'KeyD', jump: 'KeyW', down: 'KeyS', serve: 'KeyR', otherHit: 'KeyE' },
+  1: { left: 'ArrowLeft', right: 'ArrowRight', jump: 'ArrowUp', down: 'ArrowDown', serve: 'Space' },
+  2: { left: 'KeyA', right: 'KeyD', jump: 'KeyW', down: 'KeyS', serve: 'KeyR' },
 };
 
 export function defaultBindings(): PhysicalBindings {

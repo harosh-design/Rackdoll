@@ -1,3 +1,4 @@
+import { Music } from './audio/music';
 import { Sfx } from './audio/sfx';
 import {
   ACTIONS, PLAYERS, bindingOwner, defaultBindings, isAssignableCode, keyLabel,
@@ -28,6 +29,7 @@ const overlays = { menu: $('menu'), pause: $('pause'), over: $('over') };
 const renderer = new Renderer(canvas);
 const interp = new Interpolator();
 const sfx = new Sfx();
+const music = new Music();
 
 type Mode = '1p' | '2p' | 'cpu';
 const settings = {
@@ -45,7 +47,22 @@ let message: string | null = null;
 let servesSeen = 0;
 
 // ---------------------------------------------------------------------------
-// World lifecycle
+// Global mute — the M key toggles SFX and background music together, on every
+// screen. M can never be assigned to an in-game control (isAssignableCode() in
+// input/bindings.ts rejects 'KeyM', and loadBindings() discards any legacy
+// config that tried to store it), so this key is always free for the mute.
+let muted = false;
+function applyMute(state: boolean): void {
+   muted = state;
+   sfx.enabled = !state;          // stop new one-shot effects, let tails ring out
+   music.setMuted(state);         // suspend/resume the loop, keeping its position
+    }
+function toggleMute(): void {
+   applyMute(!muted);
+   console.info('[rackdoll] sound', muted ? 'OFF (press M to re-enable)' : 'ON');
+    }
+// ---------------------------------------------------------------------------
+// World lifecycle — one simulation frame per 1/30 s, exactly like the SWF.
 // ---------------------------------------------------------------------------
 
 function createWorld(demo = false): GameWorld {
@@ -75,6 +92,9 @@ function* allBodies(w: GameWorld) {
 
 function startMatch(): void {
   sfx.unlock();
+  music.unlock();
+  music.pickNext();             // new game → a fresh, non-repeating random track
+  applyMute(muted);            // keep mute state consistent when starting a fresh match
   servesSeen = 0;
   gw = createWorld();
   message = null;
@@ -181,7 +201,7 @@ function togglePause(): void {
 
 const actionNames: Record<ControlAction, string> = {
   left: 'Move left', right: 'Move right', jump: 'Jump', down: 'Down',
-  serve: 'Serve / hit', otherHit: 'Other hand',
+  serve: 'Serve / flip',
 };
 
 function renderBindings(): void {
@@ -311,7 +331,7 @@ function wireMenu(): void {
         togglePause();
       }
     } else if (e.code === 'KeyM') {
-      sfx.enabled = !sfx.enabled;
+      toggleMute();              // M is reserved for mute — never assignable to a control
     } else if (e.code === 'Enter' && screen === 'menu' && (e.target === document.body || e.target === canvas)) {
       startMatch();
     }

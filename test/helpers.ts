@@ -1,5 +1,5 @@
 import { Vec2 } from 'planck';
-import { CHARGE, toM, toPx } from '../src/sim/constants';
+import { CHARGE, FLIP, toM, toPx } from '../src/sim/constants';
 import type { ExecuterTuning } from '../src/sim/executer';
 import type { ExecuterId } from '../src/sim/executerVariants';
 import type { Player } from '../src/sim/player';
@@ -16,6 +16,17 @@ export function run(gw: GameWorld, frames: number): void {
     gw.step();
     gw.reap();
   }
+}
+
+/** Step until a flip's kick lands on `defenderId`, up to one whole flip. Returns frames run, or -1. */
+export function untilOpponentHit(gw: GameWorld, defenderId: 1 | 2): number {
+  const before = gw.opponentHitEffects[defenderId].frame;
+  for (let f = 1; f <= FLIP.maxFrames + 1; f++) {
+    gw.step();
+    gw.reap();
+    if (gw.opponentHitEffects[defenderId].frame !== before) return f;
+  }
+  return -1;
 }
 
 /** Run until the rally ends (or a cap), returning frames taken. */

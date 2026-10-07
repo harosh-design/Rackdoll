@@ -1,31 +1,30 @@
 import { Vec2 } from 'planck';
 import { ACTIONS, CHARGE } from './constants';
-import type { Player, PlayerId, SwingHand } from './player';
+import type { Player, PlayerId } from './player';
 
 export type ControlKey = number | string;
-export type ControlAction = 'left' | 'right' | 'jump' | 'down' | 'serve' | 'otherHit';
+export type ControlAction = 'left' | 'right' | 'jump' | 'down' | 'serve';
 export type KeyBindings = Record<PlayerId, Record<ControlAction, ControlKey>>;
 
 /** §7 default controls — raw key codes, exactly as the original tabled them. */
 export const KEYS: KeyBindings = {
-  1: { left: 37, right: 39, jump: 38, down: 40, serve: 32, otherHit: 16 }, // arrows + Space / Shift
-  2: { left: 65, right: 68, jump: 87, down: 83, serve: 82, otherHit: 69 }, // A D W S R / E
+  1: { left: 37, right: 39, jump: 38, down: 40, serve: 32 }, // arrows + Space
+  2: { left: 65, right: 68, jump: 87, down: 83, serve: 82 }, // A D W S R
 };
 
 export interface ChargeInfo {
-  /** 0..1, how far into the swing charge we are right now. */
+  /** 0..1, how far into the flip charge we are right now. */
   power: number;
-  hand: SwingHand;
 }
 
 /**
  * Controls run once per frame after the world step. A press while holding the
  * ball serves at fixed power immediately. A press during a rally begins a
- * swing charge, and releasing it strikes with the chosen arm.
+ * flip charge, and releasing it flips.
  */
 export class Control {
   private readonly down = new Map<ControlKey, boolean>();
-  private readonly active = new Map<PlayerId, { kind: 'serve' | 'swing'; key: ControlKey; hand: SwingHand }>();
+  private readonly active = new Map<PlayerId, { kind: 'serve' | 'swing'; key: ControlKey }>();
   private readonly chargeFrames = new Map<PlayerId, number>();
   private readonly keys: KeyBindings;
 
@@ -56,7 +55,7 @@ export class Control {
   update(
     player: Player,
     serve: (p: Player) => void,
-    swing: (p: Player, power: number, hand: SwingHand) => void,
+    swing: (p: Player, power: number) => void,
     canSwing: (p: Player) => boolean = () => true,
   ): void {
     const k = this.keys[player.id];
@@ -72,13 +71,11 @@ export class Control {
     let action = this.active.get(player.id);
     if (action == null && this.isDown(k.serve)) {
       if (player.holdingJoint != null) {
-        this.active.set(player.id, { kind: 'serve', key: k.serve, hand: 'outside' });
+        this.active.set(player.id, { kind: 'serve', key: k.serve });
         serve(player);
       } else if (canSwing(player)) {
-        this.active.set(player.id, { kind: 'swing', key: k.serve, hand: 'outside' });
+        this.active.set(player.id, { kind: 'swing', key: k.serve });
       }
-    } else if (action == null && this.isDown(k.otherHit) && player.holdingJoint == null && canSwing(player)) {
-      this.active.set(player.id, { kind: 'swing', key: k.otherHit, hand: 'inside' });
     }
     action = this.active.get(player.id);
     if (action == null) return;
@@ -87,25 +84,25 @@ export class Control {
       const previous = this.chargeFrames.get(player.id) ?? 0;
       const frames = Math.min(previous + player.controlScale, CHARGE.maxFrames);
       this.chargeFrames.set(player.id, frames);
-      if (previous < CHARGE.maxFrames) player.windUpArm(frames / CHARGE.maxFrames, action.hand);
+      if (previous < CHARGE.maxFrames) player.windUp(frames / CHARGE.maxFrames);
     }
 
     if (!this.isDown(action.key)) {
       if (action.kind === 'swing') {
         const power = (this.chargeFrames.get(player.id) ?? 0) / CHARGE.maxFrames;
-        swing(player, power, action.hand);
+        swing(player, power);
       }
       this.chargeFrames.delete(player.id);
       this.active.delete(player.id);
     }
   }
 
-  /** Only rally swings have a power meter. */
+  /** Only rally flips have a power meter. */
   chargeLevel(id: PlayerId): ChargeInfo | null {
     const action = this.active.get(id);
     if (!action || action.kind !== 'swing' || !this.isDown(action.key)) {
       return null;
     }
-    return { power: (this.chargeFrames.get(id) ?? 0) / CHARGE.maxFrames, hand: action.hand };
+    return { power: (this.chargeFrames.get(id) ?? 0) / CHARGE.maxFrames };
   }
 }

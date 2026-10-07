@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Ball } from '../src/sim/ball';
 import { predictLanding } from '../src/sim/ai';
 import {
-  BALL, CHARGE, GRAVITY, ITERATIONS, JOINTS, NET_TOP_PX, PARTS, PLAYER_FRICTION, SLIME, SWING, TIME_STEP, toM,
+  BALL, CHARGE, FLIP, GRAVITY, ITERATIONS, JOINTS, NET_TOP_PX, PARTS, PLAYER_FRICTION, SLIME, SWING, TIME_STEP, toM,
 } from '../src/sim/constants';
 import { ud } from '../src/sim/types';
 import { installContactListener } from '../src/sim/contacts';
@@ -16,7 +16,7 @@ import { EXECUTER_VARIANTS, type ExecuterId } from '../src/sim/executerVariants'
 import type { GameWorld } from '../src/sim/world';
 import { Ground } from '../src/sim/ground';
 import {
-  fireAtButton, hazardWorld, jumpServe, px, ramScenario, rng, run, SCRIPTS, untilPoint, world,
+  fireAtButton, hazardWorld, jointErrPx, jumpServe, px, ramScenario, rng, run, SCRIPTS, untilOpponentHit, untilPoint, world,
 } from './helpers';
 
 describe('§17.1 world + court + ball', () => {
@@ -320,7 +320,7 @@ describe('§17.4 serve + rally rules', () => {
   });
 });
 
-describe('fixed serve and charged outside-arm swing', () => {
+describe('fixed serve and charged flip', () => {
   it('serves on press at fixed power, with no serve charge or swing on release', () => {
     const gw = world();
     run(gw, 90);
@@ -328,56 +328,47 @@ describe('fixed serve and charged outside-arm swing', () => {
     gw.step();
     expect(gw.ball.held).toBe(false);
     expect(gw.control.chargeLevel(1)).toBeNull();
-    const swing = vi.spyOn(gw.p1, 'swingArm');
+    const swing = vi.spyOn(gw.p1, 'flip');
     run(gw, CHARGE.maxFrames);
     gw.control.release(32);
     gw.step();
     expect(swing).not.toHaveBeenCalled();
   });
 
-  it('charges only a rally swing, then strikes with the arm farther from the opponent', () => {
+  it('charges only a rally flip, then turns the doll a full backflip and re-locks the rail', () => {
     for (const id of [1, 2] as const) {
       const gw = hazardWorld({ hazards: false });
       const p = id === 1 ? gw.p1 : gw.p2;
       const key = id === 1 ? 32 : 82;
-      const far = p.part(id === 1 ? 'ArmLeft' : 'ArmRight');
-      const near = p.part(id === 1 ? 'ArmRight' : 'ArmLeft');
-      const forward = id === 1 ? 1 : -1;
       gw.control.press(key);
       run(gw, CHARGE.maxFrames);
       expect(gw.control.chargeLevel(id)?.power).toBe(1);
-      const before = far.getLinearVelocity().x;
-      const nearBefore = near.getLinearVelocity().x;
       gw.control.release(key);
       gw.step();
-      expect((far.getLinearVelocity().x - before) * forward).toBeGreaterThan(3);
-      expect(Math.abs(near.getLinearVelocity().x - nearBefore)).toBeLessThan(2);
+      expect(p.flipping).toBe(true);
       expect(gw.swingEffects[id].power).toBe(1);
+      // A backflip: player 1 (facing +x) turns anticlockwise, player 2 clockwise.
+      const dir = id === 1 ? -1 : 1;
+      const start = p.tors.getAngle();
+      let turned = 0;
+      let frames = 0;
+      while (p.flipping && frames < FLIP.maxFrames + 2) {
+        turned = Math.max(turned, (p.tors.getAngle() - start) * dir);
+        gw.step();
+        frames++;
+      }
+      expect(p.flipping).toBe(false);
+      expect(frames).toBeLessThan(FLIP.maxFrames);
+      expect(turned).toBeGreaterThan(Math.PI * 1.6);
+      // The rail is back: the head is upright and rides its line again.
+      run(gw, 10);
+      expect(Math.abs(p.head.getAngle())).toBeLessThan(0.03);
+      expect(px(Math.abs(p.head.getWorldCenter().x - p.prismBody.getWorldCenter().x))).toBeLessThan(1);
+      expect(jointErrPx(p)).toBeLessThan(6);
     }
   });
 
-  it('charges and strikes with the near hand on the second hit key', () => {
-    for (const id of [1, 2] as const) {
-      const gw = hazardWorld({ hazards: false });
-      const player = id === 1 ? gw.p1 : gw.p2;
-      const key = id === 1 ? 16 : 69;
-      const near = player.part(id === 1 ? 'ArmRight' : 'ArmLeft');
-      const far = player.part(id === 1 ? 'ArmLeft' : 'ArmRight');
-      const forward = id === 1 ? 1 : -1;
-      gw.control.press(key);
-      run(gw, CHARGE.maxFrames);
-      expect(gw.control.chargeLevel(id)).toEqual({ power: 1, hand: 'inside' });
-      const nearBefore = near.getLinearVelocity().x;
-      const farBefore = far.getLinearVelocity().x;
-      gw.control.release(key);
-      gw.step();
-      expect((near.getLinearVelocity().x - nearBefore) * forward).toBeGreaterThan(3);
-      expect(Math.abs(far.getLinearVelocity().x - farBefore)).toBeLessThan(2);
-      expect(gw.swingEffects[id].hand).toBe('inside');
-    }
-  });
-
-  it('does not use the second hit key to serve a held ball', () => {
+  it('has no second attack key', () => {
     const gw = world();
     gw.control.press(16);
     run(gw, 5);
@@ -385,23 +376,26 @@ describe('fixed serve and charged outside-arm swing', () => {
     gw.step();
     expect(gw.ball.held).toBe(true);
     expect(gw.control.chargeLevel(1)).toBeNull();
+    const rally = hazardWorld({ hazards: false });
+    rally.control.press(16);
+    run(rally, 5);
+    expect(rally.control.chargeLevel(1)).toBeNull();
   });
 
-  it('a full swing is stronger than a tap, and the windup pulls the outside arm back', () => {
-    const tap = hazardWorld({ hazards: false });
-    const tapArm = tap.p1.part('ArmLeft');
-    const tapBefore = tapArm.getLinearVelocity().x;
-    tap.p1.swingArm(0);
-    const tapDelta = tapArm.getLinearVelocity().x - tapBefore;
+  it('tucks the feet up and back during the windup, and locks steering while flipping', () => {
+    const gw = hazardWorld({ hazards: false });
+    const foot = gw.p1.part('FootLeft');
+    const before = foot.getLinearVelocity().clone();
+    gw.p1.windUp(1);
+    expect(foot.getLinearVelocity().x).toBeLessThan(before.x);
+    expect(foot.getLinearVelocity().y).toBeLessThan(before.y);
 
-    const full = hazardWorld({ hazards: false });
-    const arm = full.p1.part('ArmLeft');
-    const before = arm.getLinearVelocity().x;
-    full.p1.windUpArm(1);
-    expect(arm.getLinearVelocity().x).toBeLessThan(before);
-    full.p1.swingArm(1);
-    const fullDelta = arm.getLinearVelocity().x - before;
-    expect(fullDelta).toBeGreaterThan(tapDelta * 2);
+    gw.p1.flip();
+    const spin = gw.p1.ass.getLinearVelocity().clone();
+    gw.p1.turn(Vec2(4, 0));
+    gw.p1.jump();
+    expect(gw.p1.ass.getLinearVelocity()).toEqual(spin);
+    expect(gw.p1.flip()).toBe(false);
   });
 
   it('slows physics only while charging', () => {
@@ -418,9 +412,9 @@ describe('fixed serve and charged outside-arm swing', () => {
     expect(step.mock.lastCall?.[0]).toBeCloseTo(TIME_STEP);
   });
 
-  it('shares a 45-second cooldown across both hands, but not across players', () => {
+  it('has a 45-second flip cooldown, not shared across players', () => {
     const gw = hazardWorld({ hazards: false });
-    const swing = vi.spyOn(gw.p1, 'swingArm');
+    const swing = vi.spyOn(gw.p1, 'flip');
     gw.control.press(32);
     run(gw, CHARGE.maxFrames);
     gw.control.release(32);
@@ -428,25 +422,26 @@ describe('fixed serve and charged outside-arm swing', () => {
     const firstHitFrame = gw.swingEffects[1].frame;
     expect(gw.swingCooldownFramesLeft(1)).toBe(SWING.cooldownFrames - 1);
 
-    gw.control.press(16);
+    gw.control.press(32);
     run(gw, 3);
     expect(gw.control.chargeLevel(1)).toBeNull();
-    gw.control.release(16);
+    gw.control.release(32);
     gw.step();
-    expect(gw.swing(gw.p1, 1, 'inside')).toBe(false);
+    expect(gw.swing(gw.p1, 1)).toBe(false);
     expect(swing).toHaveBeenCalledTimes(1);
-    expect(gw.swing(gw.p2, 1, 'inside')).toBe(true);
+    expect(gw.swing(gw.p2, 1)).toBe(true);
 
+    run(gw, FLIP.maxFrames);
     gw.frame = firstHitFrame + SWING.cooldownFrames - 1;
-    gw.control.press(16);
+    gw.control.press(32);
     gw.step();
     expect(gw.control.chargeLevel(1)).toBeNull();
     gw.step();
-    expect(gw.control.chargeLevel(1)?.hand).toBe('inside');
-    gw.control.release(16);
+    expect(gw.control.chargeLevel(1)?.power).toBe(1 / CHARGE.maxFrames);
+    gw.control.release(32);
     gw.step();
     expect(swing).toHaveBeenCalledTimes(2);
-    expect(swing).toHaveBeenLastCalledWith(1 / CHARGE.maxFrames, 'inside');
+    expect(gw.swingEffects[1].power).toBe(1 / CHARGE.maxFrames);
   });
 
   it('holds the hit cooldown through a pause and resets it every round', () => {
@@ -471,11 +466,11 @@ describe('fixed serve and charged outside-arm swing', () => {
     expect(gw.swing(gw.p1, 1)).toBe(true);
   });
 
-  it('gently pulls a nearby free ball toward the striking hand while charging', () => {
+  it('gently pulls a nearby free ball toward the kick point while charging', () => {
     const near = hazardWorld({ hazards: false });
     const idle = hazardWorld({ hazards: false });
     for (const gw of [near, idle]) {
-      const hand = gw.p1.strikingFinger.getWorldCenter();
+      const hand = gw.p1.kickPoint;
       gw.ball.body.setTransform(Vec2(hand.x, hand.y - toM(50)), 0);
       gw.ball.body.setLinearVelocity(Vec2(0, 0));
     }
@@ -485,7 +480,7 @@ describe('fixed serve and charged outside-arm swing', () => {
     expect(near.ball.velocity.y).toBeGreaterThan(idle.ball.velocity.y + 0.001);
   });
 
-  it('knocks back a nearby opponent in proportion to swing charge', () => {
+  it('knocks back a nearby opponent in proportion to flip charge', () => {
     const strike = (id: 1 | 2, power: number) => {
       const gw = hazardWorld({ hazards: false });
       gw.control.press(39);
@@ -501,8 +496,7 @@ describe('fixed serve and charged outside-arm swing', () => {
       const before = defender.head.getLinearVelocity().x;
       const position = defender.head.getWorldCenter().x;
       gw.swing(attacker, power);
-      run(gw, 3);
-      expect(gw.opponentHitEffects[defender.id].frame).toBe(gw.frame - 1);
+      expect(untilOpponentHit(gw, defender.id)).toBeGreaterThan(0);
       const speed = (defender.head.getLinearVelocity().x - before) * sign;
       run(gw, 4);
       expect(gw.opponentHitEffects[defender.id].frame).toBe(gw.frame - 5);
@@ -519,7 +513,7 @@ describe('fixed serve and charged outside-arm swing', () => {
     }
   });
 
-  it('connects with an opponent near the edge of the longer punch reach', () => {
+  it('connects with an opponent near the edge of the kick reach', () => {
     const gw = hazardWorld({ hazards: false });
     gw.control.press(39);
     gw.control.press(65);
@@ -542,49 +536,64 @@ describe('fixed serve and charged outside-arm swing', () => {
     }
 
     gw.swing(gw.p1, 1);
-    run(gw, 3);
-    expect(gw.opponentHitEffects[2].frame).toBe(gw.frame - 1);
+    expect(untilOpponentHit(gw, 2)).toBeGreaterThan(0);
   });
 
   it('does not hit an opponent across the court', () => {
     const gw = hazardWorld({ hazards: false });
-    const before = gw.p2.head.getLinearVelocity().x;
     gw.swing(gw.p1, 1);
-    expect(gw.p2.head.getLinearVelocity().x).toBe(before);
+    expect(untilOpponentHit(gw, 2)).toBe(-1);
     expect(gw.opponentHitEffects[2].frame).toBe(-100);
   });
 });
 
 describe('perfect contact, net counter, and desperate save', () => {
-  it('counts only the selected hand for a perfect hit', () => {
+  it('kicks the ball only with the legs, and only during the flip', () => {
     const gw = hazardWorld({ hazards: false });
     gw.ball.body.setTransform(Vec2(toM(150), toM(120)), 0);
     gw.ball.body.setLinearVelocity(Vec2(0, 0));
-    gw.swing(gw.p1, 1, 'inside');
-    gw.flags.ballPlayerHits!.push({ playerId: 1, part: 'FingerLeft' });
+    gw.flags.ballPlayerHits!.push({ playerId: 1, part: 'FootLeft' });
     gw.step();
     expect(gw.perfectEffects[1].frame).toBe(-100);
-    gw.flags.ballPlayerHits!.push({ playerId: 1, part: 'FingerRight' });
+    gw.swing(gw.p1, 1);
+    gw.flags.ballPlayerHits!.push({ playerId: 1, part: 'HandLeft' });
+    gw.step();
+    expect(gw.perfectEffects[1].frame).toBe(-100);
+    gw.flags.ballPlayerHits!.push({ playerId: 1, part: 'FootRight' });
     gw.step();
     expect(gw.perfectEffects[1].frame).toBe(gw.frame - 1);
   });
 
-  it('boosts the ball only for a timely outside-hand contact', () => {
-    const timely = hazardWorld({ hazards: false });
-    const finger = timely.p1.strikingFinger.getWorldCenter();
-    timely.ball.body.setTransform(Vec2(finger.x, finger.y - toM(20)), 0);
-    timely.ball.body.setLinearVelocity(Vec2(0, 0));
-    timely.swing(timely.p1, 1);
-    timely.step();
-    expect(timely.perfectEffects[1].frame).toBe(timely.frame - 1);
-    expect(timely.ball.velocity.x).toBeGreaterThan(8);
+  it('a flip that meets the ball kicks it over the net, harder with more charge', () => {
+    const kick = (power: number) => {
+      const gw = hazardWorld({ hazards: false });
+      gw.world.setGravity(Vec2(0, 0));
+      // Park the ball where the feet pass at the top of the turn.
+      gw.swing(gw.p1, power);
+      let hit = -1;
+      for (let f = 0; f < FLIP.maxFrames && hit < 0; f++) {
+        if (f === 0) {
+          const k = gw.p1.kickPoint;
+          gw.ball.body.setTransform(Vec2(k.x, k.y - toM(30)), 0);
+          gw.ball.body.setLinearVelocity(Vec2(0, 0));
+        }
+        gw.step();
+        if (gw.perfectEffects[1].frame >= 0) hit = f;
+      }
+      return { hit, vx: gw.ball.velocity.x };
+    };
+    const tap = kick(0);
+    const full = kick(1);
+    expect(full.hit).toBeGreaterThanOrEqual(0);
+    expect(full.vx).toBeGreaterThan(6);
+    expect(tap.hit).toBeGreaterThanOrEqual(0);
+    expect(full.vx).toBeGreaterThan(tap.vx);
 
+    // No flip, no kick.
     const late = hazardWorld({ hazards: false });
-    late.ball.body.setTransform(Vec2(toM(150), toM(120)), 0);
-    late.ball.body.setLinearVelocity(Vec2(0, 0));
     late.swing(late.p1, 1);
-    run(late, SWING.perfectFrames + 1);
-    late.flags.ballPlayerHits!.push({ playerId: 1, part: 'FingerLeft' });
+    run(late, FLIP.maxFrames + 1);
+    late.flags.ballPlayerHits!.push({ playerId: 1, part: 'FootLeft' });
     late.step();
     expect(late.perfectEffects[1].frame).toBe(-100);
   });
@@ -761,14 +770,15 @@ describe('champion opponent', () => {
     expect(Math.abs(px(gw.p2.head.getWorldCenter().x - headX))).toBeLessThan(100);
   });
 
-  it('strikes with a real hand when the falling ball is within reach', () => {
+  it('flips early at a falling ball so the legs meet it in front of the head', () => {
     const gw = freeBall(6, 500, 100, 0, 0);
-    const finger = gw.p2.swingFinger('inside').getWorldCenter();
-    gw.ball.body.setTransform(Vec2(finger.x, finger.y - toM(50)), 0);
+    const head = gw.p2.head.getWorldCenter();
+    // 45 px toward the net, falling into the kick zone over the next few frames.
+    gw.ball.body.setTransform(Vec2(head.x - toM(45), head.y - toM(64)), 0);
     gw.ball.body.setLinearVelocity(Vec2(0, 3));
     gw.step();
     expect(gw.swingEffects[2].frame).toBe(gw.frame - 1);
-    expect(gw.swingEffects[2].hand).toBe('inside');
+    expect(gw.p2.flipping).toBe(true);
   });
 
   it('loses on a fourth touch under the same rules as every other level', () => {
@@ -1091,23 +1101,23 @@ describe('hazards (reworked §13)', () => {
     }
   });
 
-  it('a swing of the slimed arm flings the slime off and frees what it glued', () => {
+  it('a flip spins the slime off and frees what it glued', () => {
     for (const side of [1, 2] as const) {
-      for (const hand of ['outside', 'inside'] as const) {
+      for (const hand of ['Left', 'Right'] as const) {
         const gw = hazardWorld({ executerOrder: ['slime'] });
         fireAtButton(gw, side);
         const e = gw.executers[0];
         const player = side === 1 ? gw.p1 : gw.p2;
         run(gw, 20);
         // Splat it onto that hand.
-        const finger = player.swingFinger(hand).getWorldCenter();
-        e.body.setTransform(Vec2(finger.x + toM(side === 1 ? 20 : -20), finger.y), 0);
+        const finger = player.part(`Finger${hand}`).getWorldCenter();
+        e.body.setTransform(Vec2(finger.x + toM(hand === 'Right' ? 20 : -20), finger.y), 0);
         e.body.setLinearVelocity(Vec2(0, 0));
-        e.aimPart = `Hand${player.swingSide(hand)}`;
+        e.aimPart = `Hand${hand}`;
         run(gw, 30);
         expect(e.phase).toBe('stuck');
-        expect(limbOf(e.host!)).toBe(`arm${player.swingSide(hand)}`);
-        gw.swing(player, 1, hand);
+        expect(limbOf(e.host!)).toBe(`arm${hand}`);
+        gw.swing(player, 1);
         run(gw, 3);
         expect(e.host).toBeNull();
         expect(e.bonds).toHaveLength(0);
@@ -1139,25 +1149,29 @@ describe('hazards (reworked §13)', () => {
     expect(stuck.bonds).toHaveLength(0);
   });
 
-  it('a swing that meets any hazard with either selected hand throws it away', () => {
+  it('a flip whose legs meet any hazard throws it away', () => {
     for (const side of [1, 2] as const) {
       for (const id of IDS) {
-        for (const hand of ['outside', 'inside'] as const) {
-          const gw = hazardWorld({ executerOrder: [id] });
-          fireAtButton(gw, side);
-          const e = gw.executers[0];
-          const player = side === 1 ? gw.p1 : gw.p2;
-          run(gw, 20);
-          const finger = player.swingFinger(hand).getWorldCenter();
-          const sign = side === 1 ? 1 : -1;
-          e.body.setTransform(Vec2(finger.x + toM(sign * 21), finger.y), 0);
-          e.body.setLinearVelocity(Vec2(0, 0));
-          gw.swing(player, 1, hand);
-          run(gw, 5);
-          expect(e.knockbackFrames).toBeGreaterThan(0);
-          const away = e.body.getWorldCenter().x - player.head.getWorldCenter().x;
-          expect(e.body.getLinearVelocity().x * away).toBeGreaterThan(0);
+        const gw = hazardWorld({ executerOrder: [id] });
+        fireAtButton(gw, side);
+        const e = gw.executers[0];
+        const player = side === 1 ? gw.p1 : gw.p2;
+        run(gw, 20);
+        gw.swing(player, 1);
+        let knocked = false;
+        for (let f = 0; f < FLIP.maxFrames && !knocked; f++) {
+          // Hold it where the feet sweep through until they get there.
+          if (e.knockbackFrames === 0) {
+            const k = player.kickPoint;
+            e.body.setTransform(Vec2(k.x, k.y - toM(20)), 0);
+            e.body.setLinearVelocity(Vec2(0, 0));
+          }
+          gw.step();
+          knocked = e.knockbackFrames > 0;
         }
+        expect(knocked, `${id} on side ${side}`).toBe(true);
+        const away = e.body.getWorldCenter().x - player.head.getWorldCenter().x;
+        expect(e.body.getLinearVelocity().x * away).toBeGreaterThan(0);
       }
     }
   });

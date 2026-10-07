@@ -1,5 +1,5 @@
 import {
-  ART, BALL, BOXER, CHARGE, COURT, EXECUTER, FLOOR_TOP_PX, FPS, MAX_TOUCHES, OPTIONS, PARTS, PRIZE_ANIM,
+  ART, BALL, BALL_TINT, BOXER, CHARGE, COURT, FLIP, EXECUTER, FLOOR_TOP_PX, FPS, MAX_TOUCHES, OPTIONS, PARTS, PRIZE_ANIM,
   PRIZE_BUTTONS, RIGHT_WALL_INNER_PX, SLIME, SPRING, STUN, SWING, VIEW, toPx, type PartName,
 } from '../sim/constants';
 import type { Body, Vec2Value } from 'planck';
@@ -36,6 +36,8 @@ const PAL = {
   hair: { 1: '#4a3222', 2: '#2d2320' },
   jersey: { 1: '#2f6fde', 2: '#e2453b' },
   jerseyShade: { 1: '#1f4fa8', 2: '#a92d25' },
+  /** The colour a ball takes from whoever touched it last — their jersey. */
+  ballTintRgb: { 0: [251, 251, 246], 1: [47, 111, 222], 2: [226, 69, 59] },
   shorts: { 1: '#1d3a7d', 2: '#7b1f1a' },
   shoe: '#f4f4f0',
   ball: '#fbfbf6',
@@ -387,15 +389,16 @@ export class Renderer {
   }
 
   /**
-   * A red bar and glow on the striking hand show the windup. A faint line
-   * shows when the nearby ball is in attraction range.
+   * A red bar, and a glow where the feet will sweep through, show the
+   * windup. A faint line shows when the nearby ball is in attraction range.
    */
   private drawChargeMeters(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: Interpolator, alpha: number): void {
     for (const p of [gw.p1, gw.p2]) {
       const info = gw.control.chargeLevel(p.id);
       if (!info) continue;
       const pose = interp.pose(p.head, alpha);
-      const finger = interp.pose(p.swingFinger(info.hand), alpha);
+      const sign = p.id === 1 ? 1 : -1;
+      const finger = { x: pose.x + sign * FLIP.kickAheadPx * p.sizeScale, y: pose.y };
       if (!gw.ball.held && info.power < 1) {
         const ball = interp.pose(gw.ball.body, alpha);
         const distance = Math.hypot(ball.x - finger.x, ball.y - finger.y);
@@ -430,40 +433,50 @@ export class Renderer {
     }
   }
 
-  /** A hand slash and a forward wave show the extended punch reach. */
+  /** A streak follows the feet round the flip; a forward wave shows the kick's reach. */
   private drawSwingEffects(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: Interpolator, alpha: number): void {
     const now = gw.frame - 1 + alpha;
     for (const p of [gw.p1, gw.p2]) {
       const effect = gw.swingEffects[p.id];
       const age = now - effect.frame;
-      if (age < 0 || age >= SWING.opponentHitFrames) continue;
-      const finger = interp.pose(p.swingFinger(effect.hand), alpha);
-      const fade = (1 - age / SWING.opponentHitFrames) ** 2;
-      const radius = 16 + effect.power * 12 + age * 2;
-      const start = p.id === 1 ? -Math.PI * 0.7 : Math.PI * 0.3;
-      const end = start + Math.PI * 0.9;
+      if (age < 0 || age >= FLIP.maxFrames) continue;
+      // Fade out once the doll has come round, or as the flip runs long.
+      const fade = p.flipping ? 1 - 0.5 * age / FLIP.maxFrames : 0;
+      if (fade <= 0) continue;
+      const hips = interp.pose(p.ass, alpha);
+      const head = interp.pose(p.head, alpha);
+      const cx = (hips.x + head.x) / 2;
+      const cy = (hips.y + head.y) / 2;
+      const feet = [interp.pose(p.part('FootLeft'), alpha), interp.pose(p.part('FootRight'), alpha)];
+      const fx = (feet[0].x + feet[1].x) / 2;
+      const fy = (feet[0].y + feet[1].y) / 2;
+      const radius = Math.hypot(fx - cx, fy - cy);
+      const at = Math.atan2(fy - cy, fx - cx);
+      // The streak trails behind the feet, against the spin.
+      const back = p.id === 1 ? 1 : -1;
+      const tail = Math.min(Math.PI * 1.1, p.flipProgress * Math.PI * 2);
       ctx.save();
       ctx.lineCap = 'round';
-      ctx.strokeStyle = `rgba(255,246,210,${0.72 * fade})`;
-      ctx.lineWidth = 2.5 + 2 * effect.power;
-      ctx.beginPath();
-      ctx.arc(finger.x, finger.y, radius, start, end);
-      ctx.stroke();
-      ctx.strokeStyle = `rgba(255,190,95,${0.42 * fade})`;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.arc(finger.x, finger.y, radius + 8, start + 0.2, end - 0.2);
-      ctx.stroke();
-      const head = interp.pose(p.head, alpha);
+      for (let i = 0; i < 3; i++) {
+        const span = tail * (1 - i * 0.3);
+        ctx.strokeStyle = `rgba(255,246,210,${(0.55 - i * 0.15) * fade})`;
+        ctx.lineWidth = (3 + 3 * effect.power) * (1 - i * 0.25);
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius + i * 6, at, at + back * span, back < 0);
+        ctx.stroke();
+      }
       const sign = p.id === 1 ? 1 : -1;
-      const travel = SWING.opponentReachPx * Math.min(1, (age + 1) / (SWING.counterWindowFrames + 1));
-      const waveX = head.x + sign * travel;
-      ctx.strokeStyle = `rgba(255,235,155,${0.7 * fade})`;
-      ctx.lineWidth = 2 + 2 * effect.power;
-      ctx.beginPath();
-      ctx.moveTo(waveX - sign * 14, head.y - 30);
-      ctx.quadraticCurveTo(waveX + sign * 12, head.y, waveX - sign * 14, head.y + 30);
-      ctx.stroke();
+      const reach = p.flipProgress * Math.PI * 2 >= FLIP.opponentFromRad;
+      if (reach) {
+        const travel = SWING.opponentReachPx * Math.min(1, p.flipProgress * 2);
+        const waveX = head.x + sign * travel;
+        ctx.strokeStyle = `rgba(255,235,155,${0.6 * fade})`;
+        ctx.lineWidth = 2 + 2 * effect.power;
+        ctx.beginPath();
+        ctx.moveTo(waveX - sign * 14, head.y - 30);
+        ctx.quadraticCurveTo(waveX + sign * 12, head.y, waveX - sign * 14, head.y + 30);
+        ctx.stroke();
+      }
       ctx.restore();
     }
   }
@@ -543,7 +556,7 @@ export class Renderer {
         ctx.fillStyle = `rgba(120,55,0,${fade})`;
         ctx.font = 'bold 16px system-ui, sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText('PERFECT!', ball.x, ball.y - 30 - perfectAge);
+        ctx.fillText('KICK!', ball.x, ball.y - 30 - perfectAge);
         ctx.restore();
       }
     }
@@ -731,6 +744,8 @@ export class Renderer {
     const v = gw.ball.velocity;
     const speed = Math.hypot(v.x, v.y);
     const r = gw.ball.radiusPx;
+    const now = gw.frame - 1 + alpha;
+    const tint = this.currentBallTint(gw, now);
 
     // Trail sprite, scaled by speed/25 and rotated to the velocity (§9).
     if (speed > 3) {
@@ -763,13 +778,26 @@ export class Renderer {
       const ux = speed > 0 ? v.x / speed : 0;
       const uy = speed > 0 ? v.y / speed : 0;
       ctx.globalAlpha = 0.12 / i;
-      this.ballArt(ctx, { x: pose.x - ux * back, y: pose.y - uy * back, a: pose.a });
+      this.ballArt(ctx, { x: pose.x - ux * back, y: pose.y - uy * back, a: pose.a }, tint);
     }
     ctx.globalAlpha = 1;
-    this.ballArt(ctx, pose);
+    this.ballArt(ctx, pose, tint);
   }
 
-  private ballArt(ctx: CanvasRenderingContext2D, pose: Pose): void {
+  /** The jersey colour of whoever touched the ball last, blending in as it changes. */
+  private currentBallTint(gw: GameWorld, now: number): { rgb: string; alpha: number } | null {
+    const t = gw.ballTint;
+    if (!t.player) return null;
+    const k = clamp01((now - t.frame) / BALL_TINT.fadeInFrames);
+    const from = PAL.ballTintRgb[t.previous];
+    const to = PAL.ballTintRgb[t.player];
+    const rgb = to.map((c, i) => Math.round(from[i] + (c - from[i]) * k)).join(',');
+    // From the white ball the colour washes in; between players it shifts hue.
+    const alpha = BALL_TINT.alpha * (t.previous ? 1 : k);
+    return { rgb, alpha };
+  }
+
+  private ballArt(ctx: CanvasRenderingContext2D, pose: Pose, tint?: { rgb: string; alpha: number } | null): void {
     const r = BALL.radiusPx;
     ctx.save();
     ctx.translate(pose.x, pose.y);
@@ -794,6 +822,16 @@ export class Renderer {
     ctx.beginPath();
     ctx.arc(0, r * 1.3, r * 1.2, -Math.PI * 0.8, -Math.PI * 0.2);
     ctx.stroke();
+     // The jersey colour of whoever touched it last.
+     if (tint && tint.alpha > 0) {
+       const wash = ctx.createRadialGradient(0, -r * 0.15, r * 0.2, 0, 0, r);
+       wash.addColorStop(0, `rgba(${tint.rgb},${tint.alpha})`);
+       wash.addColorStop(1, `rgba(${tint.rgb},${tint.alpha * 0.4})`);
+       ctx.fillStyle = wash;
+       ctx.beginPath();
+       ctx.arc(0, 0, r, 0, Math.PI * 2);
+       ctx.fill();
+      }
     ctx.restore();
     ctx.strokeStyle = 'rgba(0,0,0,0.35)';
     ctx.lineWidth = 1;
@@ -1446,7 +1484,8 @@ export class Renderer {
     if (sy > -gw.ball.radiusPx * VIEW.scale) return;
     const sx = pose.x * VIEW.scale + VIEW.offsetX;
     const heightM = (-sy / VIEW.scale / 30).toFixed(1);
-    ctx.fillStyle = 'rgba(20,30,40,0.55)';
+    const tint = this.currentBallTint(gw, gw.frame - 1 + alpha);
+    ctx.fillStyle = tint ? `rgba(${tint.rgb},${Math.min(0.9, 0.55 + tint.alpha)})` : 'rgba(20,30,40,0.55)';
     ctx.beginPath();
     ctx.moveTo(sx, 3);
     ctx.lineTo(sx - 6, 13);
@@ -1553,7 +1592,7 @@ export class Renderer {
       if (cooldown > 0) {
         ctx.fillStyle = 'rgba(15,25,35,0.7)';
         const y = 72 + (live.length > 0 ? 12 : 0) + (power ? 12 : 0);
-        ctx.fillText(`SWING · ${Math.ceil(cooldown / FPS)}s`, x, y);
+        ctx.fillText(`FLIP · ${Math.ceil(cooldown / FPS)}s`, x, y);
       }
     }
   }

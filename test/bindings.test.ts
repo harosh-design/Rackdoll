@@ -12,7 +12,8 @@ describe('player keyboard settings', () => {
     expect(parseBindings(bindings)).toBeNull();
     bindings[2].jump = 'KeyP';
     expect(parseBindings(bindings)).toBeNull();
-    expect(bindingOwner(defaultBindings(), 'ShiftRight')).toEqual({ player: 1, action: 'otherHit' });
+    expect(bindingOwner(defaultBindings(), 'Space')).toEqual({ player: 1, action: 'serve' });
+    expect(bindingOwner(defaultBindings(), 'ShiftRight')).toBeNull();
   });
 
   it('uses each player’s reassigned movement, jump and hit keys', () => {
@@ -20,7 +21,7 @@ describe('player keyboard settings', () => {
     bindings[1].jump = 'KeyF';
     bindings[1].serve = 'KeyG';
     bindings[2].left = 'KeyJ';
-    bindings[2].otherHit = 'KeyH';
+    bindings[2].serve = 'KeyH';
     const gw = new GameWorld({ singlePlayer: false, hazards: false, bindings: toKeyBindings(bindings) });
 
     gw.control.press(38); // old jump key
@@ -33,7 +34,7 @@ describe('player keyboard settings', () => {
 
     gw.control.press('KeyH');
     gw.step();
-    expect(gw.control.chargeLevel(2)?.hand).toBe('inside');
+    expect(gw.control.chargeLevel(2)?.power).toBeGreaterThan(0);
     gw.control.release('KeyH');
     gw.step();
 
