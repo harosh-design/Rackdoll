@@ -335,7 +335,7 @@ describe('fixed serve and charged flip', () => {
     expect(swing).not.toHaveBeenCalled();
   });
 
-  it('charges only a rally flip, then turns the doll a full backflip and re-locks the rail', () => {
+  it('charges only a rally flip, then front-flips the doll toward the net and re-locks the rail', () => {
     for (const id of [1, 2] as const) {
       const gw = hazardWorld({ hazards: false });
       const p = id === 1 ? gw.p1 : gw.p2;
@@ -347,8 +347,9 @@ describe('fixed serve and charged flip', () => {
       gw.step();
       expect(p.flipping).toBe(true);
       expect(gw.swingEffects[id].power).toBe(1);
-      // A backflip: player 1 (facing +x) turns anticlockwise, player 2 clockwise.
-      const dir = id === 1 ? -1 : 1;
+      // A front flip toward the net: player 1 (facing +x) turns clockwise, player 2 anticlockwise.
+      const dir = id === 1 ? 1 : -1;
+      const startX = p.head.getWorldCenter().x;
       const start = p.tors.getAngle();
       let turned = 0;
       let frames = 0;
@@ -360,11 +361,14 @@ describe('fixed serve and charged flip', () => {
       expect(p.flipping).toBe(false);
       expect(frames).toBeLessThan(FLIP.maxFrames);
       expect(turned).toBeGreaterThan(Math.PI * 1.6);
+      expect(px((p.head.getWorldCenter().x - startX) * dir)).toBeGreaterThan(40);
       // The rail is back: the head is upright and rides its line again.
-      run(gw, 10);
+      // (Measured at landing: the lunge carries the doll on into its rail's
+      // stop by the net, which gives a few px, as walking into it does.)
       expect(Math.abs(p.head.getAngle())).toBeLessThan(0.03);
       expect(px(Math.abs(p.head.getWorldCenter().x - p.prismBody.getWorldCenter().x))).toBeLessThan(1);
-      expect(jointErrPx(p)).toBeLessThan(6);
+      run(gw, 10);
+      expect(jointErrPx(p)).toBeLessThan(8);
     }
   });
 
@@ -591,6 +595,8 @@ describe('perfect contact, net counter, and desperate save', () => {
 
     // No flip, no kick.
     const late = hazardWorld({ hazards: false });
+    late.ball.body.setTransform(Vec2(toM(600), toM(60)), 0);
+    late.ball.body.setLinearVelocity(Vec2(0, 0));
     late.swing(late.p1, 1);
     run(late, FLIP.maxFrames + 1);
     late.flags.ballPlayerHits!.push({ playerId: 1, part: 'FootLeft' });
@@ -770,11 +776,11 @@ describe('champion opponent', () => {
     expect(Math.abs(px(gw.p2.head.getWorldCenter().x - headX))).toBeLessThan(100);
   });
 
-  it('flips early at a falling ball so the legs meet it in front of the head', () => {
+  it('flips early at a falling ball so the feet come down on it in front of the head', () => {
     const gw = freeBall(6, 500, 100, 0, 0);
     const head = gw.p2.head.getWorldCenter();
-    // 45 px toward the net, falling into the kick zone over the next few frames.
-    gw.ball.body.setTransform(Vec2(head.x - toM(45), head.y - toM(64)), 0);
+    // 80 px toward the net and high, falling into the kick zone as the feet come over.
+    gw.ball.body.setTransform(Vec2(head.x - toM(80), head.y - toM(129)), 0);
     gw.ball.body.setLinearVelocity(Vec2(0, 3));
     gw.step();
     expect(gw.swingEffects[2].frame).toBe(gw.frame - 1);

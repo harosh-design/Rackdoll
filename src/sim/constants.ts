@@ -231,7 +231,7 @@ export const SERVE = {
   /** Fixed underhand flick for every serve. */
   handImpulseX: 1,
   handImpulseY: -1.5,
-  /** The ball's own impulse is tiny: dv = (sign * 7, -5) m/s on a 0.1 kg ball. */
+  /** The ball's own impulse is tiny: dv = (sign * 7, -5) m/s on the original 0.1 kg ball. */
   ballImpulseX: 0.7,
   ballImpulseY: -0.5,
 } as const;
@@ -260,8 +260,9 @@ export const powerScale = (power: number): number =>
   CHARGE.minPower + (1 - CHARGE.minPower) * clamp01(power);
 
 /**
- * The rally attack is a backflip: the doll hops and spins one full turn, its
- * feet sweeping forward and up through the space in front of it. Whatever the
+ * The rally attack is a front flip toward the opponent: the doll lunges at
+ * the net and spins one full turn, its feet coming over the top and down in
+ * front of it. Whatever the
  * legs meet on the way round — the ball, the opponent, an executer — is hit.
  * A fully charged flip hits hard; a tap is a light kick.
  */
@@ -313,10 +314,13 @@ export const FLIP = {
   maxMotorTorque: 300,
   /** Upward hop, m/s, given to the whole doll at take-off. */
   lift: 8,
+  /** Lunge toward the net, m/s, given to the whole doll at take-off. */
+  forwardSpeed: 4,
   /** Give up and lock the rail after this many frames, wherever it is. */
   maxFrames: 30,
-  /** The feet pass this far in front of the head at the top of the turn. */
-  kickAheadPx: 45,
+  /** Where the feet come over and down: this far ahead of and above the head. */
+  kickAheadPx: 70,
+  kickAbovePx: 55,
   /** Legs and feet are the striking parts. */
   strikingParts: ['FootLeft', 'FootRight', 'LegLeft', 'LegRight'] as const,
   /**
@@ -326,8 +330,8 @@ export const FLIP = {
    */
   kickSpeedX: 12,
   kickSpeedY: -9,
-  /** The opponent counts as hit once the legs have swung this far round (rad). */
-  opponentFromRad: Math.PI * 0.55,
+  /** The opponent counts as hit once the legs have come over the top (rad). */
+  opponentFromRad: Math.PI * 1.1,
 } as const;
 
 /**
@@ -350,9 +354,12 @@ export const BALL = {
   /** The contact listener identifies the ball by this friction value (§10). */
   friction: 0.05,
   restitution: 1,
-  /** Explicit, applied after CreateShape, overrides the density (§16.3). */
-  mass: 0.1,
-  inertia: 0.01,
+  /**
+   * Explicit, applied after CreateShape, overrides the density (§16.3).
+   * Not the original's 0.1 kg / 0.01: 15% heavier, inertia scaled to match.
+   */
+  mass: 0.115,
+  inertia: 0.0115,
   /** Four independent clamps in ball.update(), run LAST every frame (§9). */
   maxVx: 15,
   maxVy: 20,
@@ -890,11 +897,12 @@ export const BOT = {
   /** A ball it cannot get its head under in time, it lunges at with a light flip. */
   lunge: { latePx: 24, power: 0.35 },
   /**
-   * The flip's kick zone: the legs sweep through this box in front of the
-   * head 6–14 frames after take-off, so the CPU flips when the ball will be
-   * in it `leadFrames` from now. Full-size px; negative "below" is above.
+   * The flip's kick zone: the feet come over and down through this box in
+   * front of and above the head 9–17 frames after take-off, so the CPU flips
+   * when the ball will be in it `leadFrames` from now. Full-size px;
+   * negative "below" is above.
    */
-  flipZone: { leadFrames: 9, aheadPx: [20, 70], belowPx: [-60, 20] },
+  flipZone: { leadFrames: 13, aheadPx: [40, 120], belowPx: [-85, -25] },
 
   /** Steering: turnComp moves the head ~1.4 px per frame per unit impulse. */
   pxPerImpulse: 1.4,

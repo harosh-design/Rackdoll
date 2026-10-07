@@ -398,7 +398,7 @@ export class Renderer {
       if (!info) continue;
       const pose = interp.pose(p.head, alpha);
       const sign = p.id === 1 ? 1 : -1;
-      const finger = { x: pose.x + sign * FLIP.kickAheadPx * p.sizeScale, y: pose.y };
+      const finger = { x: pose.x + sign * FLIP.kickAheadPx * p.sizeScale, y: pose.y - FLIP.kickAbovePx * p.sizeScale };
       if (!gw.ball.held && info.power < 1) {
         const ball = interp.pose(gw.ball.body, alpha);
         const distance = Math.hypot(ball.x - finger.x, ball.y - finger.y);
@@ -453,7 +453,7 @@ export class Renderer {
       const radius = Math.hypot(fx - cx, fy - cy);
       const at = Math.atan2(fy - cy, fx - cx);
       // The streak trails behind the feet, against the spin.
-      const back = p.id === 1 ? 1 : -1;
+      const back = p.id === 1 ? -1 : 1;
       const tail = Math.min(Math.PI * 1.1, p.flipProgress * Math.PI * 2);
       ctx.save();
       ctx.lineCap = 'round';

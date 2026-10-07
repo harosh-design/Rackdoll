@@ -552,13 +552,13 @@ export class Player {
   }
 
   /**
-   * Where the feet will sweep through: in front of the doll, level with the
-   * head. A charging flip draws a nearby ball toward it.
+   * Where the feet will come down: in front of and above the head. A
+   * charging flip draws a nearby ball toward it.
    */
   get kickPoint(): Vec2 {
     const h = this.head.getWorldCenter();
     const sign = this.id === 1 ? 1 : -1;
-    return Vec2(h.x + sign * toM(FLIP.kickAheadPx * this.sizeScale), h.y);
+    return Vec2(h.x + sign * toM(FLIP.kickAheadPx * this.sizeScale), h.y - toM(FLIP.kickAbovePx * this.sizeScale));
   }
 
   /** The legs: what a flip strikes with. */
@@ -567,8 +567,8 @@ export class Player {
   }
 
   /**
-   * The rally attack: a backflip. The doll hops and turns once, feet swinging
-   * forward and up in front of it. The head's rail forbids rotation, so it is
+   * The rally attack: a front flip toward the opponent. The doll lunges at
+   * the net and turns once, feet coming over the top and down in front. The head's rail forbids rotation, so it is
    * swapped for a wheel joint on the same line — the head still slides along
    * it and still drags the horizontal rail, but may now turn — whose motor
    * keeps the spin going. The whole doll is set spinning about its centre of
@@ -577,8 +577,9 @@ export class Player {
    */
   flip(): boolean {
     if (this.flipState) return false;
-    // A backflip: player 1 faces +x, so its feet come round anticlockwise.
-    const dir: 1 | -1 = this.id === 1 ? -1 : 1;
+    // A front flip toward the opponent: player 1 faces +x, so it turns clockwise.
+    const forward = this.id === 1 ? 1 : -1;
+    const dir: 1 | -1 = forward;
     const head = this.head;
     this.world.destroyJoint(this.railV);
     const joint = this.world.createJoint(new WheelJoint({
@@ -609,6 +610,8 @@ export class Player {
     const w = dir * FLIP.spin;
     const lift = FLIP.lift * Math.sqrt(this.sizeScale) * this.jumpBoost;
     const up = Math.min(vy, 0) - lift;
+    const ahead = forward * FLIP.forwardSpeed * Math.sqrt(this.sizeScale);
+    vx = forward * Math.max(vx * forward, 0) + ahead;
     for (const b of this.bodies) {
       const p = b.getWorldCenter();
       b.setLinearVelocity(Vec2(vx - w * (p.y - cy), up + w * (p.x - cx)));

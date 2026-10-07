@@ -74,8 +74,8 @@ assigned again.
 **Serve in the air.** The held ball hangs at your feet. Tap Space (or R for
 player 2) to serve with a fixed underhand flick. Jump first to clear the net.
 Once the ball is free, the same key is the one attack: hold it to tuck and
-release to backflip. The doll hops and turns one full circle, feet sweeping
-forward and up in front of it. The head normally rides a rail that forbids it
+release to front-flip toward the opponent. The doll lunges at the net and
+turns one full circle, feet coming over the top and down in front of it. The head normally rides a rail that forbids it
 to rotate; for the flip that rail becomes a wheel joint on the same line,
 whose motor keeps the spin going until the doll is back upright, when the
 rail locks again. The tuck briefly slows the physics and gently draws a

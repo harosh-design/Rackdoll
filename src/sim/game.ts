@@ -106,7 +106,7 @@ export class Game {
         if (!who.bContact) {
           who.contact += 1;
           other.contact = 0;
-          // Every fresh player touch pops the ball up 10 m/s on a 0.1 kg ball.
+          // Every fresh player touch pops the ball up 10 m/s on the original 0.1 kg ball.
           // Rallies are impossible without it (§1.7).
           if (this.ball.body.getJointList() == null) {
             this.ball.body.applyLinearImpulse(
