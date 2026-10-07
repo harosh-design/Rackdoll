@@ -999,25 +999,4 @@ export const VIEW = {
   stageH: 400,
 } as const;
 
-/**
- * §13 Artwork bounds. The colliders are deliberately smaller than the art; a
- * doll drawn at collider size reads as long-armed and short-legged. Pixels.
- */
-export const ART: Record<string, { w: number; h: number }> = {
-  Head:        { w: 21.1, h: 21.6 },
-  Tors:        { w: 23.4, h: 42.3 },
-  Ass:         { w: 26.5, h: 17.5 },
-  ArmLeft:     { w: 27.9, h: 9.9 },
-  ArmRight:    { w: 27.9, h: 9.9 },
-  HandLeft:    { w: 24.3, h: 8.1 },
-  HandRight:   { w: 24.3, h: 8.1 },
-  FingerLeft:  { w: 16.4, h: 14.4 },
-  FingerRight: { w: 16.4, h: 14.4 },
-  LegLeft:     { w: 13, h: 35 },
-  LegRight:    { w: 13, h: 35 },
-  FootLeft:    { w: 8.9, h: 33.7 },
-  FootRight:   { w: 8.9, h: 33.7 },
-  Ball:        { w: 31.4, h: 28.8 },
-};
-
 export const DEG = Math.PI / 180;

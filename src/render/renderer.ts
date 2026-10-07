@@ -1,5 +1,5 @@
 import {
-  ART, BALL, BALL_TINT, BOXER, CHARGE, COURT, FLIP, EXECUTER, FLOOR_TOP_PX, FPS, MAX_TOUCHES, OPTIONS, PARTS, PRIZE_ANIM,
+  BALL, BALL_TINT, BOXER, CHARGE, COURT, FLIP, EXECUTER, FLOOR_TOP_PX, FPS, JOINTS, MAX_TOUCHES, OPTIONS, PARTS, PRIZE_ANIM,
   PRIZE_BUTTONS, RIGHT_WALL_INNER_PX, SLIME, SPRING, STUN, SWING, VIEW, toPx, type PartName,
 } from '../sim/constants';
 import type { Body, Vec2Value } from 'planck';
@@ -10,12 +10,15 @@ import type { Player } from '../sim/player';
 import type { PrizeButton } from '../sim/prizeButton';
 import { POWER_LABELS } from '../sim/powerUps';
 import { drawBeePops, drawBees } from './bees';
+import { ANKLE_Y, DRAW_ORDER, HEAD, HEM_Y, NECKLINE_Y, outlinePath, SLEEVE_PX, SOLE_Y } from './dollArt';
+import { closedPoses, type PoseSource } from './dollPose';
 import type { Interpolator, Pose } from './interp';
 
 /**
  * Canvas renderer. Draws in the original's coordinate systems: a 640x400
  * stage, and inside it the world sprite scaled 0.56 at (124, 180) (§15).
- * Parts are drawn at their ARTWORK size, not their collider size (§15).
+ * Parts are drawn with the original sprites' outlines and placement
+ * (dollArt.ts), not at their collider size (§15).
  */
 
 const PAL = {
@@ -63,15 +66,24 @@ const SHADOW = {
   angle: { 1: (70 * Math.PI) / 180, 2: (110 * Math.PI) / 180 },
 } as const;
 
-/** Parts are drawn back to front in this order. */
-const DRAW_ORDER: PartName[] = [
-  'FootLeft', 'FootRight', 'LegLeft', 'LegRight', 'Ass', 'Tors',
-  'ArmLeft', 'ArmRight', 'HandLeft', 'HandRight', 'FingerLeft', 'FingerRight', 'Head',
-];
+const partDef = (name: PartName) => PARTS.find((p) => p.name === name)!;
+const footHalfHeight = ((s) => (s.kind === 'box' ? s.hh : s.r))(partDef('FootLeft').shape);
 
-const COLLIDER_HALF = new Map(
-  PARTS.map((p) => [p.name, p.shape.kind === 'box' ? { hw: p.shape.hw, hh: p.shape.hh } : { hw: p.shape.r, hh: p.shape.r }]),
-);
+/** Each upper arm's shoulder pivot, along the arm in its own frame. */
+const SHOULDER_X = Object.fromEntries((['ArmLeft', 'ArmRight'] as const).map((arm) => {
+  const j = JOINTS.find((j) => j.a === arm && j.b === 'Tors')!;
+  return [arm, j.dx - partDef(arm).dx];
+})) as Record<'ArmLeft' | 'ArmRight', number>;
+
+/** Where a standing doll's drawn soles are: the feet hang below the shin colliders. */
+const SOLES_PX = FLOOR_TOP_PX + SOLE_Y - footHalfHeight;
+
+/**
+ * The top of the sand. Like the original's floor, a plane seen from slightly
+ * above that starts 6 px above the physics floor, so a ball resting on the
+ * floor and a doll's feet, drawn further down, both stand on it.
+ */
+const SAND_TOP_PX = FLOOR_TOP_PX - 6;
 
 export interface HudState {
   singlePlayer: boolean;
@@ -161,20 +173,20 @@ export class Renderer {
     this.worldSpace(ctx);
     const seaTop = FLOOR_TOP_PX - 95;
     ctx.fillStyle = PAL.sea;
-    ctx.fillRect(-400, seaTop, 1500, FLOOR_TOP_PX - seaTop);
+    ctx.fillRect(-400, seaTop, 1500, SAND_TOP_PX - seaTop);
     ctx.fillStyle = PAL.seaFoam;
     ctx.fillRect(-400, seaTop, 1500, 3);
-    ctx.fillRect(-400, FLOOR_TOP_PX - 10, 1500, 2);
+    ctx.fillRect(-400, SAND_TOP_PX - 4, 1500, 2);
 
     // Sand playing surface.
     const g = COURT.ground;
-    const sand = ctx.createLinearGradient(0, FLOOR_TOP_PX, 0, g.y + g.hh);
+    const sand = ctx.createLinearGradient(0, SAND_TOP_PX, 0, g.y + g.hh);
     sand.addColorStop(0, PAL.sand);
     sand.addColorStop(1, PAL.sandDark);
     ctx.fillStyle = sand;
-    ctx.fillRect(g.x - g.hw, g.y - g.hh, g.hw * 2, g.hh * 2);
+    ctx.fillRect(g.x - g.hw, SAND_TOP_PX, g.hw * 2, g.y + g.hh - SAND_TOP_PX);
     ctx.fillStyle = PAL.sandLine;
-    ctx.fillRect(g.x - g.hw, FLOOR_TOP_PX, g.hw * 2, 1.5);
+    ctx.fillRect(g.x - g.hw, SAND_TOP_PX, g.hw * 2, 1.5);
 
     // Walls.
     for (const w of [COURT.leftWall, COURT.rightWall]) {
@@ -200,7 +212,8 @@ export class Renderer {
     }
 
     // Net: the collider is 2 px wide, 150 tall. Drawn a touch wider to read,
-    // with a mesh panel hanging off the top half.
+    // with a mesh panel hanging off the top half. The pole is planted where
+    // the dolls' feet stand, as the original's net art is.
     const n = COURT.net;
     const top = n.y - n.hh;
     const bottom = n.y + n.hh;
@@ -220,7 +233,7 @@ export class Renderer {
     }
     ctx.stroke();
     ctx.fillStyle = PAL.netPole;
-    ctx.fillRect(n.x - 2, top, 4, bottom - top);
+    ctx.fillRect(n.x - 2, top, 4, SOLES_PX - top);
     ctx.fillStyle = PAL.netTape;
     ctx.fillRect(n.x - meshW - 1, top, meshW * 2 + 2, 4);
   }
@@ -229,10 +242,12 @@ export class Renderer {
   // Frame
   // -------------------------------------------------------------------------
 
-  draw(gw: GameWorld, interp: Interpolator, alpha: number, hud: HudState): void {
+  draw(gw: GameWorld, frames: Interpolator, alpha: number, hud: HudState): void {
     const ctx = this.ctx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.drawImage(this.bg, 0, 0);
+    // Every doll joint drawn closed, and a held ball on its hand (dollPose.ts).
+    const interp = closedPoses(frames, alpha, [gw.p1, gw.p2], gw.ball.body);
 
     this.drawShadows(gw, interp, alpha);
 
@@ -242,7 +257,7 @@ export class Renderer {
     const now = gw.frame - 1 + alpha;
     this.drawPrizeButtons(ctx, gw, now);
     this.drawFootMotion(ctx, gw, interp, now);
-    for (const p of [gw.p1, gw.p2]) this.drawDoll(ctx, p, interp, alpha, now);
+    for (const p of [gw.p1, gw.p2]) this.drawDoll(ctx, p, interp, alpha);
     this.drawPowerGlows(ctx, gw, interp, alpha);
     drawBees(ctx, gw, now, alpha);
     this.drawBall(ctx, gw, interp, alpha);
@@ -264,7 +279,7 @@ export class Renderer {
    * One silhouette pass for both dolls, composited once at alpha 0.2, so
    * overlapping parts do not stack into darker patches.
    */
-  private drawShadows(gw: GameWorld, interp: Interpolator, alpha: number): void {
+  private drawShadows(gw: GameWorld, interp: PoseSource, alpha: number): void {
     const sctx = this.shadow.getContext('2d')!;
     sctx.setTransform(1, 0, 0, 1, 0, 0);
     sctx.clearRect(0, 0, this.shadow.width, this.shadow.height);
@@ -276,7 +291,7 @@ export class Renderer {
       this.worldSpace(sctx);
       sctx.translate(dx, dy);
       for (const name of DRAW_ORDER) {
-        this.withPose(sctx, interp.pose(p.part(name), alpha), () => this.partShape(sctx, name, true), p.sizeScale);
+        this.withPose(sctx, interp.pose(p.part(name), alpha), () => this.partShape(sctx, name), p.sizeScale);
       }
     }
     const ctx = this.ctx;
@@ -295,23 +310,15 @@ export class Renderer {
     ctx.restore();
   }
 
-  private drawDoll(ctx: CanvasRenderingContext2D, p: Player, interp: Interpolator, alpha: number, now: number): void {
-    const velocity = p.ass.getLinearVelocity();
-    const calm = p.grounded ? Math.max(0, 1 - Math.hypot(velocity.x, velocity.y) / 1.8) : 0;
-    const breath = Math.sin(now * 0.12 + p.id) * 0.035 * calm;
+  /** Each part's art sits on its body exactly as the original's sprite does. */
+  private drawDoll(ctx: CanvasRenderingContext2D, p: Player, interp: PoseSource, alpha: number): void {
     for (const name of DRAW_ORDER) {
-      const pose = interp.pose(p.part(name), alpha);
-      const artPose = name === 'Head'
-        ? { ...pose, y: pose.y - breath * 22 }
-        : name.startsWith('Arm') || name.startsWith('Hand') || name.startsWith('Finger')
-          ? { ...pose, a: pose.a + (name.endsWith('Left') ? -breath : breath) }
-          : pose;
-      this.withPose(ctx, artPose, () => this.partArt(ctx, name, p.id), p.sizeScale);
+      this.withPose(ctx, interp.pose(p.part(name), alpha), () => this.partArt(ctx, name, p.id), p.sizeScale);
     }
   }
 
   /** Small sand puffs make steps, take-offs, and landings readable. */
-  private drawFootMotion(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: Interpolator, now: number): void {
+  private drawFootMotion(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: PoseSource, now: number): void {
     let state = this.motion.get(gw);
     if (!state) {
       state = { frame: -1, grounded: { 1: gw.p1.grounded, 2: gw.p2.grounded }, lastStep: { 1: -20, 2: -20 }, dust: [] };
@@ -348,7 +355,7 @@ export class Renderer {
         ctx.beginPath();
         ctx.ellipse(
           puff.x + side * (5 + age * 0.55) * puff.size + age * puff.drift,
-          FLOOR_TOP_PX - 2 - age * (0.25 + 0.12 * Math.abs(side)),
+          SOLES_PX - 2 - age * (0.25 + 0.12 * Math.abs(side)),
           (4 + age * 0.23) * puff.size,
           (2.5 + age * 0.12) * puff.size,
           0, 0, Math.PI * 2,
@@ -360,7 +367,7 @@ export class Renderer {
   }
 
   /** A ring on a powered head, and the ability's name rising for 1.5 s on pickup. */
-  private drawPowerGlows(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: Interpolator, alpha: number): void {
+  private drawPowerGlows(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: PoseSource, alpha: number): void {
     const now = gw.frame - 1 + alpha;
     for (const p of [gw.p1, gw.p2]) {
       const power = gw.powerUps.active[p.id];
@@ -392,7 +399,7 @@ export class Renderer {
    * A red bar, and a glow where the feet will sweep through, show the
    * windup. A faint line shows when the nearby ball is in attraction range.
    */
-  private drawChargeMeters(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: Interpolator, alpha: number): void {
+  private drawChargeMeters(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: PoseSource, alpha: number): void {
     for (const p of [gw.p1, gw.p2]) {
       const info = gw.control.chargeLevel(p.id);
       if (!info) continue;
@@ -434,7 +441,7 @@ export class Renderer {
   }
 
   /** A streak follows the feet round the flip; a forward wave shows the kick's reach. */
-  private drawSwingEffects(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: Interpolator, alpha: number): void {
+  private drawSwingEffects(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: PoseSource, alpha: number): void {
     const now = gw.frame - 1 + alpha;
     for (const p of [gw.p1, gw.p2]) {
       const effect = gw.swingEffects[p.id];
@@ -482,7 +489,7 @@ export class Renderer {
   }
 
   /** Orbiting stars and a draining bar remain visible for the whole stun. */
-  private drawStunEffects(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: Interpolator, alpha: number): void {
+  private drawStunEffects(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: PoseSource, alpha: number): void {
     const now = gw.frame - 1 + alpha;
     for (const p of [gw.p1, gw.p2]) {
       if (p.stunFrames <= 0) continue;
@@ -520,7 +527,7 @@ export class Renderer {
   }
 
   /** A brief impact ring makes the opponent knockback clear. */
-  private drawOpponentHitEffects(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: Interpolator, alpha: number): void {
+  private drawOpponentHitEffects(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: PoseSource, alpha: number): void {
     const now = gw.frame - 1 + alpha;
     for (const p of [gw.p1, gw.p2]) {
       const effect = gw.opponentHitEffects[p.id];
@@ -539,7 +546,7 @@ export class Renderer {
   }
 
   /** Callouts for timing-based moves. */
-  private drawSpecialEffects(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: Interpolator, alpha: number): void {
+  private drawSpecialEffects(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: PoseSource, alpha: number): void {
     const now = gw.frame - 1 + alpha;
     const ball = interp.pose(gw.ball.body, alpha);
     for (const p of [gw.p1, gw.p2]) {
@@ -578,168 +585,113 @@ export class Renderer {
     }
   }
 
-  /** Where a part's art sits relative to its body origin (§15 leg rule). */
-  private artRect(name: PartName): { x: number; y: number; w: number; h: number } {
-    const art = ART[name];
-    const col = COLLIDER_HALF.get(name)!;
-    let cy = 0;
-    // "Draw each leg segment at sprite length with its LOWER end pinned to the
-    // bottom of its collider, so the sole stays on the sand and the thigh runs
-    // up under the hips."
-    if (name.startsWith('Leg') || name.startsWith('Foot')) cy = col.hh - art.h / 2;
-    return { x: -art.w / 2, y: cy - art.h / 2, w: art.w, h: art.h };
-  }
-
   /** Silhouette only — used for the shadow pass. */
-  private partShape(ctx: CanvasRenderingContext2D, name: PartName, fill: boolean): void {
-    if (name === 'Head') {
-      ctx.beginPath();
-      ctx.ellipse(0, 0, ART.Head.w / 2, ART.Head.h / 2, 0, 0, Math.PI * 2);
-      if (fill) ctx.fill();
-      return;
-    }
-    if (name.startsWith('Finger')) {
-      this.handPath(ctx, name === 'FingerRight' ? 1 : -1);
-      if (fill) ctx.fill();
-      return;
-    }
-    const r = this.artRect(name);
-    roundRect(ctx, r.x, r.y, r.w, r.h, Math.min(r.w, r.h) * 0.45);
-    if (fill) ctx.fill();
+  private partShape(ctx: CanvasRenderingContext2D, name: PartName): void {
+    ctx.fill(outlinePath(name));
   }
 
+  /**
+   * A part on the original sprite's outline (dollArt.ts), in its player's
+   * kit. Clothing is painted inside the outline, so it never changes where a
+   * part ends or how it meets the next one.
+   */
   private partArt(ctx: CanvasRenderingContext2D, name: PartName, id: 1 | 2): void {
+    const path = outlinePath(name);
     const jersey = PAL.jersey[id];
     const shorts = PAL.shorts[id];
+    const inside = (paint: () => void) => {
+      ctx.save();
+      ctx.clip(path);
+      paint();
+      ctx.restore();
+    };
     switch (name) {
       case 'Head': {
-        const rx = ART.Head.w / 2;
-        const ry = ART.Head.h / 2;
+        const { cx, cy, rx, ry } = HEAD;
         ctx.fillStyle = PAL.skin;
-        ctx.beginPath();
-        ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.fill(path);
         // Hair cap.
         ctx.fillStyle = PAL.hair[id];
         ctx.beginPath();
-        ctx.ellipse(0, -ry * 0.28, rx * 1.02, ry * 0.78, 0, Math.PI, Math.PI * 2);
+        ctx.ellipse(cx, cy - ry * 0.28, rx * 1.02, ry * 0.78, 0, Math.PI, Math.PI * 2);
         ctx.fill();
         // Face toward the net.
         const face = id === 1 ? 1 : -1;
         ctx.fillStyle = '#222';
         ctx.beginPath();
-        ctx.arc(face * 4.2, 0.5, 1.35, 0, Math.PI * 2);
-        ctx.arc(face * 0.2, 0.5, 1.35, 0, Math.PI * 2);
+        ctx.arc(cx + face * 4.2, cy + 0.5, 1.35, 0, Math.PI * 2);
+        ctx.arc(cx + face * 0.2, cy + 0.5, 1.35, 0, Math.PI * 2);
         ctx.fill();
         ctx.strokeStyle = '#8a4b3a';
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.arc(face * 2.4, 4.2, 2.2, 0.15 * Math.PI, 0.85 * Math.PI);
+        ctx.arc(cx + face * 2.4, cy + 4.2, 2.2, 0.15 * Math.PI, 0.85 * Math.PI);
         ctx.stroke();
         return;
       }
       case 'Tors': {
-        const r = this.artRect(name);
-        ctx.fillStyle = jersey;
-        roundRect(ctx, r.x, r.y, r.w, r.h, 7);
-        ctx.fill();
-        ctx.fillStyle = PAL.jerseyShade[id];
-        ctx.fillRect(r.x + r.w * 0.38, r.y + 6, r.w * 0.24, r.h - 12);
+        // A bare neck, and the jersey from the shoulders down.
+        ctx.fillStyle = PAL.skin;
+        ctx.fill(path);
+        inside(() => {
+          ctx.fillStyle = jersey;
+          ctx.fillRect(-13, NECKLINE_Y, 26, 40);
+          ctx.fillStyle = PAL.jerseyShade[id];
+          ctx.fillRect(-2.37, NECKLINE_Y + 3, 5.6, 27);
+        });
         ctx.fillStyle = 'rgba(255,255,255,0.9)';
         ctx.font = 'bold 13px system-ui, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(String(id), 0, 2);
+        ctx.fillText(String(id), 0.5, -2.5);
         return;
       }
-      case 'Ass': {
-        const r = this.artRect(name);
+      case 'Ass':
         ctx.fillStyle = shorts;
-        roundRect(ctx, r.x, r.y, r.w, r.h, 6);
-        ctx.fill();
+        ctx.fill(path);
         return;
-      }
       case 'LegLeft':
-      case 'LegRight': {
-        const r = this.artRect(name);
+      case 'LegRight':
         ctx.fillStyle = PAL.skin;
-        roundRect(ctx, r.x, r.y, r.w, r.h, r.w * 0.45);
-        ctx.fill();
+        ctx.fill(path);
         // Shorts cover the top of the thigh.
-        ctx.fillStyle = shorts;
-        roundRect(ctx, r.x - 0.5, r.y, r.w + 1, r.h * 0.42, 4);
-        ctx.fill();
+        inside(() => {
+          ctx.fillStyle = shorts;
+          ctx.fillRect(-8, -21, 16, HEM_Y + 21);
+        });
         return;
-      }
       case 'FootLeft':
-      case 'FootRight': {
-        const r = this.artRect(name);
+      case 'FootRight':
         ctx.fillStyle = PAL.skinShade;
-        roundRect(ctx, r.x, r.y, r.w, r.h, r.w * 0.45);
-        ctx.fill();
-        ctx.fillStyle = PAL.shoe;
-        roundRect(ctx, r.x - 0.5, r.y + r.h - 7, r.w + 1, 7, 3);
-        ctx.fill();
+        ctx.fill(path);
+        inside(() => {
+          ctx.fillStyle = PAL.shoe;
+          ctx.fillRect(-6, ANKLE_Y, 12, 10);
+        });
         return;
-      }
       case 'ArmLeft':
       case 'ArmRight': {
-        const r = this.artRect(name);
         ctx.fillStyle = PAL.skin;
-        roundRect(ctx, r.x, r.y, r.w, r.h, r.h * 0.5);
-        ctx.fill();
-        // Sleeve on the shoulder end.
-        const shoulderSide = name === 'ArmRight' ? -1 : 1;
-        ctx.fillStyle = jersey;
-        const sw = r.w * 0.4;
-        roundRect(ctx, shoulderSide < 0 ? r.x : r.x + r.w - sw, r.y - 0.4, sw, r.h + 0.8, r.h * 0.5);
-        ctx.fill();
+        ctx.fill(path);
+        // A sleeve over the shoulder's ball, reaching down toward the elbow.
+        const shoulder = SHOULDER_X[name];
+        inside(() => {
+          ctx.fillStyle = jersey;
+          ctx.fillRect(shoulder < 0 ? -16 : shoulder - SLEEVE_PX, -6, 16 - Math.abs(shoulder) + SLEEVE_PX, 12);
+        });
         return;
       }
       case 'HandLeft':
-      case 'HandRight': {
-        const r = this.artRect(name);
-        ctx.fillStyle = PAL.skin;
-        roundRect(ctx, r.x, r.y, r.w, r.h, r.h * 0.5);
-        ctx.fill();
-        return;
-      }
+      case 'HandRight':
       case 'FingerLeft':
-      case 'FingerRight': {
-        // The art box is measured across SPREAD fingers; a solid blob at that
-        // size reads as a boxing glove (§15). Palm plus fingers instead.
+      case 'FingerRight':
         ctx.fillStyle = PAL.skin;
-        this.handPath(ctx, name === 'FingerRight' ? 1 : -1);
-        ctx.fill();
+        ctx.fill(path);
         return;
-      }
     }
   }
 
-  /** A small palm with three splayed fingers, spanning the 16.4 x 14.4 art box. */
-  private handPath(ctx: CanvasRenderingContext2D, dir: 1 | -1): void {
-    const tipX = dir * (ART.FingerRight.w / 2);
-    const halfSpread = ART.FingerRight.h / 2 - 1.6;
-    const hw = 1.35; // half the finger thickness
-    ctx.beginPath();
-    ctx.ellipse(dir * 0.5, 0, 5.2, 4.6, 0, 0, Math.PI * 2);
-    for (const ty of [-halfSpread, 0, halfSpread]) {
-      const bx = dir * 3.5;
-      const by = ty * 0.45;
-      const dx = tipX - bx;
-      const dy = ty - by;
-      const len = Math.hypot(dx, dy) || 1;
-      const nx = (-dy / len) * hw;
-      const ny = (dx / len) * hw;
-      ctx.moveTo(bx + nx, by + ny);
-      ctx.lineTo(tipX + nx, ty + ny);
-      ctx.lineTo(tipX - nx, ty - ny);
-      ctx.lineTo(bx - nx, by - ny);
-      ctx.closePath();
-    }
-  }
-
-  private drawBall(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: Interpolator, alpha: number): void {
+  private drawBall(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: PoseSource, alpha: number): void {
     const pose = interp.pose(gw.ball.body, alpha);
     const v = gw.ball.velocity;
     const speed = Math.hypot(v.x, v.y);
@@ -841,7 +793,7 @@ export class Renderer {
     ctx.restore();
   }
 
-  private drawExecuter(ctx: CanvasRenderingContext2D, e: Executer, interp: Interpolator, alpha: number): void {
+  private drawExecuter(ctx: CanvasRenderingContext2D, e: Executer, interp: PoseSource, alpha: number): void {
     const pose = interp.pose(e.body, alpha);
     const t = e.age + alpha;
     if (e.variant.id === 'slime') this.drawSlimeGlue(ctx, e, interp, alpha, t);
@@ -1177,7 +1129,7 @@ export class Renderer {
    * thinning as it is pulled out, a coat of goo on that part, a thin strand
    * to the part it is reeling in, and a strand that tore recoiling apart.
    */
-  private drawSlimeGlue(ctx: CanvasRenderingContext2D, e: Executer, interp: Interpolator, alpha: number, t: number): void {
+  private drawSlimeGlue(ctx: CanvasRenderingContext2D, e: Executer, interp: PoseSource, alpha: number, t: number): void {
     const at = (b: Body, local: Vec2Value) => {
       const p = interp.pose(b, alpha);
       const lx = toPx(local.x);
@@ -1391,7 +1343,7 @@ export class Renderer {
   }
 
   /** A player thrown or jumping far above the frame: mark where. */
-  private drawOffscreenPlayers(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: Interpolator, alpha: number): void {
+  private drawOffscreenPlayers(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: PoseSource, alpha: number): void {
     for (const p of [gw.p1, gw.p2]) {
       const pose = interp.pose(p.head, alpha);
       const sy = pose.y * VIEW.scale + VIEW.offsetY;
@@ -1478,7 +1430,7 @@ export class Renderer {
   }
 
   /** The ball often flies above the frame; point at it from the top edge. */
-  private drawOffscreenBall(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: Interpolator, alpha: number): void {
+  private drawOffscreenBall(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: PoseSource, alpha: number): void {
     const pose = interp.pose(gw.ball.body, alpha);
     const sy = pose.y * VIEW.scale + VIEW.offsetY;
     if (sy > -gw.ball.radiusPx * VIEW.scale) return;

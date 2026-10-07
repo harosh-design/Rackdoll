@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Doll joints preview</title>
+<style>
+  body { margin: 0; background: #18222c; color: #dfe7ee; font: 13px system-ui, sans-serif; }
+  main { display: flex; flex-wrap: wrap; gap: 10px; padding: 10px; }
+  figure { margin: 0; }
+  figcaption { padding: 4px 2px; }
+  canvas { display: block; background: #cfeaf6; width: 300px; height: 360px; }
+  label { display: block; padding: 10px 10px 0; }
+</style>
+<label><input type="checkbox" id="debug"> Show colliders (green) and joint anchors (red: part A, blue: part B)</label>
+<main></main>
+<script type="module">
+  // Each doll drawn by the game's own renderer (2.6x; ?zoom=6 for more), in poses the game
+  // produces: standing, crouched, mid-jump, mid-flip, and the frames of
+  // random play where the solver had pulled a joint furthest apart (under
+  // 25 px, so not a hazard's tear), drawn
+  // as the physics has it and as the renderer closes it.
+  import { GameWorld } from '/src/sim/world.ts';
+  import { toPx } from '/src/sim/constants.ts';
+  import { Renderer } from '/src/render/renderer.ts';
+  import { Interpolator } from '/src/render/interp.ts';
+  import { closedPoses } from '/src/render/dollPose.ts';
+
+  const ZOOM = Number(new URLSearchParams(location.search).get("zoom") ?? 2.6);
+  const shots = [];
+  const bodiesOf = (gw) => { const out = []; for (let b = gw.world.getBodyList(); b; b = b.getNext()) out.push(b); return out; };
+  const snapshot = (gw, p, caption, raw = false) => {
+    const interp = new Interpolator();
+    interp.commit(bodiesOf(gw));
+    const poses = raw ? interp : closedPoses(interp, 1, [gw.p1, gw.p2], gw.ball.body);
+    const parts = p.bodies.map((b) => ({ b, pose: { ...poses.pose(b, 1) } }));
+    const joints = p.revolutes.map((j) => [j.getAnchorA(), j.getAnchorB()].map((v) => ({ x: toPx(v.x), y: toPx(v.y) })));
+    const colliders = p.bodies.map((b) => {
+      const sh = b.getFixtureList().getShape();
+      return {
+        x: toPx(b.getPosition().x), y: toPx(b.getPosition().y), a: b.getAngle(),
+        r: sh.getType() === 'circle' ? toPx(sh.getRadius()) : null,
+        v: sh.getType() === 'circle' ? null : sh.m_vertices.map((q) => ({ x: toPx(q.x), y: toPx(q.y) })),
+      };
+    });
+    shots.push({ caption, p, parts, joints, colliders, poses: { pose: (b) => parts.find((q) => q.b === b)?.pose ?? poses.pose(b, 1) } });
+  };
+  const fresh = () => {
+    const gw = new GameWorld({ singlePlayer: false, hazards: false, bees: false });
+    gw.game.update = () => {};
+    return gw;
+  };
+  const run = (gw, n) => { for (let i = 0; i < n; i++) gw.step(); };
+
+  // Standing, after settling.
+  let gw = fresh();
+  run(gw, 90);
+  snapshot(gw, gw.p2, 'Standing (player 2)');
+  snapshot(gw, gw.p1, 'Standing, holding the ball (player 1)');
+  // Crouched: down held.
+  gw.control.press(83); run(gw, 12); snapshot(gw, gw.p2, 'Crouching (down held)');
+  gw.control.release(83);
+  // Mid-jump.
+  run(gw, 40); gw.control.press(87); run(gw, 1); gw.control.release(87); run(gw, 6);
+  snapshot(gw, gw.p2, 'Mid-jump');
+  // Mid-flip: release the ball first so a rally is under way.
+  gw = fresh();
+  gw.world.destroyJoint(gw.p1.holdingJoint); gw.p1.forgetBallJoint(); gw.ball.ballOfPlayer = 0;
+  run(gw, 60);
+  gw.swing(gw.p2, 1); run(gw, 7);
+  snapshot(gw, gw.p2, 'Mid-flip');
+
+  // The worst joint stretch in a minute of random play, raw and closed.
+  let s = 7;
+  const rnd = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 2 ** 32);
+  gw = new GameWorld({ singlePlayer: true, hazards: true, bees: false });
+  let worst = { d: -1, frame: 0 };
+  for (let i = 0; i < 30 * 60; i++) {
+    for (const c of [37, 39, 38, 40, 32]) (rnd() < 0.12 ? gw.control.press(c) : gw.control.release(c));
+    gw.step(); gw.reap();
+    if (gw.game.phase === 'matchOver') gw.game.resetMatch();
+    for (const j of gw.p1.revolutes) {
+      const a = j.getAnchorA(), b = j.getAnchorB();
+      const d = toPx(Math.hypot(a.x - b.x, a.y - b.y));
+      if (d > worst.d && d < 25) worst = { d, frame: i };
+    }
+  }
+  // Replay to that frame.
+  s = 7;
+  gw = new GameWorld({ singlePlayer: true, hazards: true, bees: false });
+  for (let i = 0; i <= worst.frame; i++) {
+    for (const c of [37, 39, 38, 40, 32]) (rnd() < 0.12 ? gw.control.press(c) : gw.control.release(c));
+    gw.step(); gw.reap();
+    if (gw.game.phase === 'matchOver') gw.game.resetMatch();
+  }
+  snapshot(gw, gw.p1, `Random play, joint ${worst.d.toFixed(1)} px open: physics`, true);
+  snapshot(gw, gw.p1, 'Same frame, as drawn (joints closed)');
+
+  const main = document.querySelector('main');
+  const debug = document.querySelector('#debug');
+  const canvases = shots.map((shot) => {
+    const fig = document.createElement('figure');
+    const canvas = document.createElement('canvas');
+    const cap = document.createElement('figcaption');
+    cap.textContent = shot.caption;
+    fig.append(canvas, cap);
+    main.append(fig);
+    return canvas;
+  });
+  function paint() {
+    shots.forEach((shot, i) => {
+      const canvas = canvases[i];
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = 300 * dpr; canvas.height = 360 * dpr;
+      const r = new Renderer(canvas);
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = '#cfeaf6';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      // Centre on the doll's torso, or the part named by ?focus=.
+      const focus = new URLSearchParams(location.search).get('focus');
+      const t = shot.parts.find((q) => q.b === (focus ? shot.p.part(focus) : shot.p.tors)).pose;
+      const k = ZOOM * dpr;
+      ctx.setTransform(k, 0, 0, k, canvas.width / 2 - t.x * k, canvas.height * 0.42 - t.y * k);
+      // A floor line where the physics floor is.
+      ctx.fillStyle = '#ecd49b';
+      ctx.fillRect(t.x - 100, 349, 200, 60);
+      r.drawDoll(ctx, shot.p, shot.poses, 1);
+      if (debug.checked) {
+        ctx.lineWidth = 1.2 / ZOOM;
+        ctx.strokeStyle = '#0a0';
+        for (const c of shot.colliders) {
+          ctx.save();
+          ctx.translate(c.x, c.y);
+          ctx.rotate(c.a);
+          ctx.beginPath();
+          if (c.r !== null) ctx.arc(0, 0, c.r, 0, Math.PI * 2);
+          else { ctx.moveTo(c.v[0].x, c.v[0].y); for (const q of c.v.slice(1)) ctx.lineTo(q.x, q.y); ctx.closePath(); }
+          ctx.stroke();
+          ctx.restore();
+        }
+        for (const [a, b] of shot.joints) {
+          ctx.fillStyle = '#e00'; ctx.beginPath(); ctx.arc(a.x, a.y, 3 / ZOOM, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#06f'; ctx.beginPath(); ctx.arc(b.x, b.y, 2 / ZOOM, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+    });
+  }
+  debug.addEventListener('change', paint);
+  paint();
+</script>
+</html>

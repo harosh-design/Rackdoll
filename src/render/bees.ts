@@ -2,7 +2,7 @@ import { BEES } from '../sim/constants';
 import { BEE_FLIGHT, beePosition, beeRadiusPx, type Bee, type BeePop } from '../sim/bees';
 import type { GameWorld } from '../sim/world';
 import { POWER_LABELS, type PowerId } from '../sim/powerUps';
-import type { Interpolator } from './interp';
+import type { PoseSource } from './dollPose';
 
 /**
  * Bee gifts, drawn in world space. Each bee shows its power before it is
@@ -356,7 +356,7 @@ function label(ctx: CanvasRenderingContext2D, kind: PowerId, y: number): void {
  * spark that flies to the head of whoever got the power.
  */
 export function drawBeePops(
-  ctx: CanvasRenderingContext2D, gw: GameWorld, interp: Interpolator, alpha: number, now: number,
+  ctx: CanvasRenderingContext2D, gw: GameWorld, interp: PoseSource, alpha: number, now: number,
 ): void {
   for (const pop of gw.bees.pops) {
     const since = now - pop.frame;
@@ -366,7 +366,7 @@ export function drawBeePops(
 }
 
 function drawPop(
-  ctx: CanvasRenderingContext2D, gw: GameWorld, interp: Interpolator, alpha: number, pop: BeePop, since: number,
+  ctx: CanvasRenderingContext2D, gw: GameWorld, interp: PoseSource, alpha: number, pop: BeePop, since: number,
 ): void {
   const rgb = BEE_RGB[pop.kind];
   const p = since / BEES.popFrames;
