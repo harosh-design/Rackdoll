@@ -1,0 +1,51 @@
+{
+  "VIEW": {
+    "scale": 0.56,
+    "offsetX": 124,
+    "offsetY": 180,
+    "stageW": 640,
+    "stageH": 400
+  },
+  "courtWidthWorld": 1055,
+  "courtWidthStage": 590.8000000000001,
+  "netHeightStage": 84.00000000000001,
+  "groundStage": 378.8,
+  "dimensions": [
+    {
+      "version": "before",
+      "player": 1,
+      "width": 37,
+      "height": 65,
+      "top": 320,
+      "bottom": 384,
+      "area": 1031
+    },
+    {
+      "version": "before",
+      "player": 2,
+      "width": 28,
+      "height": 68,
+      "top": 317,
+      "bottom": 384,
+      "area": 1007
+    },
+    {
+      "version": "after",
+      "player": 1,
+      "width": 36,
+      "height": 65,
+      "top": 320,
+      "bottom": 384,
+      "area": 977
+    },
+    {
+      "version": "after",
+      "player": 2,
+      "width": 28,
+      "height": 68,
+      "top": 317,
+      "bottom": 384,
+      "area": 981
+    }
+  ]
+}

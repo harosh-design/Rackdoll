@@ -6,7 +6,7 @@ import {
 } from './input/bindings';
 import { bindKeyboard } from './input/keyboard';
 import { Interpolator } from './render/interp';
-import { Renderer } from './render/renderer';
+import { HUD_BAR, Renderer } from './render/renderer';
 import { BEE_FLIGHT } from './sim/bees';
 import { BALL, BODYTYPE, FPS, ITERATIONS, OPTIONS } from './sim/constants';
 import type { ControlAction } from './sim/control';
@@ -25,6 +25,17 @@ const MENU_TIME_STEP = 0.04;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const canvas = $('game') as HTMLCanvasElement;
 const overlays = { menu: $('menu'), pause: $('pause'), over: $('over') };
+const tabs = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+
+/** What each CPU level is like, for the menu. Follows BOT_LEVELS. */
+const LEVELS: Record<number, { name: string; blurb: string }> = {
+  1: { name: 'Rookie', blurb: 'Slow to react and loose with its aim.' },
+  2: { name: 'Amateur', blurb: 'A little quicker, still forgiving.' },
+  3: { name: 'Club', blurb: 'Starts lunging for balls out of reach.' },
+  4: { name: 'Pro', blurb: 'Sharper aim and more smashes.' },
+  5: { name: 'Elite', blurb: 'Near-instant reactions.' },
+  6: { name: 'Champion', blurb: 'Reads the ball’s flight, aims away from its opponent and lines up its swing.' },
+};
 
 const renderer = new Renderer(canvas);
 const interp = new Interpolator();
@@ -44,23 +55,55 @@ let screen: Screen = 'menu';
 let capturing: { player: PlayerId; action: ControlAction } | null = null;
 let gw = createWorld(true);
 let message: string | null = null;
+/** Whose point the banner announces: their jersey colours it. */
+let messageTone: PlayerId | 0 = 0;
 let servesSeen = 0;
+/** The first-serve hint, spelled with player 1's own keys. */
+let serveHint = '';
 
 // ---------------------------------------------------------------------------
-// Global mute — the M key toggles SFX and background music together, on every
-// screen. M can never be assigned to an in-game control (isAssignableCode() in
-// input/bindings.ts rejects 'KeyM', and loadBindings() discards any legacy
-// config that tried to store it), so this key is always free for the mute.
+// Global music mute — the M key toggles the background music on every screen;
+// game sound effects always keep playing. M can never be assigned to an in-game
+// control (isAssignableCode() in input/bindings.ts rejects 'KeyM', and
+// loadBindings() discards any legacy config that tried to store it), so this
+// key is always free for the mute.
+const MUTE_KEY = 'rackdoll-muted';
 let muted = false;
 function applyMute(state: boolean): void {
-   muted = state;
-   sfx.enabled = !state;          // stop new one-shot effects, let tails ring out
-   music.setMuted(state);         // suspend/resume the loop, keeping its position
-    }
+  muted = state;
+  music.setMuted(state);         // suspend/resume the loop, keeping its position
+  document.documentElement.classList.toggle('muted', state);
+  document.querySelectorAll<HTMLButtonElement>('.js-sound').forEach((b) => {
+    b.setAttribute('aria-pressed', String(!state));
+    b.title = state ? 'Music off (M)' : 'Music on (M)';
+  });
+}
 function toggleMute(): void {
-   applyMute(!muted);
-   console.info('[rackdoll] sound', muted ? 'OFF (press M to re-enable)' : 'ON');
-    }
+  applyMute(!muted);
+  try {
+    localStorage.setItem(MUTE_KEY, muted ? '1' : '0');
+  } catch {
+    // Mute still works for this session if storage is disabled.
+  }
+  showToast(muted ? 'Music off' : 'Music on', muted ? 'i-sound-off' : 'i-sound-on');
+}
+function loadMuted(): boolean {
+  try {
+    return localStorage.getItem(MUTE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+let toastTimer = 0;
+function showToast(text: string, icon: string): void {
+  const toast = $('toast');
+  toast.innerHTML = `<svg aria-hidden="true"><use href="#${icon}" /></svg>`;
+  toast.append(text);
+  toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => toast.classList.remove('show'), 1400);
+}
 // ---------------------------------------------------------------------------
 // World lifecycle — one simulation frame per 1/30 s, exactly like the SWF.
 // ---------------------------------------------------------------------------
@@ -96,6 +139,8 @@ function startMatch(): void {
   music.pickNext();             // new game → a fresh, non-repeating random track
   applyMute(muted);            // keep mute state consistent when starting a fresh match
   servesSeen = 0;
+  const keys = settings.bindings[1];
+  serveHint = `PRESS ${keyLabel(keys.jump)} TO JUMP, THEN ${keyLabel(keys.serve)} TO SERVE`.toUpperCase();
   gw = createWorld();
   message = null;
   setScreen('playing');
@@ -143,15 +188,25 @@ function onPoint(winner: PlayerId, reason: PointReason): void {
     : single ? (winner === 1 ? 'POINT!' : 'CPU POINT') : `PLAYER ${winner} POINT`;
   const why = reason === 'touches' ? ' · 4 TOUCHES' : reason === 'serveClock' ? ' · TOO SLOW' : '';
   message = who + why;
+  messageTone = winner;
   if (single && winner === 2) sfx.lose();
   else sfx.point();
+}
+
+function sideName(id: PlayerId): string {
+  if (gw.isCpu(id)) return `CPU · ${LEVELS[gw.levelOf(id)]?.name ?? `Level ${gw.levelOf(id)}`}`;
+  return gw.singlePlayer ? 'You' : `Player ${id}`;
 }
 
 function onMatchOver(winner: PlayerId): void {
   const g = gw.game;
   const single = gw.singlePlayer;
-  $('over-score').textContent = `${g.score[1]} – ${g.score[2]}`;
-  const next = $<HTMLButtonElement>('over-next');
+  $('over-s1').textContent = String(g.score[1]);
+  $('over-s2').textContent = String(g.score[2]);
+  $('over-n1').textContent = sideName(1);
+  $('over-n2').textContent = sideName(2);
+  $('over-card').style.setProperty('--win', `var(--p${winner})`);
+  let showNext = false;
   if (single) {
     const won = winner === 1;
     const last = g.level >= OPTIONS.maxLevel;
@@ -159,19 +214,20 @@ function onMatchOver(winner: PlayerId): void {
     $('over-sub').textContent = won
       ? last
         ? `You beat the champion. Campaign score ${g.campaignScore}.`
-        : `Opponent ${g.level} down. Points this match: ${g.campaignScore}.`
-      : `Opponent ${g.level} takes it. Have another go.`;
-    next.style.display = won && !last ? '' : 'none';
+        : `${LEVELS[g.level]?.name ?? `Opponent ${g.level}`} down. Points this match: ${g.campaignScore}.`
+      : `${LEVELS[g.level]?.name ?? `Opponent ${g.level}`} takes it. Have another go.`;
+    showNext = won && !last;
   } else if (gw.botVsBot) {
     const name = (id: PlayerId) => (gw.levelOf(id) === OPTIONS.championLevel ? 'the champion' : `level ${gw.levelOf(id)}`);
     $('over-title').textContent = `${winner === 1 ? 'Left' : 'Right'} CPU wins`;
     $('over-sub').textContent = `${name(winner)} beat ${name(winner === 1 ? 2 : 1)}.`.replace(/^./, (c) => c.toUpperCase());
-    next.style.display = 'none';
   } else {
     $('over-title').textContent = `Player ${winner} wins`;
-    $('over-sub').textContent = 'First to 10.';
-    next.style.display = 'none';
+    $('over-sub').textContent = `First to ${OPTIONS.gameSet}.`;
   }
+  // With no next opponent, the rematch becomes the main action.
+  $('over-next').hidden = !showNext;
+  $('over-again').classList.toggle('btn-primary', !showNext);
   setScreen('over');
 }
 
@@ -183,15 +239,31 @@ function setScreen(s: Screen): void {
   if (s !== 'menu') {
     capturing = null;
     renderBindings();
+  } else {
+    selectTab($('tab-play'));
   }
   screen = s;
+  document.body.dataset.screen = s;
   overlays.menu.classList.toggle('show', s === 'menu');
   overlays.pause.classList.toggle('show', s === 'paused');
   overlays.over.classList.toggle('show', s === 'over');
+  // Only the open overlay can take focus or be read out.
+  for (const [name, el] of Object.entries(overlays)) {
+    el.inert = name !== (s === 'paused' ? 'pause' : s);
+  }
   gw.control.clear();
-  if (s === 'playing') canvas.focus();
-  const focusTarget = s === 'menu' ? $('play') : s === 'paused' ? $('resume') : s === 'over' ? $('over-again') : null;
+  if (s === 'playing') focusGame();
+  const focusTarget = s === 'menu' ? $('play')
+    : s === 'paused' ? $('resume')
+    : s === 'over' ? ($('over-next').hidden ? $('over-again') : $('over-next'))
+    : null;
   focusTarget?.focus();
+}
+
+/** Keep keys going to the game, never to a button that was last clicked. */
+function focusGame(): void {
+  (document.activeElement as HTMLElement | null)?.blur();
+  canvas.focus({ preventScroll: true });
 }
 
 function togglePause(): void {
@@ -204,6 +276,41 @@ const actionNames: Record<ControlAction, string> = {
   serve: 'Serve / flip',
 };
 
+function selectTab(tab: HTMLElement, focus = false): void {
+  for (const t of tabs) {
+    const on = t === tab;
+    t.setAttribute('aria-selected', String(on));
+    t.tabIndex = on ? 0 : -1;
+    $(t.getAttribute('aria-controls')!).hidden = !on;
+  }
+  if (capturing) {
+    capturing = null;
+    $('binding-status').textContent = 'Click a key to change it.';
+    renderBindings();
+  }
+  if (focus) tab.focus();
+}
+
+/** The level pickers, their names and blurbs, from the settings. */
+function syncLevels(): void {
+  const show = (attr: string, prefix: string, level: number) => {
+    document.querySelectorAll<HTMLButtonElement>(`[data-${attr}]`).forEach((b) => {
+      b.setAttribute('aria-pressed', String(Number(b.dataset[attr]) === level));
+    });
+    const name = $(`${prefix}level-name`);
+    name.textContent = `${LEVELS[level].name} · Lv ${level}`;
+    name.classList.toggle('champ', level === OPTIONS.championLevel);
+    $(`${prefix}level-desc`).textContent = LEVELS[level].blurb;
+  };
+  show('level', '', settings.level);
+  show('p1level', 'p1-', settings.p1Level);
+}
+
+/** Who drives each side in the chosen mode. */
+function isCpuSide(player: PlayerId): boolean {
+  return settings.mode === 'cpu' || (settings.mode === '1p' && player === 2);
+}
+
 function renderBindings(): void {
   document.querySelectorAll<HTMLButtonElement>('[data-binding-player]').forEach((button) => {
     const player = Number(button.dataset.bindingPlayer) as PlayerId;
@@ -214,6 +321,15 @@ function renderBindings(): void {
     button.classList.toggle('capturing', waiting);
     button.setAttribute('aria-label', `Player ${player}, ${actionNames[action]}: ${label}. Click to change.`);
   });
+  document.querySelectorAll<HTMLElement>('[data-bind-card]').forEach((card) => {
+    const cpu = isCpuSide(Number(card.dataset.bindCard) as PlayerId);
+    card.classList.toggle('is-cpu', cpu);
+    card.querySelector<HTMLElement>('.badge')!.hidden = !cpu;
+  });
+  // Player 1's keys, wherever the help text names them.
+  document.querySelectorAll<HTMLElement>('[data-keyof]').forEach((el) => {
+    el.textContent = keyLabel(settings.bindings[1][el.dataset.keyof as ControlAction]);
+  });
 }
 
 function wireBindings(): void {
@@ -221,24 +337,42 @@ function wireBindings(): void {
   const status = $('binding-status');
   for (const player of PLAYERS) {
     const card = document.createElement('div');
-    card.className = 'binding-player';
+    card.className = 'bind-card';
+    card.dataset.bindCard = String(player);
+    card.style.setProperty('--pc', `var(--p${player})`);
+    const head = document.createElement('div');
+    head.className = 'bind-head';
+    const dot = document.createElement('span');
+    dot.className = 'dot';
     const heading = document.createElement('strong');
-    heading.textContent = `Player ${player}${player === 2 ? ' · CPU in 1 player mode' : ''}`;
-    card.append(heading);
+    heading.textContent = `Player ${player}`;
+    const badge = document.createElement('span');
+    badge.className = 'badge';
+    badge.textContent = 'CPU';
+    badge.title = 'The CPU plays this side in the chosen mode.';
+    head.append(dot, heading, badge);
+    card.append(head);
     for (const action of ACTIONS) {
       const row = document.createElement('div');
-      row.className = 'binding-row';
+      row.className = 'bind-row';
       const label = document.createElement('span');
       label.textContent = actionNames[action];
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = 'binding-key';
+      button.className = 'keycap';
       button.dataset.bindingPlayer = String(player);
       button.dataset.bindingAction = action;
       button.addEventListener('click', () => {
         capturing = { player, action };
         status.textContent = `Press a key for Player ${player} · ${actionNames[action]}. Esc cancels.`;
         renderBindings();
+      });
+      button.addEventListener('focusout', () => {
+        if (capturing?.player === player && capturing.action === action) {
+          capturing = null;
+          status.textContent = 'Click a key to change it.';
+          renderBindings();
+        }
       });
       row.append(label, button);
       card.append(row);
@@ -303,28 +437,75 @@ function wireMenu(): void {
   };
   group('mode', (v) => {
     settings.mode = v as Mode;
-    $('level-field').style.display = v === '2p' ? 'none' : '';
-    $('p1-level-field').style.display = v === 'cpu' ? '' : 'none';
+    $('level-field').hidden = v === '2p';
+    $('p1-level-field').hidden = v !== 'cpu';
+    $('levels').classList.toggle('two', v === 'cpu');
     $('level-label').textContent = v === 'cpu' ? 'Right CPU' : 'Opponent';
+    renderBindings();
   });
-  group('level', (v) => { settings.level = Number(v); });
-  group('p1level', (v) => { settings.p1Level = Number(v); });
-  group('hazards', (v) => { settings.hazards = v === 'on'; });
+  group('level', (v) => { settings.level = Number(v); syncLevels(); });
+  group('p1level', (v) => { settings.p1Level = Number(v); syncLevels(); });
+  syncLevels();
+
+  const hazards = $('hazards');
+  hazards.addEventListener('click', () => {
+    settings.hazards = !settings.hazards;
+    hazards.setAttribute('aria-checked', String(settings.hazards));
+  });
+
+  tabs.forEach((tab, i) => {
+    tab.addEventListener('click', () => selectTab(tab));
+    tab.addEventListener('keydown', (e) => {
+      const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+      if (!step) return;
+      e.preventDefault();
+      selectTab(tabs[(i + step + tabs.length) % tabs.length], true);
+    });
+  });
 
   $('play').addEventListener('click', startMatch);
   $('resume').addEventListener('click', () => setScreen('playing'));
+  $('restart').addEventListener('click', startMatch);
   $('quit').addEventListener('click', () => { gw = createWorld(true); setScreen('menu'); });
   $('over-again').addEventListener('click', startMatch);
   $('over-menu').addEventListener('click', () => { gw = createWorld(true); setScreen('menu'); });
   $('over-next').addEventListener('click', () => {
     settings.level = Math.min(OPTIONS.maxLevel, settings.level + 1);
-    document.querySelectorAll<HTMLButtonElement>('[data-level]').forEach((b) => {
-      b.setAttribute('aria-pressed', String(Number(b.dataset.level) === settings.level));
-    });
+    syncLevels();
     startMatch();
   });
 
+  // The controls in the HUD's top bar, laid out where the renderer leaves
+  // room for them. Clicks there must not leave focus on a button the serve
+  // key (Space) would press again.
+  const bar = $('hud-controls');
+  bar.style.setProperty('--x', String(HUD_BAR.midX));
+  bar.style.setProperty('--y', String(HUD_BAR.y));
+  bar.style.setProperty('--w', String(HUD_BAR.controlsW));
+  bar.style.setProperty('--h', String(HUD_BAR.h));
+  $('btn-pause').addEventListener('click', togglePause);
+  document.querySelectorAll<HTMLButtonElement>('.js-sound').forEach((b) => {
+    b.addEventListener('click', () => {
+      toggleMute();
+      if (screen === 'playing') focusGame();
+    });
+  });
+  const fullscreen = $('btn-fullscreen');
+  fullscreen.hidden = !document.fullscreenEnabled;
+  fullscreen.addEventListener('click', () => {
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void document.documentElement.requestFullscreen().catch(() => {});
+    if (screen === 'playing') focusGame();
+  });
+  document.addEventListener('fullscreenchange', () => {
+    const on = Boolean(document.fullscreenElement);
+    document.documentElement.classList.toggle('is-fullscreen', on);
+    fullscreen.setAttribute('aria-label', on ? 'Exit fullscreen' : 'Fullscreen');
+    fullscreen.title = on ? 'Exit fullscreen' : 'Fullscreen';
+  });
+
   window.addEventListener('keydown', (e) => {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
     if (e.code === 'KeyP' || e.code === 'Escape') {
       if (screen === 'playing' || screen === 'paused') {
         e.preventDefault();
@@ -432,7 +613,8 @@ function tick(now: number): void {
   renderer.draw(gw, interp, running ? acc / FRAME : 1, {
     singlePlayer: gw.singlePlayer,
     message: screen === 'playing' || screen === 'paused' ? message : null,
-    showControlsHint: screen === 'playing' && servesSeen < 2 && !gw.isCpu(1),
+    messageTone,
+    controlsHint: screen === 'playing' && servesSeen < 2 && !gw.isCpu(1) ? serveHint : null,
   });
   requestAnimationFrame(tick);
 }
@@ -452,6 +634,8 @@ bindKeyboard(
 );
 
 wireMenu();
+applyMute(loadMuted());
+setScreen('menu');
 new ResizeObserver(() => renderer.resize()).observe(canvas);
 requestAnimationFrame(tick);
 
@@ -460,6 +644,7 @@ if (import.meta.env.DEV) {
   // requestAnimationFrame, which a hidden tab throttles.
   (window as unknown as { __rv: unknown }).__rv = {
     get gw() { return gw; },
+    renderer,
     settings,
     sfx,
     advance(frames = 1, alpha = 1) {
@@ -467,7 +652,8 @@ if (import.meta.env.DEV) {
       renderer.draw(gw, interp, alpha, {
         singlePlayer: gw.singlePlayer,
         message,
-        showControlsHint: false,
+        messageTone,
+        controlsHint: null,
       });
       return gw.frame;
     },

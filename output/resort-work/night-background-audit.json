@@ -1,0 +1,58 @@
+{
+  "fit": {
+    "x": 4.130687318489862,
+    "width": 589.7386253630203,
+    "height": 400,
+    "imageY": 0,
+    "imageHeight": 400
+  },
+  "pixelDiff": {
+    "palms": {
+      "changed": 4007,
+      "total": 4624,
+      "meanDifference": 32.074826989619375
+    },
+    "water": {
+      "changed": 11281,
+      "total": 12256,
+      "meanDifference": 45.58485639686684
+    },
+    "hotel": {
+      "changed": 0,
+      "total": 2304,
+      "meanDifference": 0
+    },
+    "sand": {
+      "changed": 0,
+      "total": 4120,
+      "meanDifference": 0
+    }
+  },
+  "renderMsPerFrame": 1.3233333331843218,
+  "imageCompletelyInsideCourt": true,
+  "layouts": [
+    {
+      "x": 4.130687318489862,
+      "width": 589.7386253630203,
+      "height": 400,
+      "imageY": 0,
+      "imageHeight": 400
+    },
+    {
+      "x": 8.261374636979724,
+      "width": 1179.4772507260407,
+      "height": 800,
+      "imageY": 0,
+      "imageHeight": 800
+    },
+    {
+      "x": 2.065343659244931,
+      "width": 294.86931268151017,
+      "height": 200,
+      "imageY": 0,
+      "imageHeight": 200
+    }
+  ],
+  "reducedMotionStable": true,
+  "browserErrors": []
+}

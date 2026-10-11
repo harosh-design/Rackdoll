@@ -4,6 +4,9 @@ A faithful rebuild of *Ragdoll Volleyball* (Yuriy Shevchenko / Sedoiga, 2009),
 driven entirely by the numbers in [`RAGDOLL-VOLLEYBALL-SPEC.md`](RAGDOLL-VOLLEYBALL-SPEC.md),
 which were read out of the original's own AS3 bytecode.
 
+All project code and documentation must be written in English. See
+[`AGENTS.md`](AGENTS.md) for the project language policy.
+
 ```bash
 npm install
 npm run dev        # play at http://localhost:5173
@@ -197,8 +200,9 @@ code where it happens.
   held ball brushing the floor would be scored the moment it was served.
 - **Sounds** use short Stable Audio 3 samples for hits, points, buttons,
   and special moves. Procedural cues cover the first moments while samples load
-  or if a file is unavailable. Press M to mute. **Render interpolation** blends
-  the last two frames on high-refresh displays. Neither touches the simulation.
+  or if a file is unavailable. Press M to mute the music; sound effects keep
+  playing. **Render interpolation** blends the last two frames on high-refresh
+  displays. Neither touches the simulation.
 
 ## The hazard: deliberately reworked from §13
 

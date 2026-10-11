@@ -1,10 +1,10 @@
 import {
-  BALL, BALL_TINT, BOXER, CHARGE, COURT, FLIP, EXECUTER, FLOOR_TOP_PX, FPS, JOINTS, MAX_TOUCHES, OPTIONS, PARTS, PRIZE_ANIM,
+  BALL, BALL_TINT, BOXER, CHARGE, COURT, FLIP, EXECUTER, FLOOR_TOP_PX, FPS, GRAVITY, JOINTS, MAX_TOUCHES, OPTIONS, PARTS, PRIZE_ANIM,
   PRIZE_BUTTONS, RIGHT_WALL_INNER_PX, SLIME, SPRING, STUN, SWING, VIEW, toPx, type PartName,
 } from '../sim/constants';
 import type { Body, Vec2Value } from 'planck';
 import type { Executer } from '../sim/executer';
-import type { ExecuterId } from '../sim/executerVariants';
+import { EXECUTER_VARIANTS, type ExecuterId } from '../sim/executerVariants';
 import type { GameWorld } from '../sim/world';
 import type { Player } from '../sim/player';
 import type { PrizeButton } from '../sim/prizeButton';
@@ -13,6 +13,7 @@ import { drawBeePops, drawBees } from './bees';
 import { ANKLE_Y, DRAW_ORDER, HEAD, HEM_Y, NECKLINE_Y, outlinePath, SLEEVE_PX, SOLE_Y } from './dollArt';
 import { closedPoses, type PoseSource } from './dollPose';
 import type { Interpolator, Pose } from './interp';
+import { drawResortBackground, drawResortPart, hasResortBackground, loadResortArt } from './resortArt';
 
 /**
  * Canvas renderer. Draws in the original's coordinate systems: a 640x400
@@ -57,13 +58,8 @@ const PAL = {
   prizeCore: '#ffe2d9',
   housing: '#262c31',
   housingRim: 'rgba(255,255,255,0.12)',
-} as const;
-
-/** DropShadowFilter: distance 10, angle 70° (P1) / 110° (P2), alpha 0.2. */
-const SHADOW = {
-  alpha: 0.2,
-  dist: 10,
-  angle: { 1: (70 * Math.PI) / 180, 2: (110 * Math.PI) / 180 },
+  /** The sky the resort photograph fades into above its top edge. */
+  resortSky: '#03091c',
 } as const;
 
 const partDef = (name: PartName) => PARTS.find((p) => p.name === name)!;
@@ -85,10 +81,62 @@ const SOLES_PX = FLOOR_TOP_PX + SOLE_Y - footHalfHeight;
  */
 const SAND_TOP_PX = FLOOR_TOP_PX - 6;
 
+/**
+ * HUD columns, stage px: the scores sit over the court, clear of the prize
+ * buttons at the top of each wall (stage x ~6 and ~593), which glow ~30 px
+ * around.
+ */
+const HUD_LEFT_X = 48;
+const HUD_RIGHT_X = RIGHT_WALL_INNER_PX * VIEW.scale + VIEW.offsetX - 42;
+
+/**
+ * The top bar, stage px, centred over the court. The page puts its own
+ * controls (pause, sound, fullscreen) in the middle `controlsW`; the next
+ * hazard is drawn to their left and the target score to their right.
+ */
+export const HUD_BAR = {
+  midX: (HUD_LEFT_X + HUD_RIGHT_X) / 2,
+  y: 6,
+  h: 24,
+  controlsW: 74,
+  gap: 5,
+} as const;
+
+/**
+ * The camera, over the original's fixed view of the court — the 640x400
+ * stage the world sprite sits on (VIEW), called the base view here. It rests
+ * on that view and only ever pulls back from it, about the middle of the
+ * floor's edge, when the ball's flight or a doll would leave the frame — as
+ * far as the ceiling. Rendering only; the simulation never sees it.
+ */
+const CAMERA = {
+  /** Furthest out: the ceiling (world y -850) in frame. */
+  minZoom: 0.55,
+  /** Stage px kept clear above the top of the ball's flight. */
+  ballTop: 14,
+  /** Stage px kept clear above a doll's head. */
+  dollTop: 8,
+  /**
+   * How far ahead the ball's climb is framed, s. A rally shot tops out
+   * sooner, so the camera makes one move to its apex; a towering one is
+   * followed up, this far ahead of it.
+   */
+  lead: 1.2,
+  /** Spring times, s: about how long the zoom takes to ease out, and back in. */
+  zoomOut: 0.45,
+  zoomIn: 1.1,
+  /** How long it stays pulled back once the ball has topped out, s. */
+  hold: 0.6,
+} as const;
+
 export interface HudState {
   singlePlayer: boolean;
+  /** A banner across the court, e.g. "POINT! · 4 TOUCHES". */
   message: string | null;
-  showControlsHint: boolean;
+  /** Whose jersey colours the banner; 0 for neutral. */
+  messageTone: 0 | 1 | 2;
+  /** The first-serve hint, or null to hide it. */
+  controlsHint: string | null;
 }
 
 interface DustPuff {
@@ -108,18 +156,22 @@ interface MotionState {
 export class Renderer {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
-  private readonly bg: HTMLCanvasElement;
-  private readonly shadow: HTMLCanvasElement;
   private readonly motion = new WeakMap<GameWorld, MotionState>();
   /** Device pixels per stage pixel. */
   private k = 1;
+  /**
+   * Zoom over the base view (1 is the base view, less is further out), the
+   * spring's velocity, the zoom it is heading for and how long that holds;
+   * `world` and `at` (s) are what it last framed and when.
+   */
+  private readonly cam = { zoom: 1, v: 0, goal: 1, holdUntil: 0, world: null as GameWorld | null, at: 0 };
+  readonly ready: Promise<void>;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d', { alpha: false })!;
-    this.bg = document.createElement('canvas');
-    this.shadow = document.createElement('canvas');
     this.resize();
+    this.ready = loadResortArt();
   }
 
   /** Fit the 640x400 stage into the canvas's CSS box at device resolution. */
@@ -133,68 +185,155 @@ export class Renderer {
       this.canvas.height = h;
     }
     this.k = w / VIEW.stageW;
-    for (const c of [this.bg, this.shadow]) {
-      c.width = w;
-      c.height = h;
-    }
-    this.paintBackground();
   }
 
   // -------------------------------------------------------------------------
   // Transforms
   // -------------------------------------------------------------------------
 
+  /** The stage itself: the HUD, which the camera never moves. */
   private stageSpace(ctx: CanvasRenderingContext2D): void {
     ctx.setTransform(this.k, 0, 0, this.k, 0, 0);
   }
 
+  /** The base view through the camera, zooming about the middle of its bottom edge. */
+  private viewSpace(ctx: CanvasRenderingContext2D): void {
+    const z = this.cam.zoom;
+    const s = this.k * z;
+    ctx.setTransform(s, 0, 0, s, this.k * (VIEW.stageW / 2) * (1 - z), this.k * VIEW.stageH * (1 - z));
+  }
+
+  /** World px through VIEW's placement and then the camera. */
   private worldSpace(ctx: CanvasRenderingContext2D): void {
-    const s = this.k * VIEW.scale;
-    ctx.setTransform(s, 0, 0, s, this.k * VIEW.offsetX, this.k * VIEW.offsetY);
+    const z = this.cam.zoom;
+    const s = this.k * VIEW.scale * z;
+    ctx.setTransform(
+      s, 0, 0, s,
+      this.k * (VIEW.stageW / 2 + (VIEW.offsetX - VIEW.stageW / 2) * z),
+      this.k * (VIEW.stageH + (VIEW.offsetY - VIEW.stageH) * z),
+    );
+  }
+
+  /** Where a world point lands on the stage, through the camera. */
+  private toStage(wx: number, wy: number): { x: number; y: number } {
+    const z = this.cam.zoom;
+    const x = wx * VIEW.scale + VIEW.offsetX;
+    const y = wy * VIEW.scale + VIEW.offsetY;
+    return { x: VIEW.stageW / 2 + (x - VIEW.stageW / 2) * z, y: VIEW.stageH + (y - VIEW.stageH) * z };
   }
 
   // -------------------------------------------------------------------------
-  // Static layer: sky, sea, sand, walls, net. Painted once per resize.
+  // Camera
   // -------------------------------------------------------------------------
 
-  private paintBackground(): void {
-    const ctx = this.bg.getContext('2d')!;
-    this.stageSpace(ctx);
+  /**
+   * Pull back far enough for the top of the ball's climb over the next
+   * CAMERA.lead s — its apex, predicted as the AI does, when it comes that
+   * soon — and for any doll above the frame. A moment after the ball tops
+   * out, settle back in. Spring-smoothed, so every move eases in and out. A
+   * new world starts on its framing.
+   */
+  private updateCamera(gw: GameWorld, interp: PoseSource, alpha: number): void {
+    const H = VIEW.stageH;
+    // The floor stays on the bottom edge, so world y `wy` sits `top` stage
+    // px below the frame's top at any zoom up to (H - top) / (H - base y).
+    let target = 1;
+    const frame = (wy: number, top: number) => {
+      target = Math.min(target, (H - top) / Math.max(1, H - (wy * VIEW.scale + VIEW.offsetY)));
+    };
+    const ball = interp.pose(gw.ball.body, alpha);
+    const vy = gw.ball.body.getLinearVelocity().y;
+    const g = GRAVITY.y * gw.ball.body.getGravityScale();
+    const t = vy >= 0 ? 0 : g > 0 ? Math.min(CAMERA.lead, -vy / g) : CAMERA.lead;
+    const climb = toPx(-(vy * t + (g * t * t) / 2));
+    frame(ball.y - climb - gw.ball.radiusPx, CAMERA.ballTop);
+    for (const p of [gw.p1, gw.p2]) frame(interp.pose(p.head, alpha).y - 20 * p.sizeScale, CAMERA.dollTop);
+    target = Math.max(CAMERA.minZoom, target);
+
+    const cam = this.cam;
+    const now = performance.now() / 1000;
+    if (cam.world !== gw) {
+      Object.assign(cam, { zoom: target, v: 0, goal: target, holdUntil: 0, world: gw, at: now });
+      return;
+    }
+    const dt = Math.max(0, Math.min(0.25, now - cam.at));
+    cam.at = now;
+    // Further out straight away; back in only after holding a moment.
+    if (target <= cam.goal) {
+      cam.goal = target;
+      cam.holdUntil = now + CAMERA.hold;
+    } else if (now >= cam.holdUntil) {
+      cam.goal = target;
+    }
+    const time = cam.goal < cam.zoom ? CAMERA.zoomOut : CAMERA.zoomIn;
+    [cam.zoom, cam.v] = smoothDamp(cam.zoom, cam.goal, cam.v, time, dt);
+    // Settle exactly, so at rest it is the base view to the pixel.
+    if (Math.abs(cam.zoom - cam.goal) < 1e-4 && Math.abs(cam.v) < 1e-3) {
+      cam.zoom = cam.goal;
+      cam.v = 0;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Court: sky, scenery, sea, sand, walls, net. Everything that holds still,
+  // drawn through the camera each frame.
+  // -------------------------------------------------------------------------
+
+  private paintCourt(ctx: CanvasRenderingContext2D): void {
     const W = VIEW.stageW;
     const H = VIEW.stageH;
+    const resort = hasResortBackground();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = resort ? PAL.resortSky : PAL.skyTop;
+    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
-    const sky = ctx.createLinearGradient(0, 0, 0, H);
-    sky.addColorStop(0, PAL.skyTop);
-    sky.addColorStop(0.62, PAL.skyBottom);
-    ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, W, H);
+    // Zoomed out, the frame's top is above the base view's: fill up to it.
+    this.viewSpace(ctx);
+    const top = Math.min(0, H - H / this.cam.zoom);
+    if (resort) {
+      ctx.save();
+      ctx.translate(0, top);
+      drawResortBackground(ctx, W, H - top, performance.now() / 1000);
+      ctx.restore();
+    } else {
+      const sky = ctx.createLinearGradient(0, 0, 0, H);
+      sky.addColorStop(0, PAL.skyTop);
+      sky.addColorStop(0.62, PAL.skyBottom);
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, top, W, H - top);
 
-    // Sea band just above the sand line.
+      // Sea band just above the sand line.
+      this.worldSpace(ctx);
+      const seaTop = FLOOR_TOP_PX - 95;
+      ctx.fillStyle = PAL.sea;
+      ctx.fillRect(-400, seaTop, 1500, SAND_TOP_PX - seaTop);
+      ctx.fillStyle = PAL.seaFoam;
+      ctx.fillRect(-400, seaTop, 1500, 3);
+      ctx.fillRect(-400, SAND_TOP_PX - 4, 1500, 2);
+
+      // Sand playing surface.
+      const g = COURT.ground;
+      const sand = ctx.createLinearGradient(0, SAND_TOP_PX, 0, g.y + g.hh);
+      sand.addColorStop(0, PAL.sand);
+      sand.addColorStop(1, PAL.sandDark);
+      ctx.fillStyle = sand;
+      ctx.fillRect(g.x - g.hw, SAND_TOP_PX, g.hw * 2, g.y + g.hh - SAND_TOP_PX);
+      ctx.fillStyle = PAL.sandLine;
+      ctx.fillRect(g.x - g.hw, SAND_TOP_PX, g.hw * 2, 1.5);
+    }
     this.worldSpace(ctx);
-    const seaTop = FLOOR_TOP_PX - 95;
-    ctx.fillStyle = PAL.sea;
-    ctx.fillRect(-400, seaTop, 1500, SAND_TOP_PX - seaTop);
-    ctx.fillStyle = PAL.seaFoam;
-    ctx.fillRect(-400, seaTop, 1500, 3);
-    ctx.fillRect(-400, SAND_TOP_PX - 4, 1500, 2);
 
-    // Sand playing surface.
-    const g = COURT.ground;
-    const sand = ctx.createLinearGradient(0, SAND_TOP_PX, 0, g.y + g.hh);
-    sand.addColorStop(0, PAL.sand);
-    sand.addColorStop(1, PAL.sandDark);
-    ctx.fillStyle = sand;
-    ctx.fillRect(g.x - g.hw, SAND_TOP_PX, g.hw * 2, g.y + g.hh - SAND_TOP_PX);
-    ctx.fillStyle = PAL.sandLine;
-    ctx.fillRect(g.x - g.hw, SAND_TOP_PX, g.hw * 2, 1.5);
-
-    // Walls.
+    // Walls, drawn on out and up past their colliders: zoomed out, the
+    // camera sees beyond them.
+    const far = 4000;
     for (const w of [COURT.leftWall, COURT.rightWall]) {
+      const left = w === COURT.leftWall;
+      const inner = left ? w.x + w.hw : w.x - w.hw;
+      const bottom = w.y + w.hh;
       ctx.fillStyle = PAL.wall;
-      ctx.fillRect(w.x - w.hw, w.y - w.hh, w.hw * 2, w.hh * 2);
+      ctx.fillRect(left ? inner - far : inner, bottom - far, far, far);
       ctx.fillStyle = PAL.wallEdge;
-      const inner = w === COURT.leftWall ? w.x + w.hw - 4 : w.x - w.hw;
-      ctx.fillRect(inner, w.y - w.hh, 4, w.hh * 2);
+      ctx.fillRect(left ? inner - 4 : inner, bottom - far, 4, far);
     }
 
     // Prize buttons (§13): the recess each sits in. The button itself animates,
@@ -215,27 +354,27 @@ export class Renderer {
     // with a mesh panel hanging off the top half. The pole is planted where
     // the dolls' feet stand, as the original's net art is.
     const n = COURT.net;
-    const top = n.y - n.hh;
-    const bottom = n.y + n.hh;
+    const netTop = n.y - n.hh;
+    const netBottom = n.y + n.hh;
     ctx.fillStyle = PAL.netMesh;
     ctx.strokeStyle = PAL.netMesh;
     ctx.lineWidth = 0.8;
     const meshW = 7;
-    const meshH = Math.min(62, bottom - top - 4);
+    const meshH = Math.min(62, netBottom - netTop - 4);
     ctx.beginPath();
-    for (let y = top + 4; y <= top + meshH; y += 7) {
+    for (let y = netTop + 4; y <= netTop + meshH; y += 7) {
       ctx.moveTo(n.x - meshW, y);
       ctx.lineTo(n.x + meshW, y);
     }
     for (let x = -meshW; x <= meshW; x += 3.5) {
-      ctx.moveTo(n.x + x, top + 4);
-      ctx.lineTo(n.x + x, top + meshH);
+      ctx.moveTo(n.x + x, netTop + 4);
+      ctx.lineTo(n.x + x, netTop + meshH);
     }
     ctx.stroke();
     ctx.fillStyle = PAL.netPole;
-    ctx.fillRect(n.x - 2, top, 4, SOLES_PX - top);
+    ctx.fillRect(n.x - 2, netTop, 4, SOLES_PX - netTop);
     ctx.fillStyle = PAL.netTape;
-    ctx.fillRect(n.x - meshW - 1, top, meshW * 2 + 2, 4);
+    ctx.fillRect(n.x - meshW - 1, netTop, meshW * 2 + 2, 4);
   }
 
   // -------------------------------------------------------------------------
@@ -244,10 +383,10 @@ export class Renderer {
 
   draw(gw: GameWorld, frames: Interpolator, alpha: number, hud: HudState): void {
     const ctx = this.ctx;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.drawImage(this.bg, 0, 0);
     // Every doll joint drawn closed, and a held ball on its hand (dollPose.ts).
     const interp = closedPoses(frames, alpha, [gw.p1, gw.p2], gw.ball.body);
+    this.updateCamera(gw, interp, alpha);
+    this.paintCourt(ctx);
 
     this.drawShadows(gw, interp, alpha);
 
@@ -275,30 +414,30 @@ export class Renderer {
     this.drawHud(ctx, gw, hud, now);
   }
 
-  /**
-   * One silhouette pass for both dolls, composited once at alpha 0.2, so
-   * overlapping parts do not stack into darker patches.
-   */
+  /** Soft sand contact shadows stay on the ground while the doll jumps or flips. */
   private drawShadows(gw: GameWorld, interp: PoseSource, alpha: number): void {
-    const sctx = this.shadow.getContext('2d')!;
-    sctx.setTransform(1, 0, 0, 1, 0, 0);
-    sctx.clearRect(0, 0, this.shadow.width, this.shadow.height);
-    sctx.fillStyle = '#000';
-    for (const p of [gw.p1, gw.p2]) {
-      const ang = SHADOW.angle[p.id];
-      const dx = (SHADOW.dist * Math.cos(ang)) / VIEW.scale;
-      const dy = (SHADOW.dist * Math.sin(ang)) / VIEW.scale;
-      this.worldSpace(sctx);
-      sctx.translate(dx, dy);
-      for (const name of DRAW_ORDER) {
-        this.withPose(sctx, interp.pose(p.part(name), alpha), () => this.partShape(sctx, name), p.sizeScale);
-      }
-    }
     const ctx = this.ctx;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.globalAlpha = SHADOW.alpha;
-    ctx.drawImage(this.shadow, 0, 0);
-    ctx.globalAlpha = 1;
+    ctx.save();
+    this.worldSpace(ctx);
+    for (const p of [gw.p1, gw.p2]) {
+      const hips = interp.pose(p.ass, alpha);
+      const left = interp.pose(p.part('FootLeft'), alpha);
+      const right = interp.pose(p.part('FootRight'), alpha);
+      const lift = Math.max(0, FLOOR_TOP_PX - Math.max(left.y, right.y) - footHalfHeight * p.sizeScale);
+      const radius = (24 + lift * 0.025) * p.sizeScale;
+      const opacity = 0.3 / (1 + lift / 100);
+      ctx.save();
+      ctx.translate(hips.x, FLOOR_TOP_PX + (SOLE_Y - footHalfHeight) * p.sizeScale);
+      ctx.scale(1, 0.22);
+      const fade = ctx.createRadialGradient(0, 0, 0, 0, 0, radius);
+      fade.addColorStop(0, 'rgba(68,44,25,' + opacity + ')');
+      fade.addColorStop(0.4, 'rgba(68,44,25,' + opacity * 0.7 + ')');
+      fade.addColorStop(1, 'rgba(68,44,25,0)');
+      ctx.fillStyle = fade;
+      ctx.fillRect(-radius, -radius, radius * 2, radius * 2);
+      ctx.restore();
+    }
+    ctx.restore();
   }
 
   private withPose(ctx: CanvasRenderingContext2D, pose: Pose, fn: () => void, scale = 1): void {
@@ -585,17 +724,13 @@ export class Renderer {
     }
   }
 
-  /** Silhouette only — used for the shadow pass. */
-  private partShape(ctx: CanvasRenderingContext2D, name: PartName): void {
-    ctx.fill(outlinePath(name));
-  }
-
   /**
    * A part on the original sprite's outline (dollArt.ts), in its player's
    * kit. Clothing is painted inside the outline, so it never changes where a
    * part ends or how it meets the next one.
    */
   private partArt(ctx: CanvasRenderingContext2D, name: PartName, id: 1 | 2): void {
+    if (drawResortPart(ctx, name, id)) return;
     const path = outlinePath(name);
     const jersey = PAL.jersey[id];
     const shorts = PAL.shorts[id];
@@ -1346,9 +1481,8 @@ export class Renderer {
   private drawOffscreenPlayers(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: PoseSource, alpha: number): void {
     for (const p of [gw.p1, gw.p2]) {
       const pose = interp.pose(p.head, alpha);
-      const sy = pose.y * VIEW.scale + VIEW.offsetY;
+      const { x: sx, y: sy } = this.toStage(pose.x, pose.y);
       if (sy > -6) continue;
-      const sx = pose.x * VIEW.scale + VIEW.offsetX;
       ctx.fillStyle = PAL.jersey[p.id];
       ctx.beginPath();
       ctx.moveTo(sx, 2);
@@ -1359,83 +1493,94 @@ export class Renderer {
       ctx.font = '800 8px system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
-      ctx.fillText(`P${p.id} ${(-sy / VIEW.scale / 30).toFixed(1)} m`, sx, 16);
+      ctx.fillText(`P${p.id} ${(-sy / (VIEW.scale * this.cam.zoom) / 30).toFixed(1)} m`, sx, 16);
     }
   }
 
   /**
-   * The hazard queue: the next four to come out of either button, in order,
-   * the first one largest. When one launches it pops out of the first slot
-   * and the rest slide up a place.
+   * The top bar's pills either side of the page's controls: the next
+   * hazard on the left, the target score on the right. Returns its bottom.
    */
-  private drawHazardQueue(ctx: CanvasRenderingContext2D, gw: GameWorld, cx: number, now: number): number {
-    if (!gw.hazards) return 0;
-    const slots = 4;
-    const gap = 36;
-    const labelW = 30;
-    const w = labelW + gap * slots + 4;
-    const h = 34;
-    const x0 = cx - w / 2;
-    const y0 = 5;
-    const iconY = y0 + 14;
+  private drawTopBar(ctx: CanvasRenderingContext2D, gw: GameWorld, now: number): number {
+    const { midX, y, h, controlsW, gap } = HUD_BAR;
+    const cy = y + h / 2;
     ctx.save();
-    ctx.fillStyle = 'rgba(255,255,255,0.6)';
-    roundRect(ctx, x0, y0, w, h, 9);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(15,25,35,0.12)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(15,25,35,0.6)';
-    ctx.font = '800 7px system-ui, sans-serif';
-    ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('NEXT', x0 + labelW / 2 + 3, y0 + h / 2);
+    ctx.font = '800 7px system-ui, sans-serif';
+    const target = `FIRST TO ${OPTIONS.gameSet}`;
+    const x = midX + controlsW / 2 + gap;
+    const w = ctx.measureText(target).width + 20;
+    hudPill(ctx, x, w);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(15,25,35,0.6)';
+    ctx.fillText(target, x + w / 2, cy + 0.5);
+    if (gw.hazards) this.drawNextHazard(ctx, gw, midX - controlsW / 2 - gap, now);
+    ctx.restore();
+    return y + h;
+  }
 
-    const slotX = (q: number) => x0 + labelW + gap * (q + 0.5);
+  /**
+   * The next hazard to come out of either button, in a pill ending at
+   * `right`. When one launches it pops out and the one after it grows in.
+   */
+  private drawNextHazard(ctx: CanvasRenderingContext2D, gw: GameWorld, right: number, now: number): void {
+    const { y, h } = HUD_BAR;
+    const cy = y + h / 2;
+    const r = 9.5;
+    const pad = 9;
+    ctx.font = '800 7px system-ui, sans-serif';
+    const labelW = ctx.measureText('NEXT').width;
+    // Wide enough for the longest name, so the pill holds still as they change.
+    const nameW = Math.max(...EXECUTER_VARIANTS.map((v) => ctx.measureText(v.label).width));
+    const w = pad + labelW + 5 + 2 * r + 5 + nameW + pad;
+    const x0 = right - w;
+    hudPill(ctx, x0, w);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(15,25,35,0.6)';
+    ctx.fillText('NEXT', x0 + pad, cy + 0.5);
+
+    const iconX = x0 + pad + labelW + 5 + r;
     ctx.fillStyle = 'rgba(230,59,46,0.1)';
     ctx.strokeStyle = 'rgba(230,59,46,0.45)';
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.arc(slotX(0), iconY, 14.5, 0, Math.PI * 2);
+    ctx.arc(iconX, cy, r, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
 
     const since = now - gw.executerLaunchEffect.frame;
-    const slide = since >= 0 && since < 10 ? 1 - easeOutCubic(since / 10) : 0;
+    const p = since >= 0 && since < 10 ? easeOutCubic(since / 10) : 1;
     const gone = gw.executerLaunchEffect.variant;
-    if (gone && slide > 0) {
+    if (gone && p < 1) {
       ctx.save();
-      ctx.globalAlpha = slide;
-      ctx.translate(slotX(0), iconY);
-      ctx.scale(2 - slide, 2 - slide);
-      this.drawExecuterIcon(ctx, gone.id, 24);
+      ctx.globalAlpha = 1 - p;
+      ctx.translate(iconX, cy);
+      ctx.scale(1 + p, 1 + p);
+      this.drawExecuterIcon(ctx, gone.id, 17);
       ctx.restore();
     }
-    gw.executerQueue.peek(slots).forEach((v, i) => {
-      const q = i + slide; // where it is between slots, 0 is next
-      const size = q < 1 ? 24 - 6 * q : 18;
-      const fadeIn = q > slots - 1 ? 1 - (q - (slots - 1)) : 1;
-      ctx.save();
-      ctx.globalAlpha = fadeIn * (1 - 0.1 * q);
-      ctx.translate(slotX(q), iconY);
-      this.drawExecuterIcon(ctx, v.id, size);
-      ctx.restore();
-      ctx.globalAlpha = fadeIn;
-      ctx.textBaseline = 'alphabetic';
-      ctx.font = q < 0.5 ? '800 6.5px system-ui, sans-serif' : '700 6px system-ui, sans-serif';
-      ctx.fillStyle = q < 0.5 ? '#c23a2e' : 'rgba(15,25,35,0.6)';
-      ctx.fillText(v.label, slotX(q), y0 + h - 2.5);
-    });
+    const [next] = gw.executerQueue.peek(1);
+    if (!next) return;
+    ctx.save();
+    ctx.globalAlpha = p;
+    ctx.translate(iconX, cy);
+    ctx.scale(0.6 + 0.4 * p, 0.6 + 0.4 * p);
+    this.drawExecuterIcon(ctx, next.id, 17);
     ctx.restore();
-    return y0 + h - 3;
+    ctx.save();
+    ctx.globalAlpha = p;
+    ctx.fillStyle = '#c23a2e';
+    ctx.fillText(next.label, iconX + r + 5, cy + 0.5);
+    ctx.restore();
   }
 
   /** The ball often flies above the frame; point at it from the top edge. */
   private drawOffscreenBall(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: PoseSource, alpha: number): void {
     const pose = interp.pose(gw.ball.body, alpha);
-    const sy = pose.y * VIEW.scale + VIEW.offsetY;
-    if (sy > -gw.ball.radiusPx * VIEW.scale) return;
-    const sx = pose.x * VIEW.scale + VIEW.offsetX;
-    const heightM = (-sy / VIEW.scale / 30).toFixed(1);
+    const { x: sx, y: sy } = this.toStage(pose.x, pose.y);
+    const scale = VIEW.scale * this.cam.zoom;
+    if (sy > -gw.ball.radiusPx * scale) return;
+    const heightM = (-sy / scale / 30).toFixed(1);
     const tint = this.currentBallTint(gw, gw.frame - 1 + alpha);
     ctx.fillStyle = tint ? `rgba(${tint.rgb},${Math.min(0.9, 0.55 + tint.alpha)})` : 'rgba(20,30,40,0.55)';
     ctx.beginPath();
@@ -1452,11 +1597,10 @@ export class Renderer {
 
   private drawHud(ctx: CanvasRenderingContext2D, gw: GameWorld, hud: HudState, now: number): void {
     const g = gw.game;
-    // Keep the HUD over the court and clear of the prize buttons, which sit at
-    // the top of each wall (stage x ~6 and ~593) and glow ~30 px around.
-    const leftX = 48;
-    const rightX = RIGHT_WALL_INNER_PX * VIEW.scale + VIEW.offsetX - 42;
-    const midX = (leftX + rightX) / 2;
+    const night = hasResortBackground();
+    const leftX = HUD_LEFT_X;
+    const rightX = HUD_RIGHT_X;
+    const midX = HUD_BAR.midX;
 
     const side = (id: 1 | 2) => {
       const p = id === 1 ? gw.p1 : gw.p2;
@@ -1468,10 +1612,10 @@ export class Renderer {
         : hud.singlePlayer ? 'YOU' : `PLAYER ${id}`;
       ctx.textAlign = align;
       ctx.textBaseline = 'top';
-      ctx.fillStyle = 'rgba(15,25,35,0.72)';
+      ctx.fillStyle = night ? 'rgba(233,244,255,0.88)' : 'rgba(15,25,35,0.72)';
       ctx.font = '700 9px system-ui, sans-serif';
       ctx.fillText(label, x, 12);
-      ctx.fillStyle = PAL.jersey[id];
+      ctx.fillStyle = night ? (id === 1 ? '#74baff' : '#ff887d') : PAL.jersey[id];
       ctx.font = '800 30px system-ui, sans-serif';
       ctx.fillText(String(g.score[id]), x, 22);
       // Touch pips. The third lights the warning (§11.3).
@@ -1481,46 +1625,37 @@ export class Renderer {
         ctx.beginPath();
         ctx.arc(px, 62, 3.6, 0, Math.PI * 2);
         const on = i < Math.min(p.contact, MAX_TOUCHES);
-        ctx.fillStyle = on ? (warn ? '#e63b2e' : 'rgba(15,25,35,0.75)') : 'rgba(15,25,35,0.16)';
+        ctx.fillStyle = on
+          ? (warn ? '#e63b2e' : night ? '#c5e5ff' : 'rgba(15,25,35,0.75)')
+          : night ? 'rgba(190,215,245,0.3)' : 'rgba(15,25,35,0.16)';
         ctx.fill();
       }
     };
     side(1);
     side(2);
 
-    // The hazard queue sits at the very top; the match info goes under it.
-    const top = this.drawHazardQueue(ctx, gw, midX, now);
+    // The top bar; the match info goes under it.
+    const top = this.drawTopBar(ctx, gw, now);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    ctx.fillStyle = 'rgba(15,25,35,0.55)';
-    ctx.font = '700 8px system-ui, sans-serif';
-    ctx.fillText(`FIRST TO ${OPTIONS.gameSet}`, midX, top + 10);
 
     // Serve clock: 6 - count (§11).
     if (g.phase === 'play' && gw.ball.ballOfPlayer !== 0) {
       const holder = gw.ball.ballOfPlayer;
       const secs = g.serveSecondsLeft;
-      ctx.fillStyle = secs <= 2 ? '#e63b2e' : 'rgba(15,25,35,0.8)';
+      ctx.fillStyle = secs <= 2 ? '#e63b2e' : night ? '#edf6ff' : 'rgba(15,25,35,0.8)';
       ctx.font = '800 18px system-ui, sans-serif';
-      ctx.fillText(String(secs), midX, top + 22);
+      ctx.fillText(String(secs), midX, top + 8);
       ctx.font = '700 8px system-ui, sans-serif';
-      ctx.fillStyle = 'rgba(15,25,35,0.6)';
+      ctx.fillStyle = night ? 'rgba(222,237,255,0.82)' : 'rgba(15,25,35,0.6)';
       const who = hud.singlePlayer ? (holder === 1 ? 'YOUR SERVE' : 'CPU SERVE') : `P${holder} SERVE`;
-      ctx.fillText(who, midX, top + 44);
-      if (hud.showControlsHint && holder === 1) {
-        ctx.fillText('JUMP, THEN TAP TO SERVE', midX, top + 55);
+      ctx.fillText(who, midX, top + 30);
+      if (hud.controlsHint && holder === 1) {
+        ctx.fillText(hud.controlsHint, midX, top + 41);
       }
     }
 
-    if (hud.message) {
-      ctx.textBaseline = 'middle';
-      ctx.font = '900 34px system-ui, sans-serif';
-      ctx.lineWidth = 5;
-      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-      ctx.strokeText(hud.message, midX, 150);
-      ctx.fillStyle = 'rgba(15,25,35,0.9)';
-      ctx.fillText(hud.message, midX, 150);
-    }
+    if (hud.message) this.drawBanner(ctx, hud.message, hud.messageTone, midX, 150);
 
     for (const id of [1, 2] as const) {
       const live = gw.executers.filter((e) => !e.dead && e.target.id === id);
@@ -1530,24 +1665,81 @@ export class Renderer {
       const x = id === 1 ? leftX : rightX;
       if (live.length > 0) {
         const secs = Math.max(...live.map((e) => e.secondsLeft));
-        ctx.fillStyle = '#e63b2e';
+        ctx.fillStyle = night ? '#ff927f' : '#e63b2e';
         const label = live.length > 1 ? `${live.length} HAZARDS · ${secs}s` : `${live[0].variant.label} · ${secs}s`;
         ctx.fillText(label, x, 72);
       }
       const power = gw.powerUps.active[id];
       if (power) {
-        ctx.fillStyle = '#9a6400';
+        ctx.fillStyle = night ? '#ffd383' : '#9a6400';
         const seconds = Math.max(0, Math.ceil((power.expiresAt - gw.frame) / 30));
         ctx.fillText(`${POWER_LABELS[power.kind]} · ${seconds}s`, x, live.length > 0 ? 84 : 72);
       }
       const cooldown = gw.swingCooldownFramesLeft(id);
       if (cooldown > 0) {
-        ctx.fillStyle = 'rgba(15,25,35,0.7)';
+        ctx.fillStyle = night ? 'rgba(222,237,255,0.82)' : 'rgba(15,25,35,0.7)';
         const y = 72 + (live.length > 0 ? 12 : 0) + (power ? 12 : 0);
         ctx.fillText(`FLIP · ${Math.ceil(cooldown / FPS)}s`, x, y);
       }
     }
   }
+
+  /**
+   * A pill across the court in the scorer's jersey: the headline, and under
+   * it the reason after a " · " if there is one.
+   */
+  private drawBanner(ctx: CanvasRenderingContext2D, text: string, tone: 0 | 1 | 2, x: number, y: number): void {
+    const [title, detail] = text.split(' · ');
+    const titleFont = '900 21px system-ui, sans-serif';
+    const detailFont = '800 8px system-ui, sans-serif';
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = titleFont;
+    let w = ctx.measureText(title).width;
+    if (detail) {
+      ctx.font = detailFont;
+      w = Math.max(w, ctx.measureText(detail).width);
+    }
+    w += 40;
+    const h = detail ? 46 : 36;
+    ctx.shadowColor = 'rgba(15,25,35,0.28)';
+    ctx.shadowBlur = 14 * this.k;
+    ctx.shadowOffsetY = 3 * this.k;
+    ctx.fillStyle = tone ? PAL.jersey[tone] : 'rgba(15,25,35,0.86)';
+    roundRect(ctx, x - w / 2, y - h / 2, w, h, h / 2);
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.font = titleFont;
+    ctx.fillText(title, x, detail ? y - 6 : y + 1);
+    if (detail) {
+      ctx.font = detailFont;
+      ctx.fillStyle = 'rgba(255,255,255,0.82)';
+      ctx.fillText(detail, x, y + 13);
+    }
+    ctx.restore();
+  }
+}
+
+/**
+ * A critically damped spring toward `target` (Game Programming Gems 4,
+ * §1.10): it eases out of rest and into the target over about `time` s and
+ * never passes it. Returns the new value and velocity.
+ */
+function smoothDamp(value: number, target: number, velocity: number, time: number, dt: number): [number, number] {
+  if (dt <= 0) return [value, velocity];
+  const omega = 2 / time;
+  const x = omega * dt;
+  const decay = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x);
+  const change = value - target;
+  const temp = (velocity + omega * change) * dt;
+  const next = target + (change + temp) * decay;
+  if (target - value > 0 === next > target) return [target, 0];
+  return [next, (velocity - omega * temp) * decay];
 }
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
@@ -1607,6 +1799,17 @@ function ring(
   ctx.lineWidth = width * (1 - p) + 0.8;
   ctx.beginPath();
   ctx.arc(x, y, r0 + (r1 - r0) * easeOutCubic(p), 0, Math.PI * 2);
+  ctx.stroke();
+}
+
+/** One of the top bar's frosted pills, `w` wide from `x`. */
+function hudPill(ctx: CanvasRenderingContext2D, x: number, w: number): void {
+  const { y, h } = HUD_BAR;
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  roundRect(ctx, x, y, w, h, h / 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(15,25,35,0.12)';
+  ctx.lineWidth = 1;
   ctx.stroke();
 }
 
