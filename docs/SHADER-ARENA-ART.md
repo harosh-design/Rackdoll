@@ -1,9 +1,14 @@
 # Flowing shader arena
 
 Choose **Shaders** under **Graphics** in the start menu to use this variant.
-**People** restores the previous indoor arena and textured human players and is
+**People** restores textured human players and is
 the default for a fresh installation. The choice is stored locally, previews
 immediately in the menu, and persists through restarts and return to the menu.
+
+The separate **Location** selector and HUD landscape icon choose Arena, Beach,
+or Rooftop. Arena retains the procedural background described below; outdoor
+locations use environment plates with the same glass and chrome players. See
+[switchable locations](ARENA-LOCATIONS.md).
 
 The court uses a procedural WebGL background and continuous glass and chrome
 player materials in `src/render/shaderScene.ts`. Visual references are

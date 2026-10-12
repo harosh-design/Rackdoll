@@ -744,6 +744,7 @@
           <path d="M3 10.8c3.2-1.6 6.6-1.6 9.5.3" />
         </symbol>
         <symbol id="i-pause" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.2" /><rect x="14" y="5" width="4" height="14" rx="1.2" /></symbol>
+        <symbol id="i-scene" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3" /><circle cx="16" cy="9" r="2" /><path d="M3 17l6-6 5 5 3-3 4 4" /></symbol>
         <symbol id="i-sound-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor" stroke="none" /><path d="M15.5 9a4 4 0 0 1 0 6" /><path d="M18.5 6.5a7.5 7.5 0 0 1 0 11" /></symbol>
         <symbol id="i-sound-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor" stroke="none" /><path d="M16 9.5l5 5M21 9.5l-5 5" /></symbol>
         <symbol id="i-fs-enter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M20 15v3.5a1.5 1.5 0 0 1-1.5 1.5H15M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15" /></symbol>
@@ -788,6 +789,9 @@
     <main class="stage" id="stage">
       <canvas id="game" tabindex="-1" aria-label="Ragdoll volleyball court"></canvas>
       <div class="hud-controls" id="hud-controls" role="toolbar" aria-label="Game controls">
+        <button class="hud-btn" id="btn-scene" type="button" aria-label="Switch location" title="Switch location">
+          <svg><use href="#i-scene" /></svg>
+        </button>
         <button class="hud-btn" id="btn-pause" type="button" aria-label="Pause" title="Pause (P)">
           <svg><use href="#i-pause" /></svg>
         </button>
@@ -829,14 +833,23 @@
               <div class="mode-group graphics-group" role="group" aria-label="Graphics style" aria-describedby="visual-style-description">
                 <button class="mode" type="button" data-visual-style="people" aria-pressed="true">
                   <span class="mode-title">People</span>
-                  <span class="mode-cap">Original arena</span>
+                  <span class="mode-cap">Textured players</span>
                 </button>
                 <button class="mode" type="button" data-visual-style="shaders" aria-pressed="false">
                   <span class="mode-title">Shaders</span>
                   <span class="mode-cap">Glass &amp; chrome</span>
                 </button>
               </div>
-              <p class="hint" id="visual-style-description">Textured people in the original indoor arena.</p>
+              <p class="hint" id="visual-style-description">Textured people in your selected location.</p>
+            </div>
+            <div class="field">
+              <div class="field-head"><span class="label">Location</span></div>
+              <div class="mode-group" role="group" aria-label="Location" aria-describedby="arena-scene-description">
+                <button class="mode" type="button" data-arena-scene="indoor" aria-pressed="true"><span class="mode-title">Arena</span></button>
+                <button class="mode" type="button" data-arena-scene="beach" aria-pressed="false"><span class="mode-title">Beach</span></button>
+                <button class="mode" type="button" data-arena-scene="rooftop" aria-pressed="false"><span class="mode-title">Rooftop</span></button>
+              </div>
+              <p class="hint" id="arena-scene-description">Indoor arena, or flowing light with Shaders.</p>
             </div>
             <div class="field">
               <div class="field-head"><span class="label">Mode</span></div>
@@ -923,6 +936,7 @@
                   <li><b>First to 10 points</b> wins the match. Three touches max per side.</li>
                   <li><b>Jump first, then tap <kbd data-keyof="serve">Space</kbd></b> for a serve that clears the net. You have six seconds to serve.</li>
                   <li>The ball takes the colour of whoever touched it last.</li>
+                  <li><b>Avoid the sharp net tip.</b> It cuts off body parts. Keep playing with your remaining body; injuries last until the next match.</li>
                 </ul>
               </section>
               <section>
@@ -956,7 +970,7 @@
                   <div class="chip solo" style="--c: #f2b705"><i></i><span><b>High jump</b></span></div>
                   <div class="chip solo" style="--c: #f2b705"><i></i><span><b>Speed</b></span></div>
                   <div class="chip solo" style="--c: #f2b705"><i></i><span><b>Magnet hands</b></span></div>
-                  <div class="chip solo" style="--c: #f2b705"><i></i><span><b>Shield</b>: no knockback or stun</span></div>
+                  <div class="chip solo" style="--c: #f2b705"><i></i><span><b>Shield</b>: no knockback, stun or cuts</span></div>
                 </div>
               </section>
             </div>

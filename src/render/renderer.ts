@@ -1,6 +1,6 @@
 import {
   BALL, BALL_TINT, BOXER, CHARGE, COURT, FLIP, EXECUTER, FLOOR_TOP_PX, FPS, MAX_TOUCHES, OPTIONS, PARTS, PRIZE_ANIM,
-  PRIZE_BUTTONS, SLIME, SPRING, STUN, SWING, VIEW, toPx, type PartName,
+  PRIZE_BUTTONS, SLIME, SPRING, STUN, SWING, VIEW, NET_SPIKE, toPx, type PartName,
 } from '../sim/constants';
 import type { Body, Vec2Value } from 'planck';
 import type { Executer } from '../sim/executer';
@@ -11,6 +11,7 @@ import { POWER_LABELS } from '../sim/powerUps';
 import { drawDronePops, drawDrones } from './drones';
 import { drawArenaSprite } from './arenaArt';
 import { STAGE } from './stageLayout';
+import type { ArenaScene } from './arenaBackground';
 import { SOLE_Y } from './dollArt';
 import { closedPoses, type PoseSource } from './dollPose';
 import type { Interpolator, Pose } from './interp';
@@ -76,7 +77,7 @@ const SOLES_PX = FLOOR_TOP_PX + SOLE_Y - footHalfHeight;
 
 /**
  * HUD columns, stage px: the scores sit over the court, clear of the prize
- * buttons at the top of each wall (stage x ~6 and ~593), which glow ~30 px
+ * buttons at the top of each wall (stage x ~25 and ~612), which glow ~30 px
  * around.
  */
 const HUD_LEFT_X = 48;
@@ -91,7 +92,7 @@ export const HUD_BAR = {
   midX: (HUD_LEFT_X + HUD_RIGHT_X) / 2,
   y: 30,
   h: 18,
-  controlsW: 66,
+  controlsW: 88,
   gap: 5,
 } as const;
 
@@ -140,6 +141,7 @@ export class Renderer {
   private sceneryAt: number | null = null;
   private readonly shaders = new ShaderScene();
   private visualStyle: VisualStyle = 'people';
+  private arenaScene: ArenaScene = 'indoor';
   private readonly backdrop: AmbientBackdrop | null;
   readonly ready: Promise<void>;
 
@@ -154,6 +156,11 @@ export class Renderer {
   /** Switch scenery and players together without touching the live simulation. */
   setVisualStyle(style: VisualStyle): void {
     this.visualStyle = style;
+  }
+
+  /** Changing the location preserves the current match and player materials. */
+  setArenaScene(scene: ArenaScene): void {
+    this.arenaScene = scene;
   }
 
   /** Fit the 640x400 stage into the canvas's CSS box at device resolution. */
@@ -197,7 +204,7 @@ export class Renderer {
 
   private paintCourt(ctx: CanvasRenderingContext2D): void {
     const floor = this.toStage(0, SOLES_PX).y / VIEW.stageH;
-    if (this.visualStyle === 'shaders') {
+    if (this.visualStyle === 'shaders' && this.arenaScene === 'indoor') {
       this.backdrop?.draw(this.scenerySeconds, floor);
       this.shaders.drawBackground(ctx, this.scenerySeconds, floor);
     } else {
@@ -235,7 +242,7 @@ export class Renderer {
     const top = n.y - n.hh;
     ctx.save(); ctx.shadowColor = '#88cfff'; ctx.shadowBlur = 7;
     ctx.fillStyle = '#c2e8ff'; ctx.fillRect(n.x - 1.2, top, 2.4, SOLES_PX - top);
-    ctx.beginPath(); ctx.arc(n.x, top, 3, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+    this.drawNetSpike(ctx, n.x, top); ctx.restore();
   }
 
   private paintPeopleCourt(ctx: CanvasRenderingContext2D): void {
@@ -245,12 +252,14 @@ export class Renderer {
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     this.stageSpace(ctx);
     ctx.save();
-    drawResortBackground(ctx, VIEW.stageW, VIEW.stageH, this.scenerySeconds);
+    drawResortBackground(ctx, VIEW.stageW, VIEW.stageH, this.scenerySeconds, undefined, this.arenaScene);
     ctx.restore();
     this.worldSpace(ctx);
     const ground = COURT.ground;
     const floor = ctx.createLinearGradient(0, SOLES_PX, 0, SOLES_PX + 80);
-    floor.addColorStop(0, '#283344'); floor.addColorStop(1, '#111827');
+    const floorColors = this.arenaScene === 'beach' ? ['#666552', '#343d48']
+      : this.arenaScene === 'rooftop' ? ['#9b7464', '#3d3941'] : ['#283344', '#111827'];
+    floor.addColorStop(0, floorColors[0]); floor.addColorStop(1, floorColors[1]);
     ctx.fillStyle = floor;
     ctx.fillRect(ground.x - ground.hw, SOLES_PX, ground.hw * 2, 4000);
     ctx.fillStyle = '#9fc8ca';
@@ -279,7 +288,18 @@ export class Renderer {
     const netTop = net.y - net.hh;
     ctx.fillStyle = '#d7e4e6';
     ctx.fillRect(net.x - 1.2, netTop, 2.4, SOLES_PX - netTop);
-    ctx.beginPath(); ctx.arc(net.x, netTop, 3, 0, Math.PI * 2); ctx.fill();
+    this.drawNetSpike(ctx, net.x, netTop);
+  }
+
+  private drawNetSpike(ctx: CanvasRenderingContext2D, x: number, top: number): void {
+    ctx.beginPath();
+    ctx.moveTo(x - NET_SPIKE.halfWidthPx, top);
+    ctx.lineTo(x, top - NET_SPIKE.heightPx);
+    ctx.lineTo(x + NET_SPIKE.halfWidthPx, top);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#f9d49a'; ctx.lineWidth = 0.8;
+    ctx.stroke();
   }
 
   // -------------------------------------------------------------------------
@@ -335,8 +355,8 @@ export class Renderer {
     this.worldSpace(ctx);
     for (const p of [gw.p1, gw.p2]) {
       const hips = interp.pose(p.ass, alpha);
-      const left = interp.pose(p.part('FootLeft'), alpha);
-      const right = interp.pose(p.part('FootRight'), alpha);
+      const left = interp.pose(p.activePart('FootLeft'), alpha);
+      const right = interp.pose(p.activePart('FootRight'), alpha);
       const lift = Math.max(0, FLOOR_TOP_PX - Math.max(left.y, right.y) - footHalfHeight * p.sizeScale);
       const radius = (24 + lift * 0.025) * p.sizeScale;
       const opacity = 0.3 / (1 + lift / 100);
@@ -363,11 +383,12 @@ export class Renderer {
     }
     if (gw.frame > state.frame) {
       for (const p of [gw.p1, gw.p2]) {
+        if (!p.isAttached('FootLeft') && !p.isAttached('FootRight')) continue;
         const grounded = p.grounded;
         const vx = p.ass.getLinearVelocity().x;
         const vy = p.ass.getLinearVelocity().y;
-        const left = interp.pose(p.part('FootLeft'), 1);
-        const right = interp.pose(p.part('FootRight'), 1);
+        const left = interp.pose(p.activePart('FootLeft'), 1);
+        const right = interp.pose(p.activePart('FootRight'), 1);
         const x = (left.x + right.x) / 2;
         if (grounded && !state.grounded[p.id]) {
           state.dust.push({ x, frame: gw.frame, drift: -Math.sign(vx) * 0.35, size: 1.5 });
@@ -491,9 +512,12 @@ export class Renderer {
       const head = interp.pose(p.head, alpha);
       const cx = (hips.x + head.x) / 2;
       const cy = (hips.y + head.y) / 2;
-      const feet = [interp.pose(p.part('FootLeft'), alpha), interp.pose(p.part('FootRight'), alpha)];
-      const fx = (feet[0].x + feet[1].x) / 2;
-      const fy = (feet[0].y + feet[1].y) / 2;
+      const attachedFeet = (['FootLeft', 'FootRight'] as const).filter(name => p.isAttached(name));
+      const tips = attachedFeet.length ? attachedFeet : (['LegLeft', 'LegRight'] as const).filter(name => p.isAttached(name));
+      const feet = tips.map(name => interp.pose(p.part(name), alpha));
+      if (!feet.length) continue;
+      const fx = feet.reduce((sum, foot) => sum + foot.x, 0) / feet.length;
+      const fy = feet.reduce((sum, foot) => sum + foot.y, 0) / feet.length;
       const radius = Math.hypot(fx - cx, fy - cy);
       const at = Math.atan2(fy - cy, fx - cx);
       // The streak trails behind the feet, against the spin.
@@ -1270,6 +1294,11 @@ export class Renderer {
         ctx.fillStyle = '#becdd6'; ctx.font = '600 6px system-ui'; ctx.fillText(label, x + dir * 16, y + 1);
       };
       let y = 65;
+      if (player.injured) {
+        ctx.fillStyle = '#ed805e'; ctx.font = '600 6px system-ui';
+        ctx.fillText('INJURED · ' + player.detachedBodies.length + ' PARTS LOST', x, y);
+        y += 14;
+      }
       const live = gw.executers.filter(e => !e.dead && e.target.id === id);
       if (live.length) {
         const remaining = Math.max(...live.map(e => e.secondsLeft));

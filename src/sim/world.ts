@@ -13,6 +13,7 @@ import { Executer, type ExecuterTuning } from './executer';
 import { ExecuterQueue, seededRandom, type ExecuterId, type ExecuterVariant } from './executerVariants';
 import { Game, type GameEvents } from './game';
 import { Ground } from './ground';
+import { NetSpike } from './netSpike';
 import { Player, type PlayerId } from './player';
 import { PowerUps, type PowerId } from './powerUps';
 import { airDamping, normalizePhysics, type PhysicsSettings } from './physics';
@@ -72,6 +73,7 @@ export class GameWorld {
   readonly world: World;
   private tuning: PhysicsSettings;
   readonly ground: Ground;
+  readonly netSpike = new NetSpike();
   readonly p1: Player;
   readonly p2: Player;
   readonly ball: Ball;
@@ -180,9 +182,11 @@ export class GameWorld {
         opts.events?.onNewRound?.();
       },
       onResetMatch: () => {
+        this.clearExecuters();
+        this.p1.restoreBody();
+        this.p2.restoreBody();
         this.powerUps.reset();
         this.bees.reset();
-        this.clearExecuters();
         this.executerLaunches = 0;
         this.executerQueue.reset();
         for (const button of this.ground.prizeButtons) button.launches = 0;
@@ -230,7 +234,7 @@ export class GameWorld {
     for (let body = this.world.getBodyList(); body; body = body.getNext()) {
       if (!body.isDynamic()) continue;
       const physical = body === this.ball.body || this.p1.bodies.includes(body)
-        || this.p2.bodies.includes(body) || bodyTypeOf(body) === BODYTYPE.EXECUTER;
+        || this.p2.bodies.includes(body) || bodyTypeOf(body) === BODYTYPE.EXECUTER || bodyTypeOf(body) === BODYTYPE.DEBRIS;
       if (physical) body.setLinearDamping(damping);
     }
   }
@@ -304,7 +308,17 @@ export class GameWorld {
     // a doll: a 0.07 kg hand hitting a 6 kg ball is badly conditioned, and at
     // 10 iterations the joints visibly stretch.
     const it = this.executerNearDoll() ? this.contactIterations : ITERATIONS;
+    this.netSpike.capture([this.p1, this.p2]);
     this.world.step(dt, it, it);
+    if (this.game.phase === 'play') {
+      for (const player of [this.p1, this.p2]) {
+        let cut = false;
+        for (const part of this.netSpike.hits(player)) cut = player.sever(part) || cut;
+        if (cut) for (const executer of this.executers) {
+          if (executer.target === player) executer.shakeOff();
+        }
+      }
+    }
     this.p1.tickFlip();
     this.p2.tickFlip();
 
@@ -432,7 +446,7 @@ export class GameWorld {
     strike: Strike,
   ): void {
     const attacker = attackerId === 1 ? this.p1 : this.p2;
-    const legs = FLIP.strikingParts.map((name) => attacker.part(name));
+    const legs = FLIP.strikingParts.filter(name => attacker.isAttached(name)).map((name) => attacker.part(name));
     const origin = attacker.head.getWorldCenter();
     for (const e of this.executers) {
       if (e.dead || !e.solid || e.target !== attacker || strike.hitExecuters.has(e)) continue;
@@ -459,6 +473,7 @@ export class GameWorld {
   private tryCounter(): boolean {
     const left = this.strikes[1];
     const right = this.strikes[2];
+    if (![this.p1, this.p2].every(player => FLIP.strikingParts.some(part => player.isAttached(part)))) return false;
     if (!left || !right || this.counter || this.ball.held || this.ball.ballOfPlayer !== 0) return false;
     if (left.opponentHit || right.opponentHit || left.ballHit || right.ballHit) return false;
     if (Math.abs(left.frame - right.frame) > SWING.counterWindowFrames) return false;
@@ -530,6 +545,8 @@ export class GameWorld {
 
   /** A near, forward-facing opponent receives one charge-scaled knockback. */
   private hitOpponent(attackerId: PlayerId, strike: Strike): boolean {
+    const attacker = attackerId === 1 ? this.p1 : this.p2;
+    if (!FLIP.strikingParts.some(part => attacker.isAttached(part))) return false;
     const defender = attackerId === 1 ? this.p2 : this.p1;
     const sign = attackerId === 1 ? 1 : -1;
     // From where the flip took off: the head itself swings back and down.
@@ -600,8 +617,8 @@ export class GameWorld {
     for (const player of [this.p1, this.p2]) {
       if (player.power !== 'magnet') continue;
       const ballPos = this.ball.position;
-      const left = player.part('FingerLeft').getWorldCenter();
-      const right = player.part('FingerRight').getWorldCenter();
+      const left = player.activePart('FingerLeft').getWorldCenter();
+      const right = player.activePart('FingerRight').getWorldCenter();
       const target = Vec2.distance(left, ballPos) < Vec2.distance(right, ballPos) ? left : right;
       const delta = Vec2.sub(target, ballPos);
       const distance = delta.length();

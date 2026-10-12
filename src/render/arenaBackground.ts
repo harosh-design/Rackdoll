@@ -2,11 +2,15 @@ import { LEFT_WALL_INNER_PX, RIGHT_WALL_INNER_PX, VIEW } from '../sim/constants'
 import type { SceneryFocus } from './resortBackground';
 import { STAGE } from './stageLayout';
 
+export const ARENA_SCENES = ['indoor', 'beach', 'rooftop'] as const;
+export type ArenaScene = typeof ARENA_SCENES[number];
+export const SCENE_LABELS: Record<ArenaScene, string> = { indoor: 'Arena', beach: 'Beach', rooftop: 'Rooftop' };
+
 /** A rigid arena plate with separate subtle service lights, never a warped room. */
 export class ArenaBackground {
   private readonly reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
-  constructor(private readonly image: HTMLImageElement) {}
+  constructor(private readonly image: HTMLImageElement, private readonly scene: ArenaScene = 'indoor') {}
 
   draw(ctx: CanvasRenderingContext2D, width: number, height: number, seconds: number, _focus: SceneryFocus): void {
     const unit = width / VIEW.stageW;
@@ -19,7 +23,7 @@ export class ArenaBackground {
     ctx.beginPath(); ctx.rect(left, 0, span, height); ctx.clip();
     ctx.drawImage(this.image, left + (span - w) / 2, height - h, w, h);
     // A slow floor service scan is independent of all architectural pixels.
-    if (!this.reducedMotion.matches) {
+    if (this.scene === 'indoor' && !this.reducedMotion.matches) {
       const x = left + ((seconds * 0.035) % 1) * span;
       const scan = ctx.createLinearGradient(x - 32 * unit, 0, x + 32 * unit, 0);
       scan.addColorStop(0, 'rgba(112,229,236,0)');

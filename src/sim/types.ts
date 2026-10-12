@@ -10,6 +10,8 @@ export interface BodyUserData {
   playerId?: 1 | 2;
   /** Sprite key used by the renderer. */
   sprite?: string;
+  /** Detached parts retain their size when their owner collects a power. */
+  detachedScale?: number;
 }
 
 export const ud = (b: Body): BodyUserData => b.getUserData() as BodyUserData;

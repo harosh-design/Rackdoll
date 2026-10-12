@@ -8,11 +8,8 @@
  * used up (so no two consecutive games share a track). Mute is implemented at
  * the AudioContext level so all sources pause with their position preserved.
  */
-const TRACKS = [
-       'melodic-balanced-lofi.mp3',
-       'melodic-brandbook-mas1.mp3',
-       'melodic-zloyzloy-mas3.mp3',
- ] as const;
+/** Music assets have been removed; add replacement filenames here when ready. */
+const TRACKS: readonly string[] = [];
 const CROSSFADE = 1.2;              // seconds, head-to-tail blend between tracks
 type TrackIndex = number;          // index into TRACKS by full filename
 
@@ -38,6 +35,7 @@ export class Music {
       is pickNext()'s job, so a new game can request its own fresh track.
     */
    unlock(): void {
+       if (TRACKS.length === 0) return;
        if (!this.ctx || !this.master) this.build();
         void this.ensureLoaded().then(() => {
           if (!this.muted && this.ctx?.state === 'suspended') void this.ctx.resume();
@@ -112,6 +110,7 @@ export class Music {
 
     /** Load every clip buffer exactly once via decodeAudioData. */
    private async ensureLoaded(): Promise<void> {
+       if (TRACKS.length === 0) return;
        if (this.loading) { await this.loading; return; }
         if (!this.ctx || !this.master) this.build();
         const ctx = this.ctx;

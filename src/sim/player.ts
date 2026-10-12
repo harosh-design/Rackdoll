@@ -8,7 +8,7 @@ import {
   RAIL_H_LIMITS, RAIL_V_LIMITS, SERVE, SIZE, SPAWN_P1_PX, SPAWN_P2_PX, STAND_POSE,
   STUN, toM, toPx, type JointDef, type PartName, WINDUP,
 } from './constants';
-import type { BodyUserData } from './types';
+import { ud, type BodyUserData } from './types';
 import type { PowerId } from './powerUps';
 
 export type PlayerId = 1 | 2;
@@ -48,7 +48,11 @@ const norm = (v: Vec2): Vec2 => {
 export class Player {
   readonly id: PlayerId;
   readonly parts = new Map<PartName, Body>();
+  /** Bodies still controlled by this player. */
   readonly bodies: Body[] = [];
+  readonly detachedBodies: Body[] = [];
+  private readonly detachedJoints: RevoluteJointT[] = [];
+  private controlPart: PartName = 'Head';
   /** The sensor body that rides the horizontal rail (§6). */
   readonly prismBody: Body;
   readonly railH: PrismaticJoint;
@@ -77,8 +81,8 @@ export class Player {
   private flipState: { joint: WheelJoint; startAngle: number; dir: 1 | -1; frames: number } | null = null;
   /** railV's frame, kept so the rail can be rebuilt exactly after a flip. */
   private readonly railAnchorA: Vec2;
-  private readonly railAnchorB: Vec2;
-  private readonly railReference: number;
+  private railAnchorB: Vec2;
+  private railReference: number;
 
   constructor(
     world: World,
@@ -219,9 +223,126 @@ export class Player {
     return b;
   }
 
-  get head(): Body { return this.part('Head'); }
-  get tors(): Body { return this.part('Tors'); }
-  get ass(): Body { return this.part('Ass'); }
+  /** The surviving body on the rail also serves as the controls' reference. */
+  get head(): Body { return this.part(this.controlPart); }
+  get tors(): Body { return this.activePart('Tors'); }
+  get ass(): Body { return this.activePart('Ass'); }
+  get injured(): boolean { return this.detachedBodies.length > 0; }
+
+  isAttached(name: PartName): boolean { return this.bodies.includes(this.part(name)); }
+  activePart(name: PartName): Body { return this.isAttached(name) ? this.part(name) : this.head; }
+  partScale(name: PartName): number { return ud(this.part(name)).detachedScale ?? this.sizeScale; }
+
+  /** Cut the hit part's branch away from the surviving rail-mounted body. */
+  sever(name: PartName): boolean {
+    if (this.power === 'shield' || !this.isAttached(name) || this.bodies.length === 1) return false;
+    const hit = this.part(name);
+    if (hit === this.head) {
+      // Transfer the rail before removing its current host, including mid-flip.
+      this.endFlip();
+      const joint = this.revolutes.find(j => j.getBodyA() === hit || j.getBodyB() === hit)!;
+      const next = joint.getBodyA() === hit ? joint.getBodyB() : joint.getBodyA();
+      this.world.destroyJoint(this.railV);
+      this.controlPart = ud(next).part!;
+      const def = PART_DEFS.get(this.controlPart)!;
+      this.railAnchorB = Vec2(toM(-def.dx * this.sizeScale), toM((2 - def.dy) * this.sizeScale));
+      this.railReference = 0;
+      this.buildRail();
+    }
+    // The skeleton is a tree. Remove the first edge on the path from hit to host.
+    const parents = new Map<Body, Body>();
+    const queue = [this.head];
+    for (let i = 0; i < queue.length; i++) for (const joint of this.revolutes) {
+      const a = joint.getBodyA(), b = joint.getBodyB();
+      const next = a === queue[i] ? b : b === queue[i] ? a : null;
+      if (next && next !== this.head && !parents.has(next)) {
+        parents.set(next, queue[i]); queue.push(next);
+      }
+    }
+    const detached = new Set<Body>([hit]);
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const [body, from] of parents) if (detached.has(from) && !detached.has(body)) {
+        detached.add(body); changed = true;
+      }
+    }
+    for (let i = this.revolutes.length - 1; i >= 0; i--) {
+      const joint = this.revolutes[i];
+      const a = detached.has(joint.getBodyA()), b = detached.has(joint.getBodyB());
+      if (!a && !b) continue;
+      this.revolutes.splice(i, 1);
+      if (a && b) this.detachedJoints.push(joint);
+      else this.world.destroyJoint(joint);
+    }
+    const held = this.ballJoint?.getBodyB();
+    const handCut = this.ballJoint && detached.has(this.ballJoint.getBodyA());
+    if (handCut) {
+      this.world.destroyJoint(this.ballJoint!);
+      this.ballJoint = null;
+    }
+    for (const body of detached) {
+      this.bodies.splice(this.bodies.indexOf(body), 1);
+      this.detachedBodies.push(body);
+      ud(body).e_bodytype = BODYTYPE.DEBRIS;
+      ud(body).detachedScale = this.sizeScale;
+      body.getFixtureList()!.setFriction(0.45);
+      body.setAwake(true);
+    }
+    // A held ball stays playable even when its serving hand is cut away.
+    if (handCut && held) this.takeBall(held);
+    return true;
+  }
+
+  /** Heal only for a new match; round resets leave the cuts in place. */
+  restoreBody(): void {
+    if (!this.injured) return;
+    this.endFlip();
+    this.world.destroyJoint(this.railV);
+    for (const joint of [...this.revolutes, ...this.detachedJoints]) this.world.destroyJoint(joint);
+    this.revolutes.length = this.detachedJoints.length = 0;
+    this.bodies.length = this.detachedBodies.length = 0;
+    for (const def of PARTS) {
+      const body = this.part(def.name);
+      ud(body).e_bodytype = BODYTYPE.PLAYER;
+      delete ud(body).detachedScale;
+      body.destroyFixture(body.getFixtureList()!);
+      body.createFixture({
+        shape: def.shape.kind === 'box' ? Box(toM(def.shape.hw * this.sizeScale), toM(def.shape.hh * this.sizeScale)) : Circle(toM(def.shape.r * this.sizeScale)),
+        density: def.density, friction: PLAYER_FRICTION[this.id], restitution: def.restitution,
+      });
+      body.resetMassData();
+      body.setAngularVelocity(0);
+      this.bodies.push(body);
+    }
+    this.controlPart = 'Head';
+    this.railAnchorB = Vec2(0, 0);
+    this.railReference = 0;
+    this.buildRail();
+    for (const def of JOINTS) this.revolutes.push(this.makeJoint(def, this.sizeScale, 0));
+  }
+
+  private makeJoint(def: JointDef, scale: number, referenceAngle: number): RevoluteJointT {
+    const localAnchor = (name: PartName) => {
+      const part = PART_DEFS.get(name)!;
+      return Vec2(toM((def.dx - part.dx) * scale), toM((def.dy - part.dy) * scale));
+    };
+    return this.world.createJoint(new RevoluteJoint({
+      bodyA: this.part(def.a), bodyB: this.part(def.b),
+      localAnchorA: localAnchor(def.a), localAnchorB: localAnchor(def.b),
+      enableLimit: true, lowerAngle: def.lower * DEG, upperAngle: def.upper * DEG,
+      referenceAngle, enableMotor: false, maxMotorTorque: 0, motorSpeed: 0,
+    }))!;
+  }
+
+  private buildRail(): void {
+    this.railV = this.world.createJoint(new PrismaticJoint({
+      bodyA: this.prismBody, bodyB: this.head,
+      localAnchorA: this.railAnchorA, localAnchorB: this.railAnchorB,
+      localAxisA: Vec2(0, -1), referenceAngle: this.railReference,
+      enableLimit: true, lowerTranslation: railLowerFor(this.sizeScale), upperTranslation: RAIL_V_LIMITS.upper,
+      enableMotor: false, maxMotorForce: 0, motorSpeed: 0,
+    }))!;
+  }
   get controlScale(): number { return this.stunFrames > 0 ? STUN.controlScale : 1; }
   private get massFactor(): number { return this.sizeScale * this.sizeScale; }
   /**
@@ -266,17 +387,19 @@ export class Player {
   setSizeScale(scale: number): void {
     if (scale === this.sizeScale) return;
     const ratio = scale / this.sizeScale;
-    const left = this.part('FootLeft').getWorldCenter();
-    const right = this.part('FootRight').getWorldCenter();
+    const left = this.activePart('FootLeft').getWorldCenter();
+    const right = this.activePart('FootRight').getWorldCenter();
     // Keep the rail-mounted head on its horizontal line while the soles keep
     // their height; scaling around the feet in x would pull the head off rail.
     const pivot = Vec2(this.head.getWorldCenter().x, (left.y + right.y) / 2 + toM(11 * this.sizeScale));
     const transform = (p: Vec2Value) => Vec2(pivot.x + (p.x - pivot.x) * ratio, pivot.y + (p.y - pivot.y) * ratio);
-    const referenceAngles = this.revolutes.map((joint) => joint.getReferenceAngle());
+    const surviving = JOINTS.filter(def => this.isAttached(def.a) && this.isAttached(def.b));
+    const referenceAngles = surviving.map(def => this.revolutes.find(j => j.getBodyA() === this.part(def.a) && j.getBodyB() === this.part(def.b))!.getReferenceAngle());
     for (const joint of this.revolutes) this.world.destroyJoint(joint);
     this.revolutes.length = 0;
 
     for (const def of PARTS) {
+      if (!this.isAttached(def.name)) continue;
       const body = this.part(def.name);
       const fixture = body.getFixtureList()!;
       body.destroyFixture(fixture);
@@ -293,28 +416,15 @@ export class Player {
       body.setTransform(transform(body.getWorldCenter()), body.getAngle());
     }
 
-    // Anchors come from the joint table, not the current pose: a joint that
-    // is stretched mid-jump would otherwise bake the stretch into the
-    // skeleton, and it would accumulate with every resize.
-    const localAnchor = (name: PartName, def: JointDef) => {
-      const part = PART_DEFS.get(name)!;
-      return Vec2(toM((def.dx - part.dx) * scale), toM((def.dy - part.dy) * scale));
-    };
-    JOINTS.forEach((def, i) => {
-      this.revolutes.push(this.world.createJoint(new RevoluteJoint({
-        bodyA: this.part(def.a),
-        bodyB: this.part(def.b),
-        localAnchorA: localAnchor(def.a, def),
-        localAnchorB: localAnchor(def.b, def),
-        enableLimit: true,
-        lowerAngle: def.lower * DEG,
-        upperAngle: def.upper * DEG,
-        referenceAngle: referenceAngles[i],
-        enableMotor: false,
-        maxMotorTorque: 0,
-        motorSpeed: 0,
-      }))!);
-    });
+    // Rebuild only surviving joints; size powers must never reconnect a cut.
+    surviving.forEach((def, i) => this.revolutes.push(this.makeJoint(def, scale, referenceAngles[i])));
+    if (this.controlPart !== 'Head') {
+      this.railAnchorB.mul(ratio);
+      if (!this.flipState) {
+        this.world.destroyJoint(this.railV);
+        this.buildRail();
+      }
+    }
     this.sizeScale = scale;
     // Mid-flip the rail is a wheel joint; endFlip() rebuilds it at this size.
     if (!this.flipState) this.railV.setLimits(railLowerFor(scale), RAIL_V_LIMITS.upper);
@@ -324,7 +434,11 @@ export class Player {
   }
   /** The hand that holds the ball: right for player 1, left for player 2. */
   get servingFinger(): Body {
-    return this.id === 1 ? this.part('FingerRight') : this.part('FingerLeft');
+    const preferred: PartName[] = this.id === 1
+      ? ['FingerRight', 'FingerLeft', 'HandRight', 'HandLeft', 'ArmRight', 'ArmLeft', 'Tors']
+      : ['FingerLeft', 'FingerRight', 'HandLeft', 'HandRight', 'ArmLeft', 'ArmRight', 'Tors'];
+    const name = preferred.find(part => this.isAttached(part));
+    return name ? this.part(name) : this.head;
   }
   // -------------------------------------------------------------------------
   // §8 Player actions. Exact, in the original's order.
@@ -338,10 +452,12 @@ export class Player {
     if (this.flipState) return; // it would stop the spin dead
     const ass = this.ass;
     // Only when the hips are low, i.e. grounded.
-    if (!(ass.getWorldCenter().y > toM(this.scaledFromFloor(ACTIONS.jumpHipsBelowPx)))) return;
+    const restHeight = 256 + PART_DEFS.get(this.controlPart)!.dy - 5;
+    const jumpThreshold = this.isAttached('Ass') ? ACTIONS.jumpHipsBelowPx : restHeight;
+    if (!(ass.getWorldCenter().y > toM(this.scaledFromFloor(jumpThreshold)))) return;
 
     const head = this.head;
-    const d = Vec2.sub(head.getWorldCenter(), this.tors.getWorldCenter());
+    const d = head === this.tors ? Vec2(0, -1) : Vec2.sub(head.getWorldCenter(), this.tors.getWorldCenter());
     const v = Vec2.mul(norm(d), ACTIONS.jumpLeanImpulse * this.massFactor * this.controlScale * this.jumpStrength);
     // The rail and ragdoll joints absorb much of the extra impulse. A 2x
     // launch impulse produces about 1.5x measured head height.
@@ -351,8 +467,8 @@ export class Player {
     head.setLinearVelocity(Vec2(0, 0));
     head.applyLinearImpulse(Vec2(0, -lift), head.getWorldCenter(), true);
     // §16.7 — applied to the HEAD, at the fingertips' positions. Not a slip.
-    head.applyLinearImpulse(v, this.part('FingerLeft').getWorldCenter(), true);
-    head.applyLinearImpulse(v, this.part('FingerRight').getWorldCenter(), true);
+    head.applyLinearImpulse(v, this.activePart('FingerLeft').getWorldCenter(), true);
+    head.applyLinearImpulse(v, this.activePart('FingerRight').getWorldCenter(), true);
     ass.applyLinearImpulse(Vec2(0, -lift), head.getWorldCenter(), true);
   }
 
@@ -402,8 +518,8 @@ export class Player {
   }
 
   turnDown(): void {
-    const fl = this.part('FootLeft');
-    const fr = this.part('FootRight');
+    const fl = this.activePart('FootLeft');
+    const fr = this.activePart('FootRight');
     const impulse = ACTIONS.turnDownImpulse * this.massFactor * this.controlScale;
     fl.applyLinearImpulse(Vec2(0, impulse), fl.getWorldCenter(), true);
     fr.applyLinearImpulse(Vec2(0, impulse), fr.getWorldCenter(), true);
@@ -437,7 +553,7 @@ export class Player {
       const m = b.getMass();
       b.applyLinearImpulse(Vec2(dv.x * m, dv.y * m), b.getWorldCenter(), true);
     }
-    if (part && jolt) {
+    if (part && this.bodies.includes(part) && jolt) {
       const m = part.getMass();
       part.applyLinearImpulse(Vec2(jolt.x * m, jolt.y * m), part.getWorldCenter(), true);
     }
@@ -464,6 +580,7 @@ export class Player {
     this.stunFrames = 0;
     this.setLinVelZero();
     for (const p of STAND_POSE) {
+      if (!this.isAttached(p.name)) continue;
       const footOffset = 101;
       this.part(p.name).setTransform(Vec2(
         toM(xPx + p.dx * this.sizeScale),
@@ -565,7 +682,7 @@ export class Player {
 
   /** The legs: what a flip strikes with. */
   isStrikingPart(part: PartName): boolean {
-    return (FLIP.strikingParts as readonly PartName[]).includes(part);
+    return this.isAttached(part) && (FLIP.strikingParts as readonly PartName[]).includes(part);
   }
 
   /**
@@ -727,7 +844,9 @@ export class Player {
     const back = this.id === 1 ? -1 : 1;
     // Scaled with the limb's mass, so a giant's or tiny's legs tuck as far.
     const k = clamp01(power) * this.massFactor * this.controlScale;
-    for (const foot of [this.part('FootLeft'), this.part('FootRight')]) {
+    for (const name of ['FootLeft', 'FootRight'] as const) {
+      if (!this.isAttached(name)) continue;
+      const foot = this.part(name);
       foot.applyLinearImpulse(Vec2(back * WINDUP.footImpulseX * k, -WINDUP.footImpulseY * k), foot.getWorldCenter(), true);
     }
   }

@@ -1,5 +1,5 @@
 import { Vec2 } from 'planck';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { FEATHER, JOINTS, MAX_TOUCHES, NET_X_PX, PARTS, POWER, toM, toPx } from '../src/sim/constants';
 import type { Player } from '../src/sim/player';
 import { POWERS, type PowerId } from '../src/sim/powerUps';
@@ -10,7 +10,7 @@ const headRadius = (p: Player) => p.head.getFixtureList()!.getShape().getRadius(
 /** Worst distance, in px, between a joint's local anchors and the joint table's. */
 function anchorDriftPx(p: Player): number {
   let max = 0;
-  JOINTS.forEach((def, i) => {
+  JOINTS.filter(def => p.isAttached(def.a) && p.isAttached(def.b)).forEach((def, i) => {
     const joint = p.revolutes[i];
     for (const [name, local] of [[def.a, joint.getLocalAnchorA()], [def.b, joint.getLocalAnchorB()]] as const) {
       const part = PARTS.find((q) => q.name === name)!;
@@ -135,6 +135,8 @@ describe('bee powers without floor gifts', () => {
 
   it('never bakes joint stretch into the skeleton across repeated resizes', () => {
     const gw = world();
+    // Measure the intact skeleton independently of cuts at the net blade.
+    vi.spyOn(gw.netSpike, 'hits').mockReturnValue([]);
     const r = rng(7);
     const keys = [37, 38, 39, 40];
     for (let cycle = 0; cycle < 40; cycle++) {

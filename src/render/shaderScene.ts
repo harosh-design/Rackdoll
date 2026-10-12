@@ -274,14 +274,15 @@ export class ShaderScene {
     for (const p of players) {
       const shapes: Shape[] = [];
       for (const name of DRAW_ORDER) {
+        const scale = p.partScale(name);
         const pose = poses.pose(p.part(name), alpha);
         const c = Math.cos(pose.a), s = Math.sin(pose.a);
         for (const [x, y, rx, ry] of VOLUMES[name]) {
-          const wx = pose.x + (c * x - s * y) * p.sizeScale;
-          const wy = pose.y + (s * x + c * y) * p.sizeScale;
+          const wx = pose.x + (c * x - s * y) * scale;
+          const wy = pose.y + (s * x + c * y) * scale;
           shapes.push({ x: transform.a * wx + transform.c * wy + transform.e,
             y: transform.b * wx + transform.d * wy + transform.f,
-            rx: rx * unit * p.sizeScale, ry: ry * unit * p.sizeScale, angle: pose.a });
+            rx: rx * unit * scale, ry: ry * unit * scale, angle: pose.a });
         }
       }
       surfaces.push({shapes, material: p.id, unit: unit * p.sizeScale});

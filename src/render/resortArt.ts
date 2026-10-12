@@ -1,7 +1,7 @@
 import type { PartName } from '../sim/constants';
 import { outlinePath } from './dollArt';
 import type { SceneryFocus } from './resortBackground';
-import { ArenaBackground } from './arenaBackground';
+import { ArenaBackground, ARENA_SCENES, type ArenaScene } from './arenaBackground';
 import { loadArenaSprites } from './arenaArt';
 
 /** UV placement comes from the original outlines, not the current doll pose. */
@@ -21,7 +21,7 @@ const ATLAS: Record<PartName, { col: number; row: number; x: number; y: number; 
   FootRight: { col: 0, row: 3, x: -20.842476, y: -15.362476, w: 40.764952, h: 40.764952 },
 };
 
-let background: ArenaBackground | null = null;
+const backgrounds: Partial<Record<ArenaScene, ArenaBackground>> = {};
 const players: Partial<Record<1 | 2, HTMLCanvasElement>> = {};
 let loading: Promise<void> | undefined;
 
@@ -71,12 +71,14 @@ function prepareAtlas(img: HTMLImageElement): HTMLCanvasElement {
 /** Shared across renderers and previews. A failed image retains the existing art. */
 export function loadResortArt(): Promise<void> {
   loading ??= Promise.allSettled([
-    new Promise<HTMLImageElement>((resolve, reject) => {
+    ...ARENA_SCENES.map(scene => new Promise<HTMLImageElement>((resolve, reject) => {
       const image = new Image();
       image.onload = () => resolve(image);
-      image.onerror = () => reject(new Error('Could not load future arena'));
-      image.src = import.meta.env.BASE_URL + 'art/arena/background.webp';
-    }).then(image => { background = new ArenaBackground(image); }),
+      image.onerror = () => reject(new Error('Could not load arena: ' + scene));
+      const path = scene === 'indoor' ? 'arena/background.webp'
+        : scene === 'beach' ? 'resort/background-moonlit.webp' : 'arena/background-rooftop.webp';
+      image.src = import.meta.env.BASE_URL + 'art/' + path;
+    }).then(image => { backgrounds[scene] = new ArenaBackground(image, scene); })),
     loadArenaSprites(),
     loadImage('player-1-moonlit.webp').then(img => { players[1] = prepareAtlas(img); }),
     loadImage('player-2-moonlit.webp').then(img => { players[2] = prepareAtlas(img); }),
@@ -84,10 +86,11 @@ export function loadResortArt(): Promise<void> {
   return loading;
 }
 
-export function hasResortBackground(): boolean { return background !== null; }
+export function hasResortBackground(scene: ArenaScene = 'indoor'): boolean { return Boolean(backgrounds[scene]); }
 
 /** Draw behind the separately cached court, so scenery never paints over the net. */
-export function drawResortBackground(ctx: CanvasRenderingContext2D, width: number, height: number, seconds = 0, focus: SceneryFocus = { x: 0, y: 0 }): boolean {
+export function drawResortBackground(ctx: CanvasRenderingContext2D, width: number, height: number, seconds = 0, focus: SceneryFocus = { x: 0, y: 0 }, scene: ArenaScene = 'indoor'): boolean {
+  const background = backgrounds[scene] ?? backgrounds.indoor;
   if (!background) return false;
   background.draw(ctx, width, height, seconds, focus);
   return true;

@@ -77,6 +77,13 @@ original.
 
 ## How to play it
 
+The sharp blade at the top of the net cuts off any body part that crosses it,
+including the limbs connected beyond that part. Detached pieces fall and collide
+with the court independently. You can keep moving, jumping and serving with the
+remaining body; serving uses another attached hand or the surviving body if both
+arms are gone. Lost parts cannot strike or count as ball touches. Injuries persist
+between rallies and heal when a new match starts. Shield protects against the blade.
+
 In the main menu, click any key in the **Controls** panel to reassign that
 action for either player. Press Esc to cancel, or **Reset keys** to restore the
 original layout. Assignments are saved in this browser. P and M remain the

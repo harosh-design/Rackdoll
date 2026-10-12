@@ -9,6 +9,7 @@ import {
 import { bindKeyboard } from './input/keyboard';
 import { Interpolator } from './render/interp';
 import { HUD_BAR, Renderer, type VisualStyle } from './render/renderer';
+import { ARENA_SCENES, SCENE_LABELS, type ArenaScene } from './render/arenaBackground';
 import { BEE_FLIGHT } from './sim/bees';
 import { BALL, BODYTYPE, FPS, ITERATIONS, OPTIONS } from './sim/constants';
 import type { ControlAction } from './sim/control';
@@ -49,6 +50,15 @@ const MUSIC_ENABLED = false;
 
 type Mode = '1p' | '2p' | 'cpu';
 const VISUAL_STYLE_KEY = 'rackdoll-visual-style';
+const ARENA_SCENE_KEY = 'rackdoll-arena-scene';
+function loadArenaScene(): ArenaScene {
+  try {
+    const saved = localStorage.getItem(ARENA_SCENE_KEY);
+    return ARENA_SCENES.find(scene => scene === saved) ?? 'indoor';
+  } catch {
+    return 'indoor';
+  }
+}
 function loadVisualStyle(): VisualStyle {
   try {
     return localStorage.getItem(VISUAL_STYLE_KEY) === 'shaders' ? 'shaders' : 'people';
@@ -62,6 +72,7 @@ const physicsLibrary = loadPhysicsLibrary(physicsStorage);
 const settings = {
   mode: '1p' as Mode,
   visualStyle: loadVisualStyle(),
+  arenaScene: loadArenaScene(),
   level: OPTIONS.currentLevel as number,
   /** Bot vs bot: the left CPU's level. */
   p1Level: OPTIONS.championLevel as number,
@@ -460,10 +471,26 @@ function wireMenu(): void {
       button.setAttribute('aria-pressed', String(button.dataset.visualStyle === style));
     });
     $('visual-style-description').textContent = style === 'people'
-      ? 'Textured people in the original indoor arena.'
-      : 'Glass and chrome players with flowing light across the entire screen.';
+      ? 'Textured people in your selected location.'
+      : 'Glass and chrome players. Arena uses flowing light; outdoor locations use scenery.';
+  };
+  const applyArenaScene = (scene: ArenaScene) => {
+    settings.arenaScene = scene;
+    renderer.setArenaScene(scene);
+    document.body.dataset.arenaScene = scene;
+    document.querySelectorAll<HTMLButtonElement>('[data-arena-scene]').forEach(button => {
+      button.setAttribute('aria-pressed', String(button.dataset.arenaScene === scene));
+    });
+    const next = ARENA_SCENES[(ARENA_SCENES.indexOf(scene) + 1) % ARENA_SCENES.length];
+    $('btn-scene').title = `Location: ${SCENE_LABELS[scene]}. Switch to ${SCENE_LABELS[next]}`;
+    $('btn-scene').setAttribute('aria-label', `Location: ${SCENE_LABELS[scene]}. Switch to ${SCENE_LABELS[next]}`);
+    $('arena-scene-description').textContent = scene === 'beach' ? 'Moonlit beach with palms and ocean views.'
+      : scene === 'rooftop' ? 'Rooftop garden overlooking the bay at sunset.' : 'Indoor arena, or flowing light with Shaders.';
+    try { localStorage.setItem(ARENA_SCENE_KEY, scene); } catch { /* Selection still works for this session. */ }
   };
   applyVisualStyle(settings.visualStyle);
+  applyArenaScene(settings.arenaScene);
+  group('arena-scene', value => applyArenaScene(ARENA_SCENES.find(scene => scene === value) ?? 'indoor'));
   group('visual-style', (value) => {
     const style: VisualStyle = value === 'shaders' ? 'shaders' : 'people';
     applyVisualStyle(style);
@@ -522,6 +549,11 @@ function wireMenu(): void {
   bar.style.setProperty('--w', String(HUD_BAR.controlsW));
   bar.style.setProperty('--h', String(HUD_BAR.h));
   $('btn-pause').addEventListener('click', togglePause);
+  $('btn-scene').addEventListener('click', () => {
+    applyArenaScene(ARENA_SCENES[(ARENA_SCENES.indexOf(settings.arenaScene) + 1) % ARENA_SCENES.length]);
+    showToast(SCENE_LABELS[settings.arenaScene], 'i-scene');
+    if (screen === 'playing') focusGame();
+  });
   document.querySelectorAll<HTMLButtonElement>('.js-sound').forEach((b) => {
     b.addEventListener('click', () => {
       toggleMute();

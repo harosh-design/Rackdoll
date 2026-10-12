@@ -27,7 +27,8 @@ export function drawHumanPlayers(ctx: CanvasRenderingContext2D, players: readonl
       ctx.save();
       ctx.translate(pose.x, pose.y);
       ctx.rotate(pose.a);
-      ctx.scale(player.sizeScale, player.sizeScale);
+      const scale = player.partScale(name);
+      ctx.scale(scale, scale);
       partArt(ctx, name, player.id);
       ctx.restore();
     }

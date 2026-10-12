@@ -397,6 +397,7 @@ export class Executer {
     // wrist stretches.
     const touching = this.touchingParts();
     for (const name of REACHING_PARTS) {
+      if (!this.target.isAttached(name)) continue;
       const side = name.endsWith('Left') ? 'Left' : 'Right';
       if (['Arm', 'Hand', 'Finger'].some((limb) => touching.has(this.target.part(`${limb}${side}` as PartName)))) continue;
       const b = this.target.part(name);
@@ -432,7 +433,7 @@ export class Executer {
   private updateBoxer(dt: number): void {
     const c = this.body.getWorldCenter();
     const side: 1 | -1 = c.x >= this.target.tors.getWorldCenter().x ? 1 : -1;
-    const part = this.target.part(this.punchPart);
+    const part = this.target.activePart(this.punchPart);
     const p = part.getWorldCenter();
     const stand = Vec2(p.x + side * toM(BOXER.standOffPx), this.clampY(p.y));
     this.drive(this.seek(stand, Math.max(this.speed * 1.5, BOXER.chaseSpeed)), dt);
@@ -468,9 +469,11 @@ export class Executer {
   /** One of `parts` it can reach from its side without going through the body, never `last` again. */
   private openPart(parts: readonly PartName[], side: 1 | -1, last: PartName | null): PartName {
     const torsX = this.target.tors.getWorldCenter().x;
-    const open = parts.filter((name) => name !== last &&
+    const surviving = parts.filter(name => this.target.isAttached(name));
+    if (!surviving.length) return ud(this.target.head).part!;
+    const open = surviving.filter((name) => name !== last &&
       (this.target.part(name).getWorldCenter().x - torsX) * side > -toM(6));
-    const pool = open.length > 0 ? open : parts;
+    const pool = open.length > 0 ? open : surviving;
     return pool[Math.floor(this.random() * pool.length)];
   }
 
@@ -670,7 +673,7 @@ export class Executer {
         }
         // Homing on its limb, bobbing across its path so it flaps in
         // rather than glides.
-        const p = this.target.part(this.aimPart).getWorldCenter();
+        const p = this.target.activePart(this.aimPart).getWorldCenter();
         const v = this.seek(Vec2(p.x, this.clampY(p.y)), SLIME.flySpeed, 4);
         const u = unit(v.x, v.y);
         const bob = SLIME.bobSpeed * Math.sin((this.age * 2 * Math.PI) / SLIME.bobFrames);

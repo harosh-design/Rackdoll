@@ -48,6 +48,7 @@ export const toPx = (m: number): number => m * PHYS_SCALE;
 
 export const BODYTYPE = {
   PLAYER: 1,
+  DEBRIS: 4,
   WALL: 2, // walls and net
   BALL: 3,
   PRIZE: 7,
@@ -72,6 +73,8 @@ export const FLOOR_TOP_PX = 355;
 export const NET_X_PX = 320;
 export const NET_TOP_PX = 206;
 export const NET_BOTTOM_PX = 356;
+/** The visible blade above the net pole, shared by collision and rendering. */
+export const NET_SPIKE = { halfWidthPx: 5, heightPx: 12, sweepStepPx: 2 } as const;
 export const LEFT_WALL_INNER_PX = -215;
 export const RIGHT_WALL_INNER_PX = 840;
 
