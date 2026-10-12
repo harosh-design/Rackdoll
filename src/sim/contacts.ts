@@ -92,7 +92,7 @@ export function installContactListener(world: World, flags: ContactFlags): void 
  * is what tore the joints (with restitution 1 on both, Box2D's max-mix gives
  * a perfectly elastic hit). Everything else keeps its own restitution.
  */
-export function installContactTweaks(world: World): void {
+export function installContactTweaks(world: World, ballBounce: () => number = () => 1): void {
   world.on('pre-solve', (contact: Contact) => {
     const fa = contact.getFixtureA();
     const fb = contact.getFixtureB();
@@ -102,7 +102,9 @@ export function installContactTweaks(world: World): void {
       t === BODYTYPE.PLAYER ? (f.getBody().getUserData() as { part?: string } | null)?.part : undefined;
     if (ta === BODYTYPE.BALL || tb === BODYTYPE.BALL) {
       const part = ta === BODYTYPE.BALL ? partOf(tb, fb) : partOf(ta, fa);
-      if (part && part !== 'Head') contact.setRestitution(BALL_BODY_RESTITUTION);
+      const original = part && part !== 'Head' ? BALL_BODY_RESTITUTION
+        : part === 'Head' ? 1.2 : 1;
+      contact.setRestitution(original * ballBounce());
       return;
     }
     if (

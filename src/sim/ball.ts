@@ -34,6 +34,13 @@ export class Ball {
     this.body.setUserData({ e_bodytype: BODYTYPE.BALL, sprite: 'Ball' } as BodyUserData);
   }
 
+  /** Preserve the original mass/inertia ratio while tuning the ball. */
+  setMass(mass: number): void {
+    const inertia = BALL.inertia * (mass / BALL.mass);
+    if (this.body.getMass() === mass && this.body.getInertia() === inertia) return;
+    this.body.setMassData({ mass, center: Vec2(0, 0), I: inertia });
+  }
+
   /** §9 — run LAST in every frame. Four independent clamps. */
   update(): void {
     const v = this.body.getLinearVelocity();

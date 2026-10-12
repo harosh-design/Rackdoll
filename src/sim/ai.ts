@@ -21,13 +21,16 @@ export interface BallSample {
 /**
  * Step a free ball forward with gravity, the walls and the net, frame by frame,
  * until it reaches the floor. Walls and the net keep 60% of vx (§10). Players
- * are ignored. `gravityScaleAt` is the feather ball's slow fall over one half.
+ * are ignored. Optional tuning follows the live world. `gravityScaleAt` is the feather ball's slow fall over one half.
  */
 export function forecastBall(
   position: Vec2Value,
   velocity: Vec2Value,
   maxFrames = 150,
   gravityScaleAt: (x: number) => number = () => 1,
+  gravity = GRAVITY.y,
+  damping = 0,
+  bounce = 1,
 ): BallSample[] {
   let { x, y } = position;
   let { x: vx, y: vy } = velocity;
@@ -41,23 +44,24 @@ export function forecastBall(
   const samples: BallSample[] = [];
   if (y >= floor) return samples;
   for (let frame = 1; frame <= maxFrames; frame++) {
-    vy = clamp(vy + GRAVITY.y * gravityScaleAt(x) * TIME_STEP, -BALL.maxVy, BALL.maxVy);
+    vy = clamp((vy + gravity * gravityScaleAt(x) * TIME_STEP) / (1 + damping * TIME_STEP), -BALL.maxVy, BALL.maxVy);
+    vx /= 1 + damping * TIME_STEP;
     let nextX = x + vx * TIME_STEP;
     const nextY = y + vy * TIME_STEP;
     if (nextX < left) {
       nextX = left + (left - nextX);
-      vx = Math.abs(vx) * BALL_VX_SCALE_WALL;
+      vx = Math.abs(vx) * BALL_VX_SCALE_WALL * bounce;
     } else if (nextX > right) {
       nextX = right - (nextX - right);
-      vx = -Math.abs(vx) * BALL_VX_SCALE_WALL;
+      vx = -Math.abs(vx) * BALL_VX_SCALE_WALL * bounce;
     }
     if (nextY > netTop && nextY < netBottom) {
       if (x < net && nextX >= net - radius) {
         nextX = net - radius;
-        vx = -Math.abs(vx) * BALL_VX_SCALE_WALL;
+        vx = -Math.abs(vx) * BALL_VX_SCALE_WALL * bounce;
       } else if (x > net && nextX <= net + radius) {
         nextX = net + radius;
-        vx = Math.abs(vx) * BALL_VX_SCALE_WALL;
+        vx = Math.abs(vx) * BALL_VX_SCALE_WALL * bounce;
       }
     }
     x = nextX;
@@ -381,7 +385,7 @@ export class AI {
     const reach = toM(BOT.headRadiusPx * s + BALL.radiusPx);
     const bx = this.mx(sample.x);
     const bvx = this.flip ? -sample.vx : sample.vx;
-    const maxTravel = toM(this.skill.stepPx) * Math.max(0, sample.frame - 2);
+    const maxTravel = toM(this.skill.stepPx) * this.computer.movementSpeed * Math.max(0, sample.frame - 2);
     const minX = toM(BOT.minHeadXpx);
     const maxX = this.maxHeadX();
     const netClear = toM(NET_TOP_PX - BALL.radiusPx - this.skill.netClearancePx);
@@ -401,7 +405,7 @@ export class AI {
       const late = Math.max(0, Math.abs(target - headNow) - maxTravel);
       const penalty = BOT.anglePenalty * Math.abs(deg) + BOT.steepPenalty * Math.max(0, Math.abs(deg) - BOT.steepFromDeg)
         + BOT.latePenaltyPerPx * toPx(late);
-      const path = forecastBall(Vec2(sample.x, sample.y), Vec2(this.flip ? -out.x : out.x, out.y), 150, this.gravityScaleAt);
+      const path = this.forecastFlight(Vec2(sample.x, sample.y), Vec2(this.flip ? -out.x : out.x, out.y), 150);
       const crossing = path.find((q) => this.mx(q.x) < NET_M);
       const plan = { headX: target, frame: sample.frame, deg, latePx: toPx(late) };
       const t = crossing && crossing.y <= netClear ? this.shotValue(path, crossing) : null;
@@ -413,7 +417,7 @@ export class AI {
         let value = t.score;
         for (const dir of [-1, 1]) {
           const vx = out.x + dir * e;
-          const p = forecastBall(Vec2(sample.x, sample.y), Vec2(this.flip ? -vx : vx, out.y + e / 2), 150, this.gravityScaleAt);
+          const p = this.forecastFlight(Vec2(sample.x, sample.y), Vec2(this.flip ? -vx : vx, out.y + e / 2), 150);
           const cross = p.find((q) => this.mx(q.x) < NET_M);
           value += (cross && cross.y <= netClear ? this.shotValue(p, cross)?.score : undefined) ?? this.failValue;
         }
@@ -528,15 +532,16 @@ export class AI {
     const vn = bvx * nx + bvy * ny;
     if (vn >= 0) return null;
     const r = toM(BALL.radiusPx);
-    const rollMass = 1 + BALL.mass * r * r / BALL.inertia;
-    const pn = -(1 + BOT.headBounce) * vn;
+    const mass = this.ball.body.getMass();
+    const rollMass = 1 + mass * r * r / this.ball.body.getInertia();
+    const pn = -(1 + BOT.headBounce * this.ball.body.getFixtureList()!.getRestitution()) * vn;
     const tx = -ny;
     const ty = nx;
     const slip = bvx * tx + bvy * ty - spin * r;
     const pt = clamp(slip / rollMass, -BOT.headFriction * pn, BOT.headFriction * pn);
     return Vec2(
       clamp(bvx + pn * nx - pt * tx, -BALL.maxVx, BALL.maxVx),
-      clamp(bvy + pn * ny - pt * ty + TOUCH_IMPULSE.y / BALL.mass, -BALL.maxVy, BALL.maxVy),
+      clamp(bvy + pn * ny - pt * ty + TOUCH_IMPULSE.y / mass, -BALL.maxVy, BALL.maxVy),
     );
   }
 
@@ -575,7 +580,7 @@ export class AI {
   private reachable(headX: number, frames: number): boolean {
     if (headX < toM(BOT.minHeadXpx) || headX > this.maxHeadX()) return false;
     const travel = Math.abs(headX - this.mx(this.computer.head.getWorldCenter().x));
-    return travel <= toM(this.skill.stepPx) * Math.max(0, frames);
+    return travel <= toM(this.skill.stepPx) * this.computer.movementSpeed * Math.max(0, frames);
   }
 
   private execute(plan: ReturnPlan): void {
@@ -619,7 +624,7 @@ export class AI {
     const t = zone.leadFrames * TIME_STEP;
     const p = this.ball.position;
     const v = this.ball.velocity;
-    const g = GRAVITY.y * this.ball.body.getGravityScale();
+    const g = this.ball.body.getWorld().getGravity().y * this.ball.body.getGravityScale();
     const ball = this.local({ x: p.x + v.x * t, y: p.y + v.y * t + 0.5 * g * t * t });
     if (ball.x < NET_M || this.local(p).x < NET_M) return;
     const ahead = toPx(head.x - ball.x) / s;
@@ -724,11 +729,17 @@ export class AI {
    * guess at the ball's speed is off by readBias; the error fades as it
    * watches the ball come.
    */
+  private forecastFlight(position: Vec2Value, velocity: Vec2Value, maxFrames: number): BallSample[] {
+    const body = this.ball.body;
+    return forecastBall(position, velocity, maxFrames, this.gravityScaleAt,
+      body.getWorld().getGravity().y, body.getLinearDamping(), body.getFixtureList()!.getRestitution());
+  }
+
   private forecast(): BallSample[] {
     const v = this.ball.velocity;
     const fade = clamp(1 - this.readClock / this.skill.readFrames, 0, 1);
     const read = Vec2(v.x + this.readBias * fade, v.y);
-    return forecastBall(this.ball.position, read, BOT.horizonFrames, this.gravityScaleAt);
+    return this.forecastFlight(this.ball.position, read, BOT.horizonFrames);
   }
 
   /** The ball's spin survives its flight (no damping); mirroring reverses it. */

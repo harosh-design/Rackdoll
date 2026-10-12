@@ -11,3 +11,4 @@ export * from './ai';
 export * from './executer';
 export * from './executerVariants';
 export * from './world';
+export * from './physics';

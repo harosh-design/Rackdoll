@@ -3,7 +3,7 @@ import { AI } from './ai';
 import { Ball } from './ball';
 import { Bees } from './bees';
 import {
-  CHARGE, EXECUTER, EXECUTER_ITERATIONS, FEATHER, FLIP, GRAVITY, ITERATIONS, LANDING_CENTRE_M,
+  BODYTYPE, CHARGE, EXECUTER, EXECUTER_ITERATIONS, FEATHER, FLIP, ITERATIONS, LANDING_CENTRE_M,
   MS_PER_FRAME, OPTIONS, PRIZE_ANIM, NET_X_PX, powerScale,
   SERVE_CENTRE_M, SPAWN_P1_PX, SPAWN_P2_PX, SWING, toM, toPx,
 } from './constants';
@@ -15,6 +15,8 @@ import { Game, type GameEvents } from './game';
 import { Ground } from './ground';
 import { Player, type PlayerId } from './player';
 import { PowerUps, type PowerId } from './powerUps';
+import { airDamping, normalizePhysics, type PhysicsSettings } from './physics';
+import { bodyTypeOf } from './types';
 import type { PrizeButton } from './prizeButton';
 import { FrameTimer, TimerSet } from './timer';
 
@@ -47,6 +49,7 @@ export interface GameWorldOptions {
   beeOrder?: readonly PowerId[];
   /** Seed for the CPU players' choices (when to set, jump or smash, their aim). */
   aiSeed?: number;
+  physics?: Partial<PhysicsSettings>;
   events?: GameEvents;
 }
 
@@ -67,6 +70,7 @@ interface Strike {
  */
 export class GameWorld {
   readonly world: World;
+  private tuning: PhysicsSettings;
   readonly ground: Ground;
   readonly p1: Player;
   readonly p2: Player;
@@ -123,6 +127,7 @@ export class GameWorld {
   private readonly nextSwingFrame: Record<PlayerId, number> = { 1: 0, 2: 0 };
 
   constructor(opts: GameWorldOptions = {}) {
+    this.tuning = normalizePhysics(opts.physics);
     this.control = new Control(opts.bindings);
     this.botVsBot = opts.botVsBot ?? false;
     this.singlePlayer = !this.botVsBot && (opts.singlePlayer ?? true);
@@ -134,7 +139,7 @@ export class GameWorld {
     this.executerQueue = new ExecuterQueue(this.executerRandom, opts.executerOrder);
 
     this.world = new World({
-      gravity: Vec2(GRAVITY.x, GRAVITY.y),
+      gravity: Vec2(0, this.tuning.gravity),
       allowSleep: true, // the original's doSleep
     });
 
@@ -149,8 +154,10 @@ export class GameWorld {
     this.powerUps = new PowerUps({ 1: this.p1, 2: this.p2 });
     this.bees = new Bees(this.powerUps, seededRandom(opts.beeSeed ?? 0x5bd1e995), opts.bees ?? true, opts.beeOrder);
 
+    this.setPhysics(this.tuning);
+
     installContactListener(this.world, this.flags);
-    installContactTweaks(this.world);
+    installContactTweaks(this.world, () => this.tuning.ballRestitution);
 
     const events: GameEvents = {
       ...opts.events,
@@ -196,6 +203,36 @@ export class GameWorld {
       1: this.botVsBot ? bot(this.p1) : null,
       2: this.botVsBot || this.singlePlayer ? bot(this.p2) : null,
     };
+  }
+
+  get physics(): Readonly<PhysicsSettings> { return { ...this.tuning }; }
+
+  /** Apply tuning without restarting the match or changing its timers. */
+  setPhysics(settings: Partial<PhysicsSettings>): void {
+    this.tuning = normalizePhysics(settings, this.tuning);
+    this.world.setGravity(Vec2(0, this.tuning.gravity));
+    this.ball.setMass(this.tuning.ballMass);
+    this.ball.body.getFixtureList()!.setRestitution(this.tuning.ballRestitution);
+    for (const player of [this.p1, this.p2]) {
+      player.movementSpeed = this.tuning.movementSpeed;
+      player.jumpStrength = this.tuning.jumpStrength;
+    }
+    this.applyAir(true);
+    for (let body = this.world.getBodyList(); body; body = body.getNext()) {
+      if (body.isDynamic()) body.setAwake(true);
+    }
+  }
+
+  /** Include newly launched hazards; invisible rail sensors have no air drag. */
+  applyAir(force = false): void {
+    if (this.tuning.airDensity === 0 && !force) return;
+    const damping = airDamping(this.tuning.airDensity);
+    for (let body = this.world.getBodyList(); body; body = body.getNext()) {
+      if (!body.isDynamic()) continue;
+      const physical = body === this.ball.body || this.p1.bodies.includes(body)
+        || this.p2.bodies.includes(body) || bodyTypeOf(body) === BODYTYPE.EXECUTER;
+      if (physical) body.setLinearDamping(damping);
+    }
   }
 
   /** The single-player opponent, i.e. player 2's AI. */
@@ -262,6 +299,7 @@ export class GameWorld {
       this.game.phase === 'play' && this.control.isChargingSwing() ? CHARGE.windupTimeScale : 1
     );
     this.applyFeather();
+    this.applyAir();
     // The original's 10 iterations everywhere, except while an executer is at
     // a doll: a 0.07 kg hand hitting a 6 kg ball is badly conditioned, and at
     // 10 iterations the joints visibly stretch.

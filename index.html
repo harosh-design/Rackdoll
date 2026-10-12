@@ -251,6 +251,34 @@
         vertical-align: 1px;
       }
 
+      .debug-launch { position: fixed; top: 12px; right: 12px; z-index: 20; }
+      .debug-panel {
+        position: fixed; inset: 60px 12px auto auto; margin: 0;
+        width: min(390px, calc(100vw - 24px)); padding: 20px;
+        max-height: calc(100dvh - 76px); overflow-y: auto;
+        color: var(--ink); background: var(--panel); border: 1px solid var(--line-strong);
+        border-radius: 16px; box-shadow: var(--shadow-card); z-index: 30;
+        backdrop-filter: blur(18px);
+      }
+      .debug-head { position: sticky; top: -20px; padding: 12px 0; background: var(--panel); z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      .debug-head h2 { margin: 0; font-size: 20px; }
+      .debug-panel > .hint { margin: 10px 0 18px; }
+      .physics-field { margin-bottom: 16px; }
+      .physics-field label { font-size: 13px; font-weight: 650; }
+      .physics-field input[type='range'] { width: 100%; margin: 0; accent-color: var(--accent); }
+      .physics-field .hint { margin: 5px 0 0; }
+      .physics-value { display: flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; }
+      .debug-panel input[type='number'], .debug-panel input[type='text'], .debug-panel select {
+        border: 1px solid var(--line-strong); border-radius: 7px; padding: 7px;
+        font: inherit; color: var(--ink); background: var(--surface); min-width: 0;
+      }
+      .physics-value input { width: 84px; font-variant-numeric: tabular-nums; }
+      .physics-presets { border-top: 1px solid var(--line); padding-top: 16px; display: grid; gap: 10px; }
+      .physics-presets label { font-size: 13px; font-weight: 650; }
+      .physics-presets select, .physics-presets input[type='text'] { width: 100%; }
+      .physics-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+      #physics-status { margin: 12px 0 0; min-height: 2.9em; }
+
       /* ---- Overlays ------------------------------------------------------- */
       .overlay {
         position: fixed;
@@ -728,6 +756,35 @@
       </defs>
     </svg>
 
+    <button class="btn btn-sm debug-launch" id="debug-launch" type="button" aria-controls="debug-panel" aria-expanded="false">Debug</button>
+    <dialog class="debug-panel" id="debug-panel" aria-labelledby="debug-title" aria-describedby="debug-description">
+      <header class="debug-head">
+        <h2 id="debug-title">Physics debug</h2>
+        <button class="btn btn-sm" id="debug-close" type="button" aria-label="Close physics debug">Close</button>
+      </header>
+      <p class="hint" id="debug-description">Changes apply immediately to the current and future matches. Play continues while this panel is open; pause with P before tuning if needed.</p>
+      <div id="physics-fields"></div>
+      <div class="physics-presets">
+        <label for="physics-preset">Presets</label>
+        <select id="physics-preset"></select>
+        <div class="physics-actions">
+          <button class="btn btn-sm" id="physics-load" type="button">Load preset</button>
+          <button class="btn btn-sm" id="physics-delete" type="button" disabled>Delete</button>
+          <button class="btn btn-sm" id="physics-reset" type="button">Reset physics</button>
+        </div>
+        <label for="physics-preset-name">Preset name</label>
+        <input id="physics-preset-name" type="text" maxlength="60" placeholder="e.g. Low gravity" autocomplete="off">
+        <div class="physics-actions">
+          <button class="btn btn-primary btn-sm" id="physics-save" type="button">Save preset</button>
+          <button class="btn btn-sm" id="physics-export" type="button">Export JSON</button>
+          <button class="btn btn-sm" id="physics-import" type="button">Import JSON</button>
+        </div>
+        <p class="hint">Saving an existing name replaces that preset. Presets and the last applied settings are remembered in this browser.</p>
+        <input id="physics-import-file" type="file" accept=".json,application/json" hidden>
+      </div>
+      <p class="hint" id="physics-status" role="status" aria-live="polite"></p>
+    </dialog>
+
     <main class="stage" id="stage">
       <canvas id="game" tabindex="-1" aria-label="Ragdoll volleyball court"></canvas>
       <div class="hud-controls" id="hud-controls" role="toolbar" aria-label="Game controls">
@@ -853,7 +910,7 @@
             </div>
             <div class="shortcuts">
               <span><kbd>P</kbd><kbd>Esc</kbd> Pause</span>
-              <span><kbd>M</kbd> Music on / off</span>
+              <span>Music temporarily disabled</span>
               <span><kbd>Enter</kbd> Start match</span>
             </div>
           </div>

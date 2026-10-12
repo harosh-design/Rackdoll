@@ -1,0 +1,30 @@
+{
+  "build": "passed",
+  "physicsTests": {
+    "passed": 10,
+    "failed": 0
+  },
+  "fullSuite": {
+    "passed": 127,
+    "failed": 9,
+    "total": 136
+  },
+  "baseline": {
+    "passed": 117,
+    "failed": 9,
+    "total": 126,
+    "comparison": "The same nine existing failures were reproduced using the original simulation source from HEAD in an isolated temporary copy."
+  },
+  "browserChecks": [
+    "Open from the main menu and during a match",
+    "Live numeric input and slider synchronization",
+    "Save and overwrite a named preset",
+    "Reset and load a saved preset",
+    "Restore active settings after reload",
+    "Export JSON and import the exported preset",
+    "Delete a custom preset",
+    "Pause with P while the debug panel is open"
+  ],
+  "airModel": "Air density maps to linear damping of 0.2 times density per second. The default is zero to preserve existing physics.",
+  "preview": "panel.jpg"
+}

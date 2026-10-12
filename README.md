@@ -110,6 +110,30 @@ server holding it.
 Holding jump bunny-hops. That is deliberate: Flash re-fired key-down on OS key
 repeat, which re-armed the consumed jump flag.
 
+## Physics debug and presets
+
+Click **Debug** in the top-right corner from the menu or during a match.
+The panel provides sliders and numeric inputs for gravity, ball mass, air
+density, player movement, jump strength and ball bounce. Changes apply
+immediately and carry into new rounds and matches. Both human and CPU players
+use the movement and jump multipliers. Press P to pause while tuning; text
+entry and slider arrow keys do not control the players.
+
+**Save preset** stores the current combination under a name in this browser;
+saving the same name updates it. Select a preset and click **Load preset** to
+apply it. **Delete** removes the selected custom preset. **Reset physics**
+restores the original values. The last applied settings are also remembered
+on reload. **Export JSON** downloads the current settings; **Import JSON**
+validates, saves and applies an exported preset. If browser storage is blocked,
+tuning works for the session and JSON export provides a way to keep presets.
+
+Air density defaults to zero to preserve the existing simulation. It maps to
+linear damping at `0.2 × density` per second, an arcade approximation applied
+to the ball, ragdoll parts and hazards, excluding the invisible rail sensors.
+Ball mass scales rotational inertia proportionally; ball bounce multiplies
+the existing court, head and limb restitution values. Physics settings belong
+to each world independently and do not modify the reference constants.
+
 ## Powers
 
 Powers come from drone-delivered parcels; gifts no longer appear on the floor after goals.
@@ -197,8 +221,9 @@ code where it happens.
   held ball brushing the floor would be scored the moment it was served.
 - **Sounds** use short Stable Audio 3 samples for hits, points, buttons,
   and special moves. Procedural cues cover the first moments while samples load
-  or if a file is unavailable. Press M to mute the music; sound effects keep
-  playing. **Render interpolation** blends the last two frames on high-refresh
+  or if a file is unavailable. Background music is temporarily disabled while
+  replacement tracks are planned; sound effects keep playing.
+  **Render interpolation** blends the last two frames on high-refresh
   displays. Neither touches the simulation.
 
 ## The hazard: deliberately reworked from §13

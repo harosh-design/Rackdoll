@@ -1,3 +1,5 @@
+import { wirePhysicsPanel } from './debug/physicsPanel';
+import { loadPhysicsLibrary, type PresetStorage } from './debug/physicsPresets';
 import { Music } from './audio/music';
 import { Sfx } from './audio/sfx';
 import {
@@ -42,6 +44,8 @@ const renderer = new Renderer(canvas, backdrop);
 const interp = new Interpolator();
 const sfx = new Sfx();
 const music = new Music();
+/** Background music is disabled until replacement tracks are added. */
+const MUSIC_ENABLED = false;
 
 type Mode = '1p' | '2p' | 'cpu';
 const VISUAL_STYLE_KEY = 'rackdoll-visual-style';
@@ -52,6 +56,9 @@ function loadVisualStyle(): VisualStyle {
     return 'people';
   }
 }
+let physicsStorage: PresetStorage | undefined;
+try { physicsStorage = localStorage; } catch { /* Tuning still works in memory. */ }
+const physicsLibrary = loadPhysicsLibrary(physicsStorage);
 const settings = {
   mode: '1p' as Mode,
   visualStyle: loadVisualStyle(),
@@ -77,15 +84,18 @@ let messageTone: PlayerId | 0 = 0;
 const MUTE_KEY = 'rackdoll-muted';
 let muted = false;
 function applyMute(state: boolean): void {
+  state = MUSIC_ENABLED ? state : true;
   muted = state;
   music.setMuted(state);         // suspend/resume the loop, keeping its position
   document.documentElement.classList.toggle('muted', state);
   document.querySelectorAll<HTMLButtonElement>('.js-sound').forEach((b) => {
+    b.disabled = !MUSIC_ENABLED;
     b.setAttribute('aria-pressed', String(!state));
-    b.title = state ? 'Music off (M)' : 'Music on (M)';
+    b.title = !MUSIC_ENABLED ? 'Music temporarily disabled' : state ? 'Music off (M)' : 'Music on (M)';
   });
 }
 function toggleMute(): void {
+  if (!MUSIC_ENABLED) return;
   applyMute(!muted);
   try {
     localStorage.setItem(MUTE_KEY, muted ? '1' : '0');
@@ -123,6 +133,7 @@ function createWorld(demo = false): GameWorld {
     p1Level: settings.p1Level,
     hazards: settings.hazards,
     bindings: toKeyBindings(settings.bindings),
+    physics: physicsLibrary.current,
     executerSeed: Math.floor(Math.random() * 0x100000000),
     events: {
       onPoint: (winner, reason) => onPoint(winner, reason),
@@ -142,8 +153,10 @@ function* allBodies(w: GameWorld) {
 
 function startMatch(): void {
   sfx.unlock();
-  music.unlock();
-  music.pickNext();             // new game → a fresh, non-repeating random track
+  if (MUSIC_ENABLED) {
+    music.unlock();
+    music.pickNext();           // new game → a fresh, non-repeating random track
+  }
   applyMute(muted);            // keep mute state consistent when starting a fresh match
   gw = createWorld();
   message = null;
@@ -531,6 +544,11 @@ function wireMenu(): void {
 
   window.addEventListener('keydown', (e) => {
     if (e.altKey || e.ctrlKey || e.metaKey) return;
+    if (e.code === 'Escape' && physicsPanel.open) {
+      e.preventDefault();
+      physicsPanel.close();
+      return;
+    }
     if (e.code === 'KeyP' || e.code === 'Escape') {
       if (screen === 'playing' || screen === 'paused') {
         e.preventDefault();
@@ -610,6 +628,7 @@ function simFrame(): void {
 
 /** The menu backdrop: the physics at the menu time step, no rules running. */
 function menuFrame(): void {
+  gw.applyAir();
   gw.world.step(MENU_TIME_STEP, ITERATIONS, ITERATIONS);
   interp.commit(allBodies(gw));
 }
@@ -651,10 +670,25 @@ bindKeyboard(
     clear: () => gw.control.clear(),
     uses: (c) => gw.control.uses(c),
   },
-  () => screen === 'playing',
+  () => screen === 'playing' && !document.getElementById('debug-panel')!.contains(document.activeElement),
 );
 
 wireMenu();
+$('debug-launch').addEventListener('click', () => {
+  gw.control.clear();
+  if (capturing) {
+    capturing = null;
+    $('binding-status').textContent = 'Key change cancelled.';
+    renderBindings();
+  }
+});
+const physicsPanel = wirePhysicsPanel(physicsLibrary, physicsStorage, settings => {
+  gw.setPhysics(settings);
+  gw.control.clear();
+}, () => {
+  if (screen === 'playing') focusGame();
+  else $('debug-launch').focus();
+});
 applyMute(loadMuted());
 setScreen('menu');
 new ResizeObserver(() => renderer.resize()).observe(canvas);
@@ -668,6 +702,7 @@ if (import.meta.env.DEV) {
     get gw() { return gw; },
     renderer,
     settings,
+    physicsLibrary,
     sfx,
     advance(frames = 1, alpha = 1) {
       for (let i = 0; i < frames; i++) simFrame();

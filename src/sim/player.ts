@@ -68,6 +68,8 @@ export class Player {
   /** Current collision scale. Eases toward targetScale in tickSize(). */
   sizeScale = 1;
   targetScale = 1;
+  movementSpeed = 1;
+  jumpStrength = 1;
 
   private readonly world: World;
   private ballJoint: RevoluteJointT | null = null;
@@ -340,10 +342,10 @@ export class Player {
 
     const head = this.head;
     const d = Vec2.sub(head.getWorldCenter(), this.tors.getWorldCenter());
-    const v = Vec2.mul(norm(d), ACTIONS.jumpLeanImpulse * this.massFactor * this.controlScale);
+    const v = Vec2.mul(norm(d), ACTIONS.jumpLeanImpulse * this.massFactor * this.controlScale * this.jumpStrength);
     // The rail and ragdoll joints absorb much of the extra impulse. A 2x
     // launch impulse produces about 1.5x measured head height.
-    const lift = ACTIONS.jumpLift * this.massFactor * this.jumpBoost * (this.power === 'highJump' ? 2 : 1) * this.controlScale;
+    const lift = ACTIONS.jumpLift * this.massFactor * this.jumpBoost * (this.power === 'highJump' ? 2 : 1) * this.controlScale * this.jumpStrength;
 
     ass.setLinearVelocity(Vec2(0, 0));
     head.setLinearVelocity(Vec2(0, 0));
@@ -364,7 +366,7 @@ export class Player {
     const ass = this.ass;
     const head = this.head;
     ass.setLinearVelocity(Vec2(0, 0));
-    const boost = this.massFactor * (this.power === 'speed' ? 1.5 : 1) * this.controlScale;
+    const boost = this.massFactor * (this.power === 'speed' ? 1.5 : 1) * this.controlScale * this.movementSpeed;
     const moved = Vec2(impulse.x * boost, impulse.y * boost);
     if (this.grounded) {
       ass.applyLinearImpulse(moved, ass.getWorldCenter(), true); // grounded
@@ -380,7 +382,7 @@ export class Player {
     const head = this.head;
     ass.setLinearVelocity(Vec2(0, 0));
     head.setLinearVelocity(Vec2(0, 0));
-    const boost = this.massFactor * (this.power === 'speed' ? 1.5 : 1) * this.controlScale;
+    const boost = this.massFactor * (this.power === 'speed' ? 1.5 : 1) * this.controlScale * this.movementSpeed;
     const moved = Vec2(impulse.x * boost, impulse.y * boost);
     if (this.grounded) {
       const half = Vec2(moved.x * 0.5, moved.y * 0.5);

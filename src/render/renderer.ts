@@ -1,5 +1,5 @@
 import {
-  BALL, BALL_TINT, BOXER, CHARGE, COURT, FLIP, EXECUTER, FLOOR_TOP_PX, FPS, GRAVITY, MAX_TOUCHES, OPTIONS, PARTS, PRIZE_ANIM,
+  BALL, BALL_TINT, BOXER, CHARGE, COURT, FLIP, EXECUTER, FLOOR_TOP_PX, FPS, MAX_TOUCHES, OPTIONS, PARTS, PRIZE_ANIM,
   PRIZE_BUTTONS, SLIME, SPRING, STUN, SWING, VIEW, toPx, type PartName,
 } from '../sim/constants';
 import type { Body, Vec2Value } from 'planck';
@@ -95,33 +95,6 @@ export const HUD_BAR = {
   gap: 5,
 } as const;
 
-/**
- * The camera, over the original's fixed view of the court — the 640x400
- * stage the world sprite sits on (VIEW), called the base view here. It rests
- * on that view and only ever pulls back from it, about the middle of the
- * floor's edge, when the ball's flight or a doll would leave the frame — as
- * far as the ceiling. Rendering only; the simulation never sees it.
- */
-const CAMERA = {
-  /** Furthest out: the ceiling (world y -850) in frame. */
-  minZoom: 0.55,
-  /** Stage px kept clear above the top of the ball's flight. */
-  ballTop: 14,
-  /** Stage px kept clear above a doll's head. */
-  dollTop: 8,
-  /**
-   * How far ahead the ball's climb is framed, s. A rally shot tops out
-   * sooner, so the camera makes one move to its apex; a towering one is
-   * followed up, this far ahead of it.
-   */
-  lead: 1.2,
-  /** Spring times, s: about how long the zoom takes to ease out, and back in. */
-  zoomOut: 0.45,
-  zoomIn: 1.1,
-  /** How long it stays pulled back once the ball has topped out, s. */
-  hold: 0.6,
-} as const;
-
 export interface HudState {
   singlePlayer: boolean;
   /** Freeze decorative scenery together with the match. */
@@ -146,10 +119,21 @@ interface MotionState {
   dust: DustPuff[];
 }
 
+interface BallTrailPoint {
+  x: number;
+  y: number;
+  frame: number;
+  strength: number;
+}
+
+/** Render history in simulation frames, so the tail freezes with the match. */
+const BALL_TRAIL_FRAMES = FPS * 0.45;
+
 export class Renderer {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private readonly motion = new WeakMap<GameWorld, MotionState>();
+  private readonly ballTrails = new WeakMap<GameWorld, BallTrailPoint[]>();
   /** Device pixels per stage pixel. */
   private k = 1;
   private scenerySeconds = 0;
@@ -157,12 +141,6 @@ export class Renderer {
   private readonly shaders = new ShaderScene();
   private visualStyle: VisualStyle = 'people';
   private readonly backdrop: AmbientBackdrop | null;
-  /**
-   * Zoom over the base view (1 is the base view, less is further out), the
-   * spring's velocity, the zoom it is heading for and how long that holds;
-   * `world` and `at` (s) are what it last framed and when.
-   */
-  private readonly cam = { zoom: 1, v: 0, goal: 1, holdUntil: 0, world: null as GameWorld | null, at: 0 };
   readonly ready: Promise<void>;
 
   constructor(canvas: HTMLCanvasElement, backdrop?: HTMLCanvasElement) {
@@ -196,85 +174,25 @@ export class Renderer {
   // Transforms
   // -------------------------------------------------------------------------
 
-  /** The stage itself: the HUD, which the camera never moves. */
+  /** The fixed stage coordinates used by the HUD and scenery. */
   private stageSpace(ctx: CanvasRenderingContext2D): void {
     ctx.setTransform(this.k, 0, 0, this.k, 0, 0);
   }
 
-  /** World px through VIEW's placement and then the camera. */
+  /** World pixels at the fixed arena scale and placement. */
   private worldSpace(ctx: CanvasRenderingContext2D): void {
-    const z = this.cam.zoom;
-    const s = this.k * VIEW.scale * z;
-    ctx.setTransform(
-      s, 0, 0, s,
-      this.k * (VIEW.stageW / 2 + (STAGE.offsetX - VIEW.stageW / 2) * z),
-      this.k * (VIEW.stageH + (STAGE.offsetY - VIEW.stageH) * z),
-    );
+    const s = this.k * VIEW.scale;
+    ctx.setTransform(s, 0, 0, s, this.k * STAGE.offsetX, this.k * STAGE.offsetY);
   }
 
-  /** Where a world point lands on the stage, through the camera. */
+  /** Where a world point lands on the fixed stage. */
   private toStage(wx: number, wy: number): { x: number; y: number } {
-    const z = this.cam.zoom;
-    const x = wx * VIEW.scale + STAGE.offsetX;
-    const y = wy * VIEW.scale + STAGE.offsetY;
-    return { x: VIEW.stageW / 2 + (x - VIEW.stageW / 2) * z, y: VIEW.stageH + (y - VIEW.stageH) * z };
-  }
-
-  // -------------------------------------------------------------------------
-  // Camera
-  // -------------------------------------------------------------------------
-
-  /**
-   * Pull back far enough for the top of the ball's climb over the next
-   * CAMERA.lead s — its apex, predicted as the AI does, when it comes that
-   * soon — and for any doll above the frame. A moment after the ball tops
-   * out, settle back in. Spring-smoothed, so every move eases in and out. A
-   * new world starts on its framing.
-   */
-  private updateCamera(gw: GameWorld, interp: PoseSource, alpha: number): void {
-    const H = VIEW.stageH;
-    // The floor stays on the bottom edge, so world y `wy` sits `top` stage
-    // px below the frame's top at any zoom up to (H - top) / (H - base y).
-    let target = 1;
-    const frame = (wy: number, top: number) => {
-      target = Math.min(target, (H - top) / Math.max(1, H - (wy * VIEW.scale + STAGE.offsetY)));
-    };
-    const ball = interp.pose(gw.ball.body, alpha);
-    const vy = gw.ball.body.getLinearVelocity().y;
-    const g = GRAVITY.y * gw.ball.body.getGravityScale();
-    const t = vy >= 0 ? 0 : g > 0 ? Math.min(CAMERA.lead, -vy / g) : CAMERA.lead;
-    const climb = toPx(-(vy * t + (g * t * t) / 2));
-    frame(ball.y - climb - gw.ball.radiusPx, CAMERA.ballTop);
-    for (const p of [gw.p1, gw.p2]) frame(interp.pose(p.head, alpha).y - 20 * p.sizeScale, CAMERA.dollTop);
-    target = Math.max(CAMERA.minZoom, target);
-
-    const cam = this.cam;
-    const now = performance.now() / 1000;
-    if (cam.world !== gw) {
-      Object.assign(cam, { zoom: target, v: 0, goal: target, holdUntil: 0, world: gw, at: now });
-      return;
-    }
-    const dt = Math.max(0, Math.min(0.25, now - cam.at));
-    cam.at = now;
-    // Further out straight away; back in only after holding a moment.
-    if (target <= cam.goal) {
-      cam.goal = target;
-      cam.holdUntil = now + CAMERA.hold;
-    } else if (now >= cam.holdUntil) {
-      cam.goal = target;
-    }
-    const time = cam.goal < cam.zoom ? CAMERA.zoomOut : CAMERA.zoomIn;
-    [cam.zoom, cam.v] = smoothDamp(cam.zoom, cam.goal, cam.v, time, dt);
-    // Settle exactly, so at rest it is the base view to the pixel.
-    if (Math.abs(cam.zoom - cam.goal) < 1e-4 && Math.abs(cam.v) < 1e-3) {
-      cam.zoom = cam.goal;
-      cam.v = 0;
-    }
+    return { x: wx * VIEW.scale + STAGE.offsetX, y: wy * VIEW.scale + STAGE.offsetY };
   }
 
   // -------------------------------------------------------------------------
   // Court: sky, scenery, sea, sand, walls, net. Everything that holds still,
-  // drawn through the camera each frame.
+  // drawn at the fixed arena scale each frame.
   // -------------------------------------------------------------------------
 
   private paintCourt(ctx: CanvasRenderingContext2D): void {
@@ -326,14 +244,8 @@ export class Renderer {
     ctx.fillStyle = '#111a2b';
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     this.stageSpace(ctx);
-    // The arena stays rigid while the existing camera follows high balls.
     ctx.save();
-    ctx.translate(VIEW.stageW / 2, VIEW.stageH);
-    ctx.scale(this.cam.zoom, this.cam.zoom);
-    ctx.translate(-VIEW.stageW / 2, -VIEW.stageH);
-    const top = Math.min(0, VIEW.stageH - VIEW.stageH / this.cam.zoom);
-    ctx.translate(0, top);
-    drawResortBackground(ctx, VIEW.stageW, VIEW.stageH - top, this.scenerySeconds);
+    drawResortBackground(ctx, VIEW.stageW, VIEW.stageH, this.scenerySeconds);
     ctx.restore();
     this.worldSpace(ctx);
     const ground = COURT.ground;
@@ -384,8 +296,6 @@ export class Renderer {
     this.sceneryAt = sceneryAt;
     // Every doll joint drawn closed, and a held ball on its hand (dollPose.ts).
     const interp = closedPoses(frames, alpha, [gw.p1, gw.p2], gw.ball.body);
-    if (!hud.paused || this.cam.world !== gw) this.updateCamera(gw, interp, alpha);
-    else this.cam.at = sceneryAt;
     this.paintCourt(ctx);
 
     this.drawShadows(gw, interp, alpha);
@@ -720,26 +630,7 @@ export class Renderer {
     const now = gw.frame - 1 + alpha;
     const tint = this.currentBallTint(gw, now);
 
-    // Trail sprite, scaled by speed/25 and rotated to the velocity (§9).
-    if (speed > 3) {
-      const s = Math.min(1.4, speed / 25);
-      const ang = Math.atan2(v.y, v.x);
-      ctx.save();
-      ctx.translate(pose.x, pose.y);
-      ctx.rotate(ang);
-      const len = 48 * s;
-      const grad = ctx.createLinearGradient(-len, 0, 0, 0);
-      grad.addColorStop(0, 'rgba(255,255,255,0)');
-      grad.addColorStop(1, 'rgba(255,255,255,0.34)');
-      ctx.fillStyle = grad;
-      ctx.beginPath();
-      ctx.moveTo(-len, 0);
-      ctx.lineTo(0, -r * 0.85);
-      ctx.lineTo(0, r * 0.85);
-      ctx.closePath();
-      ctx.fill();
-      ctx.restore();
-    }
+    this.drawBallTrail(ctx, gw, pose, now, speed, r);
 
     // Motion blur: |vx|/7, or |angularVelocity|/11 below 4.5 m/s (§9).
     const blur = Math.abs(v.x) >= 4.5
@@ -755,6 +646,79 @@ export class Renderer {
     }
     ctx.globalAlpha = 1;
     this.ballArt(ctx, pose, tint);
+  }
+
+  /** A tapered comet wake follows the actual flight, including curved shots and bounces. */
+  private drawBallTrail(ctx: CanvasRenderingContext2D, gw: GameWorld, pose: Pose, now: number, speed: number, r: number): void {
+    let points = this.ballTrails.get(gw);
+    if (!points) {
+      points = [];
+      this.ballTrails.set(gw, points);
+    }
+    const last = points[points.length - 1];
+    // A held ball or a round reset must never draw a streak across the court.
+    if (gw.ball.held || gw.ball.ballOfPlayer !== 0) {
+      points.length = 0;
+      return;
+    }
+    if (last && (now < last.frame || Math.hypot(pose.x - last.x, pose.y - last.y) > 180)) {
+      points.length = 0;
+    }
+    while (points.length && now - points[0].frame >= BALL_TRAIL_FRAMES) points.shift();
+    const strength = clamp01((speed - 1) / 12);
+    const newest = points[points.length - 1];
+    // Render calls at the same simulation time (including pause) leave history intact.
+    if (!newest || now > newest.frame) points.push({ x: pose.x, y: pose.y, frame: now, strength });
+    if (points.length > 64) points.splice(0, points.length - 64);
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    // Broad blue bloom, a cyan body, and a narrow warm-white core.
+    for (const layer of [
+      { width: r * 2.6, rgb: '80,175,255', opacity: 0.08 },
+      { width: r * 1.2, rgb: '130,225,255', opacity: 0.24 },
+      { width: r * 0.32, rgb: '255,246,214', opacity: 0.8 },
+    ]) {
+      for (let i = 1; i < points.length; i++) {
+        const a = points[i - 1], b = points[i];
+        const life = clamp01(1 - (now - (a.frame + b.frame) / 2) / BALL_TRAIL_FRAMES);
+        const energy = (a.strength + b.strength) / 2;
+        ctx.lineWidth = Math.max(0.3, layer.width * life * (0.4 + 0.6 * energy));
+        ctx.strokeStyle = `rgba(${layer.rgb},${layer.opacity * life * life * energy})`;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+      }
+    }
+
+    // Deterministic embers drift gently away from the wake as they fade.
+    for (let i = 1; i < points.length; i++) {
+      const p = points[i], previous = points[i - 1];
+      if (Math.floor(p.frame * 2) === Math.floor(previous.frame * 2)) continue;
+      const age = (now - p.frame) / BALL_TRAIL_FRAMES;
+      const life = 1 - age;
+      const phase = Math.floor(p.frame * 2) * 2.399;
+      const x = p.x + Math.sin(phase) * age * 24;
+      const y = p.y + Math.cos(phase) * age * 24;
+      ctx.fillStyle = `rgba(255,230,165,${life * life * p.strength * 0.7})`;
+      ctx.beginPath();
+      ctx.arc(x, y, 0.5 + life * 1.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (strength > 0) {
+      const glow = ctx.createRadialGradient(pose.x, pose.y, r * 0.6, pose.x, pose.y, r * 2.6);
+      glow.addColorStop(0, `rgba(180,235,255,${strength * 0.4})`);
+      glow.addColorStop(0.45, `rgba(100,200,255,${strength * 0.16})`);
+      glow.addColorStop(1, 'rgba(80,175,255,0)');
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(pose.x, pose.y, r * 2.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   /** The jersey colour of whoever touched the ball last, blending in as it changes. */
@@ -1212,7 +1176,7 @@ export class Renderer {
       ctx.font = '800 8px system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
-      ctx.fillText(`P${p.id} ${(-sy / (VIEW.scale * this.cam.zoom) / 30).toFixed(1)} m`, sx, 16);
+      ctx.fillText(`P${p.id} ${(-sy / VIEW.scale / 30).toFixed(1)} m`, sx, 16);
     }
   }
 
@@ -1255,7 +1219,7 @@ export class Renderer {
   private drawOffscreenBall(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: PoseSource, alpha: number): void {
     const pose = interp.pose(gw.ball.body, alpha);
     const { x: sx, y: sy } = this.toStage(pose.x, pose.y);
-    const scale = VIEW.scale * this.cam.zoom;
+    const scale = VIEW.scale;
     if (sy > -gw.ball.radiusPx * scale) return;
     const heightM = (-sy / scale / 30).toFixed(1);
     const tint = this.currentBallTint(gw, gw.frame - 1 + alpha);
@@ -1372,23 +1336,6 @@ export class Renderer {
     }
     ctx.restore();
   }
-}
-
-/**
- * A critically damped spring toward `target` (Game Programming Gems 4,
- * §1.10): it eases out of rest and into the target over about `time` s and
- * never passes it. Returns the new value and velocity.
- */
-function smoothDamp(value: number, target: number, velocity: number, time: number, dt: number): [number, number] {
-  if (dt <= 0) return [value, velocity];
-  const omega = 2 / time;
-  const x = omega * dt;
-  const decay = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x);
-  const change = value - target;
-  const temp = (velocity + omega * change) * dt;
-  const next = target + (change + temp) * decay;
-  if (target - value > 0 === next > target) return [target, 0];
-  return [next, (velocity - omega * temp) * decay];
 }
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
