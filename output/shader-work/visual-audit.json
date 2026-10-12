@@ -1,0 +1,33 @@
+{
+  "passed": true,
+  "checks": {
+    "compiledWebGL": true,
+    "pauseStable": true,
+    "smoothFlow": true,
+    "flowChangesOverTime": true,
+    "reducedMotionStable": true,
+    "renderDoesNotMovePhysics": true,
+    "twoConnectedPlayerSilhouettes": true,
+    "noGpuErrors": true,
+    "contextLossFallback": true,
+    "contextRestored": true,
+    "restoredGpuNoErrors": true,
+    "noWebGLPlayersFallback": true,
+    "narrowViewport": true,
+    "narrowFrameRendered": true,
+    "giantRenders": true
+  },
+  "measurements": {
+    "nearbyFrames": {
+      "changed": 1372723,
+      "mean": 0.7623990082644628,
+      "max": 15
+    },
+    "silhouetteComponents": [
+      2312,
+      2312
+    ],
+    "averageRenderMs": 2.5400000002235172
+  },
+  "errors": []
+}

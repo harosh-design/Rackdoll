@@ -7,6 +7,15 @@ which were read out of the original's own AS3 bytecode.
 All project code and documentation must be written in English. See
 [`AGENTS.md`](AGENTS.md) for the project language policy.
 
+The current narrative direction is documented in
+[`docs/LAST-CHANCE-RESORT-LORE.md`](docs/LAST-CHANCE-RESORT-LORE.md).
+See [`docs/RESORT-VISUAL-CONCEPTS.md`](docs/RESORT-VISUAL-CONCEPTS.md) for
+the earlier visual concepts and background animation plan.
+The start menu offers two graphics styles: the previous
+[indoor arena with textured people](docs/FUTURE-ARENA-ART.md) (the default), and
+the [flowing shader arena](docs/SHADER-ARENA-ART.md) with glass and chrome players.
+The selected style is remembered locally and applies to both players and scenery.
+
 ```bash
 npm install
 npm run dev        # play at http://localhost:5173
@@ -103,8 +112,8 @@ repeat, which re-armed the consumed jump flag.
 
 ## Powers
 
-Powers come from bees; gifts no longer appear on the floor after goals.
-Hitting a bee with the ball grants its ability for 30 seconds: 1.5× body size,
+Powers come from drone-delivered parcels; gifts no longer appear on the floor after goals.
+Hitting a parcel with the ball grants its ability for 30 seconds: 1.5× body size,
 ⅔ body size, feather ball (a free ball
 over your half falls at 40% gravity), 1.5× jump, faster movement, a nearby-ball
 magnet, or protection against knockback from the opponent and the hazards. The player then returns to normal. The HUD shows the ability and its
@@ -123,35 +132,23 @@ moves with the size: otherwise a ⅔-size doll dangles ~17 px above the floor an
 so its head peaks as high as a full-size jump. Crouch, arm wind-up and the
 grounded checks scale with the doll as well.
 
-## Bee gifts
+## Drone deliveries
 
-During play a bee flies in from
-beyond the left or right screen edge every 12–20 seconds, with at most two in
-the air. It crosses above the net and leaves by the other edge. Each bee carries one of
-the seven abilities, and every ability turns up once in each run of seven. Hit
-a bee with the ball and its ability goes to whoever holds the ball or touched
-it last for 30 seconds, and it replaces any
-current ability. The ball passes straight through, so the rally is unchanged.
-A bee is only popped in play. During the goal replay the bees slow down with
-the physics.
+Delivery drones fly in from either screen edge every 12–20 seconds, with at most
+two active. They carry one of seven abilities. Hit the parcel with a ball you
+last touched to collect its 30-second power. A new pickup replaces the current
+ability. The ball continues its flight. During goal replays the delivery slows
+with the simulation.
 
-You can tell what a bee gives before you hit it:
+Parcel glyphs identify the power: plus for Giant, minus for Tiny, a wave for
+Feather ball, an up arrow for High jump, chevrons for Speed, an arch for Magnet,
+and a diamond for Shield. The short label beneath each parcel names the effect.
+Giant and Tiny deliveries retain their different sizes and flight styles.
 
-| Ability | The bee |
-| --- | --- |
-| Giant | 1.6× size, slow and heavy, arrows pushing outward |
-| Tiny | 0.6× size, fast and jittery, arrows pulling inward |
-| Feather ball | carries a feather, drifts lazily |
-| High jump | rides a spring and bounces along |
-| Speed | fastest, with speed lines and afterimages |
-| Magnet | carries a red horseshoe magnet |
-| Shield | flies inside a bubble |
-
-Each bee also has a halo in its ability's colour and a small label. Its hit
-radius matches its drawn size, so the giant bee is the easiest target and the
-tiny bee the hardest. The flight is a closed-form function of the bee's age, so it
-is deterministic: it can be swept against the ball for the hit test and
-interpolated for drawing.
+The collectible hit sweep and trajectories still use the legacy `Bees`
+simulation API. The renderer now draws courier hulls, animated propellers and
+a separate parcel centred on that hit region. This preserves deterministic
+pickup behavior and the existing physics tests.
 
 ## Fidelity notes
 

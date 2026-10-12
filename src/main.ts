@@ -6,7 +6,7 @@ import {
 } from './input/bindings';
 import { bindKeyboard } from './input/keyboard';
 import { Interpolator } from './render/interp';
-import { HUD_BAR, Renderer } from './render/renderer';
+import { HUD_BAR, Renderer, type VisualStyle } from './render/renderer';
 import { BEE_FLIGHT } from './sim/bees';
 import { BALL, BODYTYPE, FPS, ITERATIONS, OPTIONS } from './sim/constants';
 import type { ControlAction } from './sim/control';
@@ -37,14 +37,24 @@ const LEVELS: Record<number, { name: string; blurb: string }> = {
   6: { name: 'Champion', blurb: 'Reads the ball’s flight, aims away from its opponent and lines up its swing.' },
 };
 
-const renderer = new Renderer(canvas);
+const backdrop = $('ambient-backdrop') as HTMLCanvasElement;
+const renderer = new Renderer(canvas, backdrop);
 const interp = new Interpolator();
 const sfx = new Sfx();
 const music = new Music();
 
 type Mode = '1p' | '2p' | 'cpu';
+const VISUAL_STYLE_KEY = 'rackdoll-visual-style';
+function loadVisualStyle(): VisualStyle {
+  try {
+    return localStorage.getItem(VISUAL_STYLE_KEY) === 'shaders' ? 'shaders' : 'people';
+  } catch {
+    return 'people';
+  }
+}
 const settings = {
   mode: '1p' as Mode,
+  visualStyle: loadVisualStyle(),
   level: OPTIONS.currentLevel as number,
   /** Bot vs bot: the left CPU's level. */
   p1Level: OPTIONS.championLevel as number,
@@ -57,9 +67,6 @@ let gw = createWorld(true);
 let message: string | null = null;
 /** Whose point the banner announces: their jersey colours it. */
 let messageTone: PlayerId | 0 = 0;
-let servesSeen = 0;
-/** The first-serve hint, spelled with player 1's own keys. */
-let serveHint = '';
 
 // ---------------------------------------------------------------------------
 // Global music mute — the M key toggles the background music on every screen;
@@ -138,9 +145,6 @@ function startMatch(): void {
   music.unlock();
   music.pickNext();             // new game → a fresh, non-repeating random track
   applyMute(muted);            // keep mute state consistent when starting a fresh match
-  servesSeen = 0;
-  const keys = settings.bindings[1];
-  serveHint = `PRESS ${keyLabel(keys.jump)} TO JUMP, THEN ${keyLabel(keys.serve)} TO SERVE`.toUpperCase();
   gw = createWorld();
   message = null;
   setScreen('playing');
@@ -431,10 +435,31 @@ function wireMenu(): void {
     for (const b of buttons) {
       b.addEventListener('click', () => {
         for (const o of buttons) o.setAttribute('aria-pressed', String(o === b));
-        apply(b.dataset[attr]!);
+        apply(b.getAttribute(`data-${attr}`)!);
       });
     }
   };
+  const applyVisualStyle = (style: VisualStyle) => {
+    settings.visualStyle = style;
+    renderer.setVisualStyle(style);
+    document.body.dataset.visualStyle = style;
+    document.querySelectorAll<HTMLButtonElement>('[data-visual-style]').forEach(button => {
+      button.setAttribute('aria-pressed', String(button.dataset.visualStyle === style));
+    });
+    $('visual-style-description').textContent = style === 'people'
+      ? 'Textured people in the original indoor arena.'
+      : 'Glass and chrome players with flowing light across the entire screen.';
+  };
+  applyVisualStyle(settings.visualStyle);
+  group('visual-style', (value) => {
+    const style: VisualStyle = value === 'shaders' ? 'shaders' : 'people';
+    applyVisualStyle(style);
+    try {
+      localStorage.setItem(VISUAL_STYLE_KEY, style);
+    } catch {
+      // The selected graphics still work when browser storage is unavailable.
+    }
+  });
   group('mode', (v) => {
     settings.mode = v as Mode;
     $('level-field').hidden = v === '2p';
@@ -530,7 +555,6 @@ let acc = 0;
 let last = performance.now();
 
 function simFrame(): void {
-  const wasHeld = gw.ball.held;
   const wasDown = gw.flags.onBallDown;
   const executers = gw.executers.length;
   const hazardHits = new Map(gw.executers.map((e) => [e, { hits: e.hits, snaps: e.snaps }]));
@@ -552,9 +576,6 @@ function simFrame(): void {
     if (b.releasedAt !== released) sfx.buttonRearm();
   });
 
-  if (wasHeld && !gw.ball.held && gw.game.phase === 'play') {
-    servesSeen++;
-  }
   if (!wasDown && gw.flags.onBallDown) sfx.thud(gw.game.phase === 'goal');
   if (gw.executers.length > executers) sfx.executer();
   for (const [e, { hits, snaps }] of hazardHits) {
@@ -612,9 +633,9 @@ function tick(now: number): void {
 
   renderer.draw(gw, interp, running ? acc / FRAME : 1, {
     singlePlayer: gw.singlePlayer,
+    paused: !running,
     message: screen === 'playing' || screen === 'paused' ? message : null,
     messageTone,
-    controlsHint: screen === 'playing' && servesSeen < 2 && !gw.isCpu(1) ? serveHint : null,
   });
   requestAnimationFrame(tick);
 }
@@ -637,6 +658,7 @@ wireMenu();
 applyMute(loadMuted());
 setScreen('menu');
 new ResizeObserver(() => renderer.resize()).observe(canvas);
+new ResizeObserver(() => renderer.resize()).observe(backdrop);
 requestAnimationFrame(tick);
 
 if (import.meta.env.DEV) {
@@ -653,7 +675,6 @@ if (import.meta.env.DEV) {
         singlePlayer: gw.singlePlayer,
         message,
         messageTone,
-        controlsHint: null,
       });
       return gw.frame;
     },

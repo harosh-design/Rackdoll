@@ -1,0 +1,23 @@
+{
+  "passed": 117,
+  "failed": 9,
+  "knownFailures": [
+    "bee powers without floor gifts high jump lifts higher and magnet hands pull a nearby free ball",
+    "bee powers without floor gifts a shrunken doll stands on the floor and its jump peaks as high as a full-size one",
+    "§17.2 the doll + rails locks the head to its rail: upright, on the line, transients recover",
+    "champion opponent plans where the ball meets its head and sends a lob back over the net",
+    "hazards (reworked §13) the spring slams harder after a longer run, rebounds, recovers and charges again",
+    "hazards (reworked §13) the slime flies at a limb, sticks to it, and glues another limb to it",
+    "hazards (reworked §13) struggling tears the slime’s strands, which shortens its hold; it comes back after letting go",
+    "hazards (reworked §13) hits and holds the doll without tearing it apart or passing through it"
+  ],
+  "additionalFailures": [
+    "champion opponent plays player 1 just as well, mirrored, in bot vs bot"
+  ],
+  "timeoutCheck": {
+    "test": "champion opponent plays player 1 just as well, mirrored, in bot vs bot",
+    "passed": true,
+    "durationMs": 5745,
+    "testTimeoutMs": 20000
+  }
+}

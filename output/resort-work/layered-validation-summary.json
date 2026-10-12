@@ -1,0 +1,18 @@
+{
+  "build": "passed",
+  "layeredSceneryAudit": "passed",
+  "matchPausePixelDifference": 0,
+  "smallViewport": { "width": 800, "height": 700, "result": "complete scene and readable court" },
+  "fullTestRun": { "passed": 117, "failed": 9 },
+  "existingSimulationFailures": 8,
+  "baselineReference": "output/resort-work/baseline-tests.json",
+  "additionalTimeout": {
+    "test": "champion opponent plays player 1 just as well, mirrored, in bot vs bot",
+    "defaultTimeoutMs": 5000,
+    "isolatedResult": "passed with a 20000 ms test timeout",
+    "durationMs": 5546
+  },
+  "browserErrors": [],
+  "imageGeneration": "built-in ImageGen",
+  "assetPrompts": "output/resort-work/layered-background-prompts.json"
+}

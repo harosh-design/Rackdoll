@@ -1,0 +1,63 @@
+{
+  "wind": {
+    "palms": {
+      "changed": 7733,
+      "total": 8260,
+      "meanDifference": 38.305205811138016
+    },
+    "water": {
+      "changed": 17095,
+      "total": 18054,
+      "meanDifference": 37.48858978619697
+    },
+    "plants": {
+      "changed": 1395,
+      "total": 1881,
+      "meanDifference": 20.656034024455078
+    },
+    "hotel": {
+      "changed": 0,
+      "total": 1947,
+      "meanDifference": 0
+    },
+    "moon": {
+      "changed": 0,
+      "total": 1148,
+      "meanDifference": 0
+    },
+    "sand": {
+      "changed": 0,
+      "total": 9108,
+      "meanDifference": 0
+    },
+    "trunk": {
+      "changed": 0,
+      "total": 12,
+      "meanDifference": 0
+    }
+  },
+  "foreground": {
+    "leftCoverage": 3129,
+    "rightCoverage": 2763,
+    "centerCoverage": 0,
+    "wind": {
+      "changed": 6123,
+      "total": 71680,
+      "meanDifference": 6.533510044642857
+    },
+    "parallax": {
+      "changed": 6766,
+      "total": 71680,
+      "meanDifference": 14.146219308035715
+    }
+  },
+  "parallax": {
+    "moonShiftPx": -2,
+    "sandShiftPx": -12,
+    "hotelChanges": 1888
+  },
+  "renderMsPerFrame": 1.3416666666666666,
+  "pauseStable": true,
+  "reducedMotionStable": true,
+  "browserErrors": []
+}

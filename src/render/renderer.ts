@@ -1,25 +1,31 @@
 import {
-  BALL, BALL_TINT, BOXER, CHARGE, COURT, FLIP, EXECUTER, FLOOR_TOP_PX, FPS, GRAVITY, JOINTS, MAX_TOUCHES, OPTIONS, PARTS, PRIZE_ANIM,
-  PRIZE_BUTTONS, RIGHT_WALL_INNER_PX, SLIME, SPRING, STUN, SWING, VIEW, toPx, type PartName,
+  BALL, BALL_TINT, BOXER, CHARGE, COURT, FLIP, EXECUTER, FLOOR_TOP_PX, FPS, GRAVITY, MAX_TOUCHES, OPTIONS, PARTS, PRIZE_ANIM,
+  PRIZE_BUTTONS, SLIME, SPRING, STUN, SWING, VIEW, toPx, type PartName,
 } from '../sim/constants';
 import type { Body, Vec2Value } from 'planck';
 import type { Executer } from '../sim/executer';
-import { EXECUTER_VARIANTS, type ExecuterId } from '../sim/executerVariants';
+import { type ExecuterId } from '../sim/executerVariants';
 import type { GameWorld } from '../sim/world';
-import type { Player } from '../sim/player';
 import type { PrizeButton } from '../sim/prizeButton';
 import { POWER_LABELS } from '../sim/powerUps';
-import { drawBeePops, drawBees } from './bees';
-import { ANKLE_Y, DRAW_ORDER, HEAD, HEM_Y, NECKLINE_Y, outlinePath, SLEEVE_PX, SOLE_Y } from './dollArt';
+import { drawDronePops, drawDrones } from './drones';
+import { drawArenaSprite } from './arenaArt';
+import { STAGE } from './stageLayout';
+import { SOLE_Y } from './dollArt';
 import { closedPoses, type PoseSource } from './dollPose';
 import type { Interpolator, Pose } from './interp';
-import { drawResortBackground, drawResortPart, hasResortBackground, loadResortArt } from './resortArt';
+import { ShaderScene } from './shaderScene';
+import { AmbientBackdrop } from './ambientBackdrop';
+import { drawResortBackground, loadResortArt } from './resortArt';
+import { drawHumanPlayers } from './humanPlayers';
+
+export type VisualStyle = 'people' | 'shaders';
 
 /**
- * Canvas renderer. Draws in the original's coordinate systems: a 640x400
- * stage, and inside it the world sprite scaled 0.56 at (124, 180) (§15).
- * Parts are drawn with the original sprites' outlines and placement
- * (dollArt.ts), not at their collider size (§15).
+ * Canvas renderer. A 640x400 stage frames the original world at scale 0.56.
+ * STAGE centres the arena and leaves a shallow foreground beneath the court.
+ * Both the textured people arena and flowing glass/chrome shader arena use
+ * the same interpolated ragdoll poses; simulation geometry remains independent.
  */
 
 const PAL = {
@@ -38,10 +44,10 @@ const PAL = {
   skin: '#f1c7a0',
   skinShade: '#d8a57a',
   hair: { 1: '#4a3222', 2: '#2d2320' },
-  jersey: { 1: '#2f6fde', 2: '#e2453b' },
+  jersey: { 1: '#84dcff', 2: '#e3cfb0' },
   jerseyShade: { 1: '#1f4fa8', 2: '#a92d25' },
-  /** The colour a ball takes from whoever touched it last — their jersey. */
-  ballTintRgb: { 0: [251, 251, 246], 1: [47, 111, 222], 2: [226, 69, 59] },
+  /** Material accent of the last player to touch the ball. */
+  ballTintRgb: { 0: [251, 251, 246], 1: [121, 218, 255], 2: [232, 211, 176] },
   shorts: { 1: '#1d3a7d', 2: '#7b1f1a' },
   shoe: '#f4f4f0',
   ball: '#fbfbf6',
@@ -65,21 +71,8 @@ const PAL = {
 const partDef = (name: PartName) => PARTS.find((p) => p.name === name)!;
 const footHalfHeight = ((s) => (s.kind === 'box' ? s.hh : s.r))(partDef('FootLeft').shape);
 
-/** Each upper arm's shoulder pivot, along the arm in its own frame. */
-const SHOULDER_X = Object.fromEntries((['ArmLeft', 'ArmRight'] as const).map((arm) => {
-  const j = JOINTS.find((j) => j.a === arm && j.b === 'Tors')!;
-  return [arm, j.dx - partDef(arm).dx];
-})) as Record<'ArmLeft' | 'ArmRight', number>;
-
 /** Where a standing doll's drawn soles are: the feet hang below the shin colliders. */
 const SOLES_PX = FLOOR_TOP_PX + SOLE_Y - footHalfHeight;
-
-/**
- * The top of the sand. Like the original's floor, a plane seen from slightly
- * above that starts 6 px above the physics floor, so a ball resting on the
- * floor and a doll's feet, drawn further down, both stand on it.
- */
-const SAND_TOP_PX = FLOOR_TOP_PX - 6;
 
 /**
  * HUD columns, stage px: the scores sit over the court, clear of the prize
@@ -87,7 +80,7 @@ const SAND_TOP_PX = FLOOR_TOP_PX - 6;
  * around.
  */
 const HUD_LEFT_X = 48;
-const HUD_RIGHT_X = RIGHT_WALL_INNER_PX * VIEW.scale + VIEW.offsetX - 42;
+const HUD_RIGHT_X = VIEW.stageW - HUD_LEFT_X;
 
 /**
  * The top bar, stage px, centred over the court. The page puts its own
@@ -96,9 +89,9 @@ const HUD_RIGHT_X = RIGHT_WALL_INNER_PX * VIEW.scale + VIEW.offsetX - 42;
  */
 export const HUD_BAR = {
   midX: (HUD_LEFT_X + HUD_RIGHT_X) / 2,
-  y: 6,
-  h: 24,
-  controlsW: 74,
+  y: 30,
+  h: 18,
+  controlsW: 66,
   gap: 5,
 } as const;
 
@@ -131,12 +124,12 @@ const CAMERA = {
 
 export interface HudState {
   singlePlayer: boolean;
+  /** Freeze decorative scenery together with the match. */
+  paused?: boolean;
   /** A banner across the court, e.g. "POINT! · 4 TOUCHES". */
   message: string | null;
   /** Whose jersey colours the banner; 0 for neutral. */
   messageTone: 0 | 1 | 2;
-  /** The first-serve hint, or null to hide it. */
-  controlsHint: string | null;
 }
 
 interface DustPuff {
@@ -159,6 +152,11 @@ export class Renderer {
   private readonly motion = new WeakMap<GameWorld, MotionState>();
   /** Device pixels per stage pixel. */
   private k = 1;
+  private scenerySeconds = 0;
+  private sceneryAt: number | null = null;
+  private readonly shaders = new ShaderScene();
+  private visualStyle: VisualStyle = 'people';
+  private readonly backdrop: AmbientBackdrop | null;
   /**
    * Zoom over the base view (1 is the base view, less is further out), the
    * spring's velocity, the zoom it is heading for and how long that holds;
@@ -167,11 +165,17 @@ export class Renderer {
   private readonly cam = { zoom: 1, v: 0, goal: 1, holdUntil: 0, world: null as GameWorld | null, at: 0 };
   readonly ready: Promise<void>;
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, backdrop?: HTMLCanvasElement) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d', { alpha: false })!;
+    this.backdrop = backdrop ? new AmbientBackdrop(backdrop) : null;
     this.resize();
     this.ready = loadResortArt();
+  }
+
+  /** Switch scenery and players together without touching the live simulation. */
+  setVisualStyle(style: VisualStyle): void {
+    this.visualStyle = style;
   }
 
   /** Fit the 640x400 stage into the canvas's CSS box at device resolution. */
@@ -185,6 +189,7 @@ export class Renderer {
       this.canvas.height = h;
     }
     this.k = w / VIEW.stageW;
+    this.backdrop?.resize(rect);
   }
 
   // -------------------------------------------------------------------------
@@ -196,29 +201,22 @@ export class Renderer {
     ctx.setTransform(this.k, 0, 0, this.k, 0, 0);
   }
 
-  /** The base view through the camera, zooming about the middle of its bottom edge. */
-  private viewSpace(ctx: CanvasRenderingContext2D): void {
-    const z = this.cam.zoom;
-    const s = this.k * z;
-    ctx.setTransform(s, 0, 0, s, this.k * (VIEW.stageW / 2) * (1 - z), this.k * VIEW.stageH * (1 - z));
-  }
-
   /** World px through VIEW's placement and then the camera. */
   private worldSpace(ctx: CanvasRenderingContext2D): void {
     const z = this.cam.zoom;
     const s = this.k * VIEW.scale * z;
     ctx.setTransform(
       s, 0, 0, s,
-      this.k * (VIEW.stageW / 2 + (VIEW.offsetX - VIEW.stageW / 2) * z),
-      this.k * (VIEW.stageH + (VIEW.offsetY - VIEW.stageH) * z),
+      this.k * (VIEW.stageW / 2 + (STAGE.offsetX - VIEW.stageW / 2) * z),
+      this.k * (VIEW.stageH + (STAGE.offsetY - VIEW.stageH) * z),
     );
   }
 
   /** Where a world point lands on the stage, through the camera. */
   private toStage(wx: number, wy: number): { x: number; y: number } {
     const z = this.cam.zoom;
-    const x = wx * VIEW.scale + VIEW.offsetX;
-    const y = wy * VIEW.scale + VIEW.offsetY;
+    const x = wx * VIEW.scale + STAGE.offsetX;
+    const y = wy * VIEW.scale + STAGE.offsetY;
     return { x: VIEW.stageW / 2 + (x - VIEW.stageW / 2) * z, y: VIEW.stageH + (y - VIEW.stageH) * z };
   }
 
@@ -239,7 +237,7 @@ export class Renderer {
     // px below the frame's top at any zoom up to (H - top) / (H - base y).
     let target = 1;
     const frame = (wy: number, top: number) => {
-      target = Math.min(target, (H - top) / Math.max(1, H - (wy * VIEW.scale + VIEW.offsetY)));
+      target = Math.min(target, (H - top) / Math.max(1, H - (wy * VIEW.scale + STAGE.offsetY)));
     };
     const ball = interp.pose(gw.ball.body, alpha);
     const vy = gw.ball.body.getLinearVelocity().y;
@@ -280,101 +278,96 @@ export class Renderer {
   // -------------------------------------------------------------------------
 
   private paintCourt(ctx: CanvasRenderingContext2D): void {
-    const W = VIEW.stageW;
-    const H = VIEW.stageH;
-    const resort = hasResortBackground();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = resort ? PAL.resortSky : PAL.skyTop;
-    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-
-    // Zoomed out, the frame's top is above the base view's: fill up to it.
-    this.viewSpace(ctx);
-    const top = Math.min(0, H - H / this.cam.zoom);
-    if (resort) {
-      ctx.save();
-      ctx.translate(0, top);
-      drawResortBackground(ctx, W, H - top, performance.now() / 1000);
-      ctx.restore();
+    const floor = this.toStage(0, SOLES_PX).y / VIEW.stageH;
+    if (this.visualStyle === 'shaders') {
+      this.backdrop?.draw(this.scenerySeconds, floor);
+      this.shaders.drawBackground(ctx, this.scenerySeconds, floor);
     } else {
-      const sky = ctx.createLinearGradient(0, 0, 0, H);
-      sky.addColorStop(0, PAL.skyTop);
-      sky.addColorStop(0.62, PAL.skyBottom);
-      ctx.fillStyle = sky;
-      ctx.fillRect(0, top, W, H - top);
-
-      // Sea band just above the sand line.
-      this.worldSpace(ctx);
-      const seaTop = FLOOR_TOP_PX - 95;
-      ctx.fillStyle = PAL.sea;
-      ctx.fillRect(-400, seaTop, 1500, SAND_TOP_PX - seaTop);
-      ctx.fillStyle = PAL.seaFoam;
-      ctx.fillRect(-400, seaTop, 1500, 3);
-      ctx.fillRect(-400, SAND_TOP_PX - 4, 1500, 2);
-
-      // Sand playing surface.
-      const g = COURT.ground;
-      const sand = ctx.createLinearGradient(0, SAND_TOP_PX, 0, g.y + g.hh);
-      sand.addColorStop(0, PAL.sand);
-      sand.addColorStop(1, PAL.sandDark);
-      ctx.fillStyle = sand;
-      ctx.fillRect(g.x - g.hw, SAND_TOP_PX, g.hw * 2, g.y + g.hh - SAND_TOP_PX);
-      ctx.fillStyle = PAL.sandLine;
-      ctx.fillRect(g.x - g.hw, SAND_TOP_PX, g.hw * 2, 1.5);
+      this.paintPeopleCourt(ctx);
+      return;
     }
     this.worldSpace(ctx);
-
-    // Walls, drawn on out and up past their colliders: zoomed out, the
-    // camera sees beyond them.
-    const far = 4000;
+    const g = COURT.ground;
+    ctx.save();
+    ctx.shadowColor = '#84dcff'; ctx.shadowBlur = 8;
+    ctx.fillStyle = '#c4efff';
+    ctx.fillRect(g.x - g.hw, SOLES_PX, g.hw * 2, 1.3);
+    ctx.restore();
     for (const w of [COURT.leftWall, COURT.rightWall]) {
       const left = w === COURT.leftWall;
       const inner = left ? w.x + w.hw : w.x - w.hw;
-      const bottom = w.y + w.hh;
-      ctx.fillStyle = PAL.wall;
-      ctx.fillRect(left ? inner - far : inner, bottom - far, far, far);
-      ctx.fillStyle = PAL.wallEdge;
-      ctx.fillRect(left ? inner - 4 : inner, bottom - far, 4, far);
+      const x = left ? inner - 45 : inner;
+      const wall = ctx.createLinearGradient(x, 0, x + 45, 0);
+      wall.addColorStop(0, left ? '#1b2c3d' : '#8bb4c9');
+      wall.addColorStop(1, left ? '#8bb4c9' : '#1b2c3d');
+      ctx.fillStyle = wall; ctx.fillRect(left ? inner - 4000 : inner, -4000, 4000, 4500);
+      ctx.save(); ctx.shadowColor = '#81e0ff'; ctx.shadowBlur = 10;
+      ctx.fillStyle = '#cbf5ff'; ctx.fillRect(left ? inner - 2 : inner, -4000, 2, 4500);
+      ctx.restore();
     }
-
-    // Prize buttons (§13): the recess each sits in. The button itself animates,
-    // so it is drawn per frame.
     for (const p of PRIZE_BUTTONS) {
       const inward = p.side === 1 ? 1 : -1;
       const wallFace = p.x - inward * (p.hw + 1);
       const depth = PRIZE_ANIM.pressDepthPx + 3;
-      const x = inward === 1 ? wallFace - depth : wallFace;
       ctx.fillStyle = PAL.housing;
-      roundRect(ctx, x, p.y - p.hh - 4, depth, p.hh * 2 + 8, 2);
+      roundRect(ctx, inward === 1 ? wallFace - depth : wallFace, p.y - p.hh - 4, depth, p.hh * 2 + 8, 2);
       ctx.fill();
-      ctx.fillStyle = PAL.housingRim;
-      ctx.fillRect(inward === 1 ? wallFace - 1 : wallFace, p.y - p.hh - 4, 1, p.hh * 2 + 8);
     }
-
-    // Net: the collider is 2 px wide, 150 tall. Drawn a touch wider to read,
-    // with a mesh panel hanging off the top half. The pole is planted where
-    // the dolls' feet stand, as the original's net art is.
     const n = COURT.net;
-    const netTop = n.y - n.hh;
-    const netBottom = n.y + n.hh;
-    ctx.fillStyle = PAL.netMesh;
-    ctx.strokeStyle = PAL.netMesh;
-    ctx.lineWidth = 0.8;
-    const meshW = 7;
-    const meshH = Math.min(62, netBottom - netTop - 4);
-    ctx.beginPath();
-    for (let y = netTop + 4; y <= netTop + meshH; y += 7) {
-      ctx.moveTo(n.x - meshW, y);
-      ctx.lineTo(n.x + meshW, y);
+    const top = n.y - n.hh;
+    ctx.save(); ctx.shadowColor = '#88cfff'; ctx.shadowBlur = 7;
+    ctx.fillStyle = '#c2e8ff'; ctx.fillRect(n.x - 1.2, top, 2.4, SOLES_PX - top);
+    ctx.beginPath(); ctx.arc(n.x, top, 3, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+  }
+
+  private paintPeopleCourt(ctx: CanvasRenderingContext2D): void {
+    this.backdrop?.drawPeople();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = '#111a2b';
+    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    this.stageSpace(ctx);
+    // The arena stays rigid while the existing camera follows high balls.
+    ctx.save();
+    ctx.translate(VIEW.stageW / 2, VIEW.stageH);
+    ctx.scale(this.cam.zoom, this.cam.zoom);
+    ctx.translate(-VIEW.stageW / 2, -VIEW.stageH);
+    const top = Math.min(0, VIEW.stageH - VIEW.stageH / this.cam.zoom);
+    ctx.translate(0, top);
+    drawResortBackground(ctx, VIEW.stageW, VIEW.stageH - top, this.scenerySeconds);
+    ctx.restore();
+    this.worldSpace(ctx);
+    const ground = COURT.ground;
+    const floor = ctx.createLinearGradient(0, SOLES_PX, 0, SOLES_PX + 80);
+    floor.addColorStop(0, '#283344'); floor.addColorStop(1, '#111827');
+    ctx.fillStyle = floor;
+    ctx.fillRect(ground.x - ground.hw, SOLES_PX, ground.hw * 2, 4000);
+    ctx.fillStyle = '#9fc8ca';
+    ctx.fillRect(ground.x - ground.hw, SOLES_PX, ground.hw * 2, 1.3);
+    for (const wall of [COURT.leftWall, COURT.rightWall]) {
+      const left = wall === COURT.leftWall;
+      const inner = left ? wall.x + wall.hw : wall.x - wall.hw;
+      const x = left ? inner - 45 : inner;
+      const fill = ctx.createLinearGradient(x, 0, x + 45, 0);
+      fill.addColorStop(0, left ? '#253344' : '#94b1bc');
+      fill.addColorStop(1, left ? '#94b1bc' : '#253344');
+      ctx.fillStyle = fill;
+      ctx.fillRect(left ? inner - 4000 : inner, -4000, 4000, 4500);
+      ctx.fillStyle = '#c6e8ec';
+      ctx.fillRect(left ? inner - 2 : inner, -4000, 2, 4500);
     }
-    for (let x = -meshW; x <= meshW; x += 3.5) {
-      ctx.moveTo(n.x + x, netTop + 4);
-      ctx.lineTo(n.x + x, netTop + meshH);
+    for (const button of PRIZE_BUTTONS) {
+      const inward = button.side === 1 ? 1 : -1;
+      const wallFace = button.x - inward * (button.hw + 1);
+      const depth = PRIZE_ANIM.pressDepthPx + 3;
+      ctx.fillStyle = PAL.housing;
+      roundRect(ctx, inward === 1 ? wallFace - depth : wallFace, button.y - button.hh - 4, depth, button.hh * 2 + 8, 2);
+      ctx.fill();
     }
-    ctx.stroke();
-    ctx.fillStyle = PAL.netPole;
-    ctx.fillRect(n.x - 2, netTop, 4, SOLES_PX - netTop);
-    ctx.fillStyle = PAL.netTape;
-    ctx.fillRect(n.x - meshW - 1, netTop, meshW * 2 + 2, 4);
+    const net = COURT.net;
+    const netTop = net.y - net.hh;
+    ctx.fillStyle = '#d7e4e6';
+    ctx.fillRect(net.x - 1.2, netTop, 2.4, SOLES_PX - netTop);
+    ctx.beginPath(); ctx.arc(net.x, netTop, 3, 0, Math.PI * 2); ctx.fill();
   }
 
   // -------------------------------------------------------------------------
@@ -383,9 +376,16 @@ export class Renderer {
 
   draw(gw: GameWorld, frames: Interpolator, alpha: number, hud: HudState): void {
     const ctx = this.ctx;
+    const sceneryAt = performance.now() / 1000;
+    const sceneryDt = this.sceneryAt === null ? 0 : Math.min(0.1, Math.max(0, sceneryAt - this.sceneryAt));
+    if (this.sceneryAt !== null && !hud.paused) {
+      this.scenerySeconds += sceneryDt;
+    }
+    this.sceneryAt = sceneryAt;
     // Every doll joint drawn closed, and a held ball on its hand (dollPose.ts).
     const interp = closedPoses(frames, alpha, [gw.p1, gw.p2], gw.ball.body);
-    this.updateCamera(gw, interp, alpha);
+    if (!hud.paused || this.cam.world !== gw) this.updateCamera(gw, interp, alpha);
+    else this.cam.at = sceneryAt;
     this.paintCourt(ctx);
 
     this.drawShadows(gw, interp, alpha);
@@ -396,11 +396,15 @@ export class Renderer {
     const now = gw.frame - 1 + alpha;
     this.drawPrizeButtons(ctx, gw, now);
     this.drawFootMotion(ctx, gw, interp, now);
-    for (const p of [gw.p1, gw.p2]) this.drawDoll(ctx, p, interp, alpha);
+    if (this.visualStyle === 'shaders') {
+      this.shaders.drawPlayers(ctx, [gw.p1, gw.p2], interp, alpha, this.scenerySeconds);
+    } else {
+      drawHumanPlayers(ctx, [gw.p1, gw.p2], interp, alpha);
+    }
     this.drawPowerGlows(ctx, gw, interp, alpha);
-    drawBees(ctx, gw, now, alpha);
+    drawDrones(ctx, gw, now, alpha);
     this.drawBall(ctx, gw, interp, alpha);
-    drawBeePops(ctx, gw, interp, alpha, now);
+    drawDronePops(ctx, gw, interp, alpha, now);
     this.drawSwingEffects(ctx, gw, interp, alpha);
     this.drawOpponentHitEffects(ctx, gw, interp, alpha);
     this.drawStunEffects(ctx, gw, interp, alpha);
@@ -438,22 +442,6 @@ export class Renderer {
       ctx.restore();
     }
     ctx.restore();
-  }
-
-  private withPose(ctx: CanvasRenderingContext2D, pose: Pose, fn: () => void, scale = 1): void {
-    ctx.save();
-    ctx.translate(pose.x, pose.y);
-    ctx.rotate(pose.a);
-    ctx.scale(scale, scale);
-    fn();
-    ctx.restore();
-  }
-
-  /** Each part's art sits on its body exactly as the original's sprite does. */
-  private drawDoll(ctx: CanvasRenderingContext2D, p: Player, interp: PoseSource, alpha: number): void {
-    for (const name of DRAW_ORDER) {
-      this.withPose(ctx, interp.pose(p.part(name), alpha), () => this.partArt(ctx, name, p.id), p.sizeScale);
-    }
   }
 
   /** Small sand puffs make steps, take-offs, and landings readable. */
@@ -724,108 +712,6 @@ export class Renderer {
     }
   }
 
-  /**
-   * A part on the original sprite's outline (dollArt.ts), in its player's
-   * kit. Clothing is painted inside the outline, so it never changes where a
-   * part ends or how it meets the next one.
-   */
-  private partArt(ctx: CanvasRenderingContext2D, name: PartName, id: 1 | 2): void {
-    if (drawResortPart(ctx, name, id)) return;
-    const path = outlinePath(name);
-    const jersey = PAL.jersey[id];
-    const shorts = PAL.shorts[id];
-    const inside = (paint: () => void) => {
-      ctx.save();
-      ctx.clip(path);
-      paint();
-      ctx.restore();
-    };
-    switch (name) {
-      case 'Head': {
-        const { cx, cy, rx, ry } = HEAD;
-        ctx.fillStyle = PAL.skin;
-        ctx.fill(path);
-        // Hair cap.
-        ctx.fillStyle = PAL.hair[id];
-        ctx.beginPath();
-        ctx.ellipse(cx, cy - ry * 0.28, rx * 1.02, ry * 0.78, 0, Math.PI, Math.PI * 2);
-        ctx.fill();
-        // Face toward the net.
-        const face = id === 1 ? 1 : -1;
-        ctx.fillStyle = '#222';
-        ctx.beginPath();
-        ctx.arc(cx + face * 4.2, cy + 0.5, 1.35, 0, Math.PI * 2);
-        ctx.arc(cx + face * 0.2, cy + 0.5, 1.35, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = '#8a4b3a';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.arc(cx + face * 2.4, cy + 4.2, 2.2, 0.15 * Math.PI, 0.85 * Math.PI);
-        ctx.stroke();
-        return;
-      }
-      case 'Tors': {
-        // A bare neck, and the jersey from the shoulders down.
-        ctx.fillStyle = PAL.skin;
-        ctx.fill(path);
-        inside(() => {
-          ctx.fillStyle = jersey;
-          ctx.fillRect(-13, NECKLINE_Y, 26, 40);
-          ctx.fillStyle = PAL.jerseyShade[id];
-          ctx.fillRect(-2.37, NECKLINE_Y + 3, 5.6, 27);
-        });
-        ctx.fillStyle = 'rgba(255,255,255,0.9)';
-        ctx.font = 'bold 13px system-ui, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(String(id), 0.5, -2.5);
-        return;
-      }
-      case 'Ass':
-        ctx.fillStyle = shorts;
-        ctx.fill(path);
-        return;
-      case 'LegLeft':
-      case 'LegRight':
-        ctx.fillStyle = PAL.skin;
-        ctx.fill(path);
-        // Shorts cover the top of the thigh.
-        inside(() => {
-          ctx.fillStyle = shorts;
-          ctx.fillRect(-8, -21, 16, HEM_Y + 21);
-        });
-        return;
-      case 'FootLeft':
-      case 'FootRight':
-        ctx.fillStyle = PAL.skinShade;
-        ctx.fill(path);
-        inside(() => {
-          ctx.fillStyle = PAL.shoe;
-          ctx.fillRect(-6, ANKLE_Y, 12, 10);
-        });
-        return;
-      case 'ArmLeft':
-      case 'ArmRight': {
-        ctx.fillStyle = PAL.skin;
-        ctx.fill(path);
-        // A sleeve over the shoulder's ball, reaching down toward the elbow.
-        const shoulder = SHOULDER_X[name];
-        inside(() => {
-          ctx.fillStyle = jersey;
-          ctx.fillRect(shoulder < 0 ? -16 : shoulder - SLEEVE_PX, -6, 16 - Math.abs(shoulder) + SLEEVE_PX, 12);
-        });
-        return;
-      }
-      case 'HandLeft':
-      case 'HandRight':
-      case 'FingerLeft':
-      case 'FingerRight':
-        ctx.fillStyle = PAL.skin;
-        ctx.fill(path);
-        return;
-    }
-  }
-
   private drawBall(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: PoseSource, alpha: number): void {
     const pose = interp.pose(gw.ball.body, alpha);
     const v = gw.ball.velocity;
@@ -876,8 +762,10 @@ export class Renderer {
     const t = gw.ballTint;
     if (!t.player) return null;
     const k = clamp01((now - t.frame) / BALL_TINT.fadeInFrames);
-    const from = PAL.ballTintRgb[t.previous];
-    const to = PAL.ballTintRgb[t.player];
+    const colors = this.visualStyle === 'shaders' ? PAL.ballTintRgb
+      : { 0: [251, 251, 246], 1: [47, 111, 222], 2: [226, 69, 59] };
+    const from = colors[t.previous];
+    const to = colors[t.player];
     const rgb = to.map((c, i) => Math.round(from[i] + (c - from[i]) * k)).join(',');
     // From the white ball the colour washes in; between players it shifts hue.
     const alpha = BALL_TINT.alpha * (t.previous ? 1 : k);
@@ -1006,6 +894,10 @@ export class Renderer {
       ctx.fillStyle = glow;
       ctx.fillRect(-8, -22, 44, 44);
     }
+    if (drawArenaSprite(ctx, 'magnet', -2, 0, 56, 56)) {
+      ctx.restore();
+      return;
+    }
     // The U opens toward +x: the bend at the back, the poles in front.
     ctx.strokeStyle = '#3c4552';
     ctx.lineWidth = 11;
@@ -1027,236 +919,79 @@ export class Renderer {
   }
 
   /**
-   * A comet: an icy, tumbling nucleus in a glowing coma, trailing a tail
-   * that streams straight back from its flight and grows with its speed.
+   * The express porter leans with its dash and trails restrained service streaks.
    */
   private drawCometArt(
     ctx: CanvasRenderingContext2D, spin: number, heading: number, speed: number, dashing: boolean, t: number,
   ): void {
-    const r = EXECUTER.radiusPx;
-    const len = 16 + Math.min(speed, 18) * (dashing ? 5.5 : 4);
-    const flicker = 1 + 0.06 * Math.sin(t * 1.7);
-
     ctx.save();
-    ctx.rotate(heading + Math.PI); // +x now points down the tail
-    const tail = ctx.createLinearGradient(0, 0, len, 0);
-    tail.addColorStop(0, 'rgba(255,214,120,0.85)');
-    tail.addColorStop(0.45, 'rgba(255,130,50,0.45)');
-    tail.addColorStop(1, 'rgba(255,90,40,0)');
-    ctx.fillStyle = tail;
-    ctx.beginPath();
-    ctx.moveTo(-2, -r * 0.95);
-    ctx.quadraticCurveTo(len * 0.45, -r * 0.75 * flicker, len, 0);
-    ctx.quadraticCurveTo(len * 0.45, r * 0.75 * flicker, -2, r * 0.95);
-    ctx.closePath();
-    ctx.fill();
-    // A hotter, narrower core streak.
-    const core = ctx.createLinearGradient(0, 0, len * 0.7, 0);
-    core.addColorStop(0, 'rgba(255,255,235,0.9)');
-    core.addColorStop(1, 'rgba(160,220,255,0)');
-    ctx.fillStyle = core;
-    ctx.beginPath();
-    ctx.moveTo(0, -r * 0.45);
-    ctx.quadraticCurveTo(len * 0.35, -r * 0.2, len * 0.7, 0);
-    ctx.quadraticCurveTo(len * 0.35, r * 0.2, 0, r * 0.45);
-    ctx.closePath();
-    ctx.fill();
-    // Embers shed along the tail.
-    for (let i = 0; i < 5; i++) {
-      const p = (t * 0.09 + i * 0.37) % 1;
-      const x = r * 0.6 + p * len * 0.9;
-      const y = Math.sin(i * 2.4 + t * 0.3) * r * 0.55 * (1 - p * 0.5);
-      ctx.fillStyle = `rgba(255,${190 - 80 * p},90,${0.8 * (1 - p)})`;
-      ctx.beginPath();
-      ctx.arc(x, y, 1.8 * (1 - p) + 0.6, 0, Math.PI * 2);
-      ctx.fill();
+    ctx.scale(Math.cos(heading) >= 0 ? -1 : 1, 1);
+    ctx.rotate(Math.sin(spin) * 0.07);
+    if (speed > 2) {
+      for (let i = 0; i < 3; i++) {
+        const shift = (t * 2 + i * 7) % 12;
+        ctx.strokeStyle = dashing ? 'rgba(255,183,105,0.5)' : 'rgba(169,200,215,0.3)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.moveTo(27 + shift, -7 + i * 7);
+        ctx.lineTo(36 + shift + Math.min(speed, 15), -7 + i * 7); ctx.stroke();
+      }
     }
-    ctx.restore();
-
-    // Coma.
-    const coma = ctx.createRadialGradient(0, 0, r * 0.4, 0, 0, r * 1.7);
-    coma.addColorStop(0, 'rgba(255,244,214,0.7)');
-    coma.addColorStop(1, 'rgba(255,200,120,0)');
-    ctx.fillStyle = coma;
-    ctx.beginPath();
-    ctx.arc(0, 0, r * 1.7, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Nucleus: a lumpy rock that tumbles with the body.
-    ctx.save();
-    ctx.rotate(spin);
-    const rock = ctx.createRadialGradient(-5, -6, 1, 0, 0, r);
-    rock.addColorStop(0, '#f2f8ff');
-    rock.addColorStop(0.55, '#9fb3c8');
-    rock.addColorStop(1, '#4d5c70');
-    ctx.fillStyle = rock;
-    ctx.beginPath();
-    for (let i = 0; i < 9; i++) {
-      const a = (i / 9) * Math.PI * 2;
-      const d = r * (0.82 + 0.13 * Math.sin(i * 2.7) + 0.05 * Math.cos(i * 5.1));
-      if (i === 0) ctx.moveTo(Math.cos(a) * d, Math.sin(a) * d);
-      else ctx.lineTo(Math.cos(a) * d, Math.sin(a) * d);
-    }
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = 'rgba(55,70,90,0.45)';
-    for (const [x, y, s] of [[5, 3, 3.2], [-4, 7, 2.2], [2, -7, 1.8]] as const) {
-      ctx.beginPath();
-      ctx.arc(x, y, s, 0, Math.PI * 2);
-      ctx.fill();
+    if (!drawArenaSprite(ctx, 'porter', 0, 0, 64, 53)) {
+      ctx.fillStyle = '#e4ded0'; roundRect(ctx, -23, -15, 46, 29, 7); ctx.fill();
+      ctx.fillStyle = '#e18b4d'; ctx.fillRect(3, -11, 16, 14);
     }
     ctx.restore();
   }
 
   /**
-   * A coil spring between a base plate and a red bumper, the bumper toward
-   * its player. `stretch` is its length: drawn out while it charges,
-   * crushed flat on impact, then wobbling back as it recovers.
+   * Rigid fitness-assistant caps surround a flexible steel coil. Only the coil
+   * stretches during charge, compresses on impact, and wobbles in recovery.
    */
   private drawSpringArt(ctx: CanvasRenderingContext2D, facing: number, stretch: number): void {
     const half = 15 * stretch;
-    const w = 12 / Math.sqrt(stretch);
-    ctx.save();
-    ctx.rotate(facing);
-    // Coil: loops from the base to the bumper.
-    ctx.strokeStyle = '#dfbaff';
-    ctx.lineWidth = 3.2;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    const turns = 5;
+    ctx.save(); ctx.rotate(facing + Math.PI / 2);
+    // Rigid caps stay rigid while only the exposed steel coil changes length.
+    const coil = ctx.createLinearGradient(-12, 0, 12, 0);
+    coil.addColorStop(0, '#596676'); coil.addColorStop(0.3, '#e6e8e1');
+    coil.addColorStop(0.55, '#788798'); coil.addColorStop(0.8, '#d6cab3'); coil.addColorStop(1, '#435363');
+    ctx.strokeStyle = coil; ctx.lineWidth = 3.2; ctx.lineCap = 'round';
     ctx.beginPath();
-    for (let i = 0; i <= turns * 12; i++) {
-      const p = i / (turns * 12);
-      const x = -half + 4 + p * (half * 2 - 8);
-      const y = Math.sin(p * turns * Math.PI * 2) * w * 0.8;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
+    for (let i = 0; i <= 70; i++) {
+      const p = i / 70, x = Math.sin(p * Math.PI * 10) * 11;
+      const y = -half + 5 + p * (half * 2 - 10);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     }
     ctx.stroke();
-    ctx.strokeStyle = 'rgba(100,74,145,0.6)';
-    ctx.lineWidth = 1.2;
-    ctx.stroke();
-    // Base plate and bumper.
-    ctx.fillStyle = '#644a91';
-    roundRect(ctx, -half - 3, -w - 3, 7, (w + 3) * 2, 2.5);
-    ctx.fill();
-    ctx.fillStyle = '#e8574a';
-    roundRect(ctx, half - 4, -w - 4, 8, (w + 4) * 2, 3.5);
-    ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,0.35)';
-    roundRect(ctx, half - 2, -w - 2, 2.5, (w + 2) * 1.2, 1.2);
-    ctx.fill();
+    if (!drawArenaSprite(ctx, 'spring-base', 0, half + 4, 38, 19)) {
+      ctx.fillStyle = '#ded9ce'; roundRect(ctx, -17, half - 2, 34, 12, 4); ctx.fill();
+    }
+    if (!drawArenaSprite(ctx, 'spring-cap', 0, -half, 37, 19)) {
+      ctx.fillStyle = '#df8050'; roundRect(ctx, -16, -half - 7, 32, 13, 5); ctx.fill();
+    }
     ctx.restore();
   }
 
   /**
-   * A glob of green goo. Flying, it stretches out along its path into a
-   * teardrop and sheds drips; stuck (`splat` is the angle of the part it is
-   * on), it spreads flat along the part, see-through so the limb shows
-   * inside it, with a drip forming underneath. Its eyes follow `gaze`.
+   * A spa-service dispenser pours animated adhesive treatment. Its rigid shell
+   * remains readable while the transparent liquid and bonds show the hold.
    */
   private drawSlimeArt(
     ctx: CanvasRenderingContext2D, heading: number, speed: number, splat: number | null, gaze: number, t: number,
   ): void {
-    const r = EXECUTER.radiusPx;
     const stuck = splat !== null;
     ctx.save();
-    ctx.rotate(stuck ? splat : heading);
-    // Drips shed behind it in flight.
-    if (!stuck && speed > 0.2) {
-      for (let i = 0; i < 2; i++) {
-        const p = (t * 0.07 + i * 0.5) % 1;
-        ctx.fillStyle = `rgba(${SLIME_RGB},${0.7 * (1 - p) * speed})`;
-        ctx.beginPath();
-        ctx.arc(-r * (1.05 + 1.2 * p), Math.sin(i * 2.3 + t * 0.2) * r * 0.35, 3.2 * (1 - 0.6 * p), 0, Math.PI * 2);
-        ctx.fill();
-      }
+    ctx.scale(Math.cos(gaze) >= 0 ? 1 : -1, 1);
+    ctx.rotate(stuck ? Math.sin(splat) * 0.06 : Math.sin(heading) * speed * 0.12);
+    const liquid = ctx.createRadialGradient(8, 14, 1, 7, 18, 24);
+    liquid.addColorStop(0, 'rgba(138,238,230,0.72)'); liquid.addColorStop(1, 'rgba(48,156,173,0.05)');
+    ctx.fillStyle = liquid; ctx.beginPath();
+    ctx.ellipse(7, 18, stuck ? 26 : 17, 6 + Math.sin(t * 0.24), 0, 0, Math.PI * 2); ctx.fill();
+    if (!drawArenaSprite(ctx, 'spa', 0, -1, 54, 44)) {
+      ctx.fillStyle = '#e3ded4'; roundRect(ctx, -17, -16, 34, 32, 8); ctx.fill();
     }
-    // The body: a wobbling outline, stretched along its flight into a
-    // teardrop, or spread flat along the part it is stuck to.
-    const sx = stuck ? 1.3 : 1 + 0.3 * speed;
-    const sy = stuck ? 0.78 : 1 - 0.18 * speed;
-    const n = 14;
-    const pts: Array<[number, number]> = [];
-    for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2;
-      const wob = 1 + 0.07 * Math.sin(t * 0.33 + i * 1.9) + 0.045 * Math.sin(t * 0.21 + i * 3.7);
-      const tail = stuck ? 1 : 1 + 0.35 * speed * Math.max(0, -Math.cos(a)) ** 2;
-      pts.push([Math.cos(a) * r * wob * tail * sx, Math.sin(a) * r * wob * sy]);
-    }
-    ctx.beginPath();
-    for (let i = 0; i <= n; i++) {
-      const [x0, y0] = pts[i % n];
-      const [x1, y1] = pts[(i + 1) % n];
-      if (i === 0) ctx.moveTo((x0 + x1) / 2, (y0 + y1) / 2);
-      else ctx.quadraticCurveTo(x0, y0, (x0 + x1) / 2, (y0 + y1) / 2);
-    }
-    ctx.closePath();
-    const goo = ctx.createRadialGradient(-r * 0.3, -r * 0.35, 1, 0, 0, r * 1.25);
-    goo.addColorStop(0, `rgba(205,248,160,${stuck ? 0.8 : 0.95})`);
-    goo.addColorStop(0.5, `rgba(${SLIME_RGB},${stuck ? 0.72 : 0.9})`);
-    goo.addColorStop(1, `rgba(40,128,36,${stuck ? 0.8 : 0.95})`);
-    ctx.fillStyle = goo;
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(30,92,26,0.75)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    // Bubbles rising inside, and a wet shine.
-    ctx.fillStyle = 'rgba(235,255,215,0.45)';
-    for (let i = 0; i < 3; i++) {
-      const p = (t * 0.02 + i * 0.33) % 1;
-      ctx.beginPath();
-      ctx.arc((i - 1) * r * 0.45, r * (0.45 - 0.9 * p) * sy, 1.4 + i * 0.5, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.fillStyle = 'rgba(255,255,255,0.55)';
-    ctx.beginPath();
-    ctx.ellipse(-r * 0.3 * sx, -r * 0.45 * sy, r * 0.32, r * 0.14, -0.5, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.strokeStyle = 'rgba(101,230,225,0.8)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(21, 6); ctx.quadraticCurveTo(24, 14, 16, 19); ctx.stroke();
     ctx.restore();
-
-    // Stuck, a drip swells underneath and falls away.
-    if (stuck) {
-      const p = (t / 40) % 1;
-      const y = r * 0.55 + (p < 0.75 ? (p / 0.75) * 9 : 9 + ((p - 0.75) / 0.25) * 22);
-      const s = p < 0.75 ? 1.5 + 2.5 * (p / 0.75) : 4 * (1 - (p - 0.75) / 0.25);
-      ctx.fillStyle = `rgba(${SLIME_RGB},0.85)`;
-      ctx.beginPath();
-      if (p < 0.75) {
-        ctx.moveTo(-2.5, r * 0.5);
-        ctx.quadraticCurveTo(-s, y - s, 0, y + s);
-        ctx.quadraticCurveTo(s, y - s, 2.5, r * 0.5);
-      } else {
-        ctx.arc(0, y, Math.max(0.5, s), 0, Math.PI * 2);
-      }
-      ctx.fill();
-    }
-
-    // Eyes, upright whatever the body does, looking at `gaze`; a blink now and then.
-    const gx = Math.cos(gaze);
-    const gy = Math.sin(gaze);
-    const blink = t % 97 < 4;
-    for (const side of [-1, 1]) {
-      const ex = side * 5.5 + gx * 3;
-      const ey = -3 + gy * 2.5;
-      if (blink) {
-        ctx.strokeStyle = '#1c3a1a';
-        ctx.lineWidth = 1.4;
-        ctx.beginPath();
-        ctx.moveTo(ex - 3, ey);
-        ctx.lineTo(ex + 3, ey);
-        ctx.stroke();
-        continue;
-      }
-      ctx.fillStyle = '#fbfff4';
-      ctx.beginPath();
-      ctx.ellipse(ex, ey, 3.6, 4.4, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#1c3a1a';
-      ctx.beginPath();
-      ctx.arc(ex + gx * 1.5, ey + gy * 1.8, 1.9, 0, Math.PI * 2);
-      ctx.fill();
-    }
   }
 
   /**
@@ -1358,46 +1093,28 @@ export class Renderer {
     for (let i = 0; i < 2; i++) {
       const y = i === 0 ? -9 : 9;
       const extension = i === active ? reach * BOXER.armExtensionPx : 0;
-      ctx.strokeStyle = '#934b48';
+      ctx.strokeStyle = '#bda37b';
       ctx.lineWidth = 7;
       ctx.beginPath();
       ctx.moveTo(10, y);
       ctx.lineTo(21, y + (i === 0 ? -3 : 3));
       ctx.lineTo(BOXER.armRestPx - 1 + extension, y - (i === 0 ? -2 : 2));
       ctx.stroke();
-      ctx.fillStyle = '#e04a3c';
+      const glove = ctx.createRadialGradient(BOXER.armRestPx + extension - 2, y - 4, 1, BOXER.armRestPx + extension, y, 7);
+      glove.addColorStop(0, '#ffc1a2'); glove.addColorStop(0.35, '#e77a52'); glove.addColorStop(1, '#8b3429');
+      ctx.fillStyle = glove;
       ctx.beginPath();
       ctx.arc(BOXER.armRestPx + extension, y - (i === 0 ? -2 : 2), 5.5, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.restore();
 
-    const skin = ctx.createRadialGradient(-6, -7, 1, 0, 0, r);
-    skin.addColorStop(0, '#f4c39e');
-    skin.addColorStop(1, '#bf7265');
-    ctx.fillStyle = skin;
-    ctx.strokeStyle = '#663c40';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(0, 0, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    // A sharp brow, narrowed eyes and clenched teeth read even at game scale.
-    ctx.strokeStyle = '#392b32';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(1, -8); ctx.lineTo(9, -5);
-    ctx.moveTo(1, 0); ctx.lineTo(9, -2);
-    ctx.stroke();
-    ctx.fillStyle = '#392b32';
-    ctx.beginPath();
-    ctx.arc(9, -2, 2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#fff0d9';
-    ctx.fillRect(5, 7, 8, 4);
-    ctx.strokeStyle = '#6b3537';
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(5, 7, 8, 4);
+    if (!drawArenaSprite(ctx, 'boxer', 0, 0, r * 2.6, r * 2.4)) {
+      const shell = ctx.createLinearGradient(0, -r, 0, r);
+      shell.addColorStop(0, '#f2eee4'); shell.addColorStop(1, '#737e88');
+      ctx.fillStyle = shell; roundRect(ctx, -r, -r, r * 2, r * 2, 8); ctx.fill();
+      ctx.fillStyle = '#ffc478'; ctx.fillRect(-5, -4, 12, 3);
+    }
     ctx.restore();
   }
 
@@ -1413,7 +1130,7 @@ export class Renderer {
         ctx.translate(-8, 5);
         this.drawCometArt(ctx, 0.4, -2.75, 7, false, 4);
         break;
-      case 'spring': this.drawSpringArt(ctx, 0, 1); break;
+      case 'spring': this.drawSpringArt(ctx, -Math.PI / 2, 1); break;
       case 'slime': this.drawSlimeArt(ctx, 0, 0, null, 0.4, 20); break;
     }
     ctx.restore();
@@ -1438,17 +1155,19 @@ export class Renderer {
       // Glow: steady when armed, pulsing while its executer lives.
       const pulse = live ? 0.28 + 0.2 * Math.sin(now * 0.28) : 0.3;
       const glow = ctx.createRadialGradient(x + w / 2, y + h / 2, 2, x + w / 2, y + h / 2, h * 0.75);
-      const rgb = live ? PAL.prizeLiveGlow : PAL.prizeGlow;
+      const resort = true;
+      const sideGlow = b.def.side === 1 ? '51,202,215' : '255,152,127';
+      const rgb = live ? PAL.prizeLiveGlow : resort ? sideGlow : PAL.prizeGlow;
       glow.addColorStop(0, `rgba(${rgb},${pulse})`);
       glow.addColorStop(1, `rgba(${rgb},0)`);
       ctx.fillStyle = glow;
       ctx.fillRect(x + w / 2 - h * 0.75, y + h / 2 - h * 0.75, h * 1.5, h * 1.5);
 
       // Face.
-      ctx.fillStyle = live ? PAL.prizeLive : PAL.prize;
+      ctx.fillStyle = live ? PAL.prizeLive : resort ? b.def.side === 1 ? '#33cad7' : '#ff987f' : PAL.prize;
       roundRect(ctx, x, y, w, h, 2.5);
       ctx.fill();
-      ctx.strokeStyle = live ? PAL.prizeLiveEdge : PAL.prizeEdge;
+      ctx.strokeStyle = live ? PAL.prizeLiveEdge : resort ? '#d2e6ed' : PAL.prizeEdge;
       ctx.lineWidth = 1;
       ctx.stroke();
 
@@ -1497,81 +1216,39 @@ export class Renderer {
     }
   }
 
-  /**
-   * The top bar's pills either side of the page's controls: the next
-   * hazard on the left, the target score on the right. Returns its bottom.
-   */
+  /** A clipped service ticket; HTML icon controls occupy the quiet row below. */
   private drawTopBar(ctx: CanvasRenderingContext2D, gw: GameWorld, now: number): number {
-    const { midX, y, h, controlsW, gap } = HUD_BAR;
-    const cy = y + h / 2;
+    const x = HUD_BAR.midX, y = 8, w = 158, h = 18;
     ctx.save();
-    ctx.textBaseline = 'middle';
-    ctx.font = '800 7px system-ui, sans-serif';
-    const target = `FIRST TO ${OPTIONS.gameSet}`;
-    const x = midX + controlsW / 2 + gap;
-    const w = ctx.measureText(target).width + 20;
-    hudPill(ctx, x, w);
-    ctx.textAlign = 'center';
-    ctx.fillStyle = 'rgba(15,25,35,0.6)';
-    ctx.fillText(target, x + w / 2, cy + 0.5);
-    if (gw.hazards) this.drawNextHazard(ctx, gw, midX - controlsW / 2 - gap, now);
+    ctx.fillStyle = 'rgba(8,20,32,0.65)';
+    ctx.strokeStyle = 'rgba(153,189,204,0.38)'; ctx.lineWidth = 0.6;
+    ctx.beginPath(); ctx.moveTo(x - w / 2 + 5, y); ctx.lineTo(x + w / 2 - 5, y);
+    ctx.lineTo(x + w / 2, y + 5); ctx.lineTo(x + w / 2, y + h - 4);
+    ctx.lineTo(x + w / 2 - 4, y + h); ctx.lineTo(x - w / 2, y + h);
+    ctx.lineTo(x - w / 2, y + 5); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = 'rgba(228,187,118,0.65)'; ctx.beginPath();
+    ctx.moveTo(x + w / 2 - 5, y); ctx.lineTo(x + w / 2, y + 5); ctx.stroke();
+    ctx.strokeStyle = 'rgba(188,209,216,0.35)'; ctx.setLineDash([1, 2]);
+    ctx.beginPath(); ctx.moveTo(x + 32, y + 3); ctx.lineTo(x + 32, y + h - 3); ctx.stroke(); ctx.setLineDash([]);
+    ctx.font = '600 6.5px system-ui'; ctx.fillStyle = '#ced8dc'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('TO ' + OPTIONS.gameSet, x + 54, y + h / 2);
+    if (gw.hazards) this.drawNextHazard(ctx, gw, x - w / 2 + 8, y + h / 2, now);
+    else { ctx.textAlign = 'left'; ctx.fillText('SERVICE OFF', x - w / 2 + 10, y + h / 2); }
     ctx.restore();
-    return y + h;
+    return HUD_BAR.y + HUD_BAR.h;
   }
 
-  /**
-   * The next hazard to come out of either button, in a pill ending at
-   * `right`. When one launches it pops out and the one after it grows in.
-   */
-  private drawNextHazard(ctx: CanvasRenderingContext2D, gw: GameWorld, right: number, now: number): void {
-    const { y, h } = HUD_BAR;
-    const cy = y + h / 2;
-    const r = 9.5;
-    const pad = 9;
-    ctx.font = '800 7px system-ui, sans-serif';
-    const labelW = ctx.measureText('NEXT').width;
-    // Wide enough for the longest name, so the pill holds still as they change.
-    const nameW = Math.max(...EXECUTER_VARIANTS.map((v) => ctx.measureText(v.label).width));
-    const w = pad + labelW + 5 + 2 * r + 5 + nameW + pad;
-    const x0 = right - w;
-    hudPill(ctx, x0, w);
-    ctx.textAlign = 'left';
-    ctx.fillStyle = 'rgba(15,25,35,0.6)';
-    ctx.fillText('NEXT', x0 + pad, cy + 0.5);
-
-    const iconX = x0 + pad + labelW + 5 + r;
-    ctx.fillStyle = 'rgba(230,59,46,0.1)';
-    ctx.strokeStyle = 'rgba(230,59,46,0.45)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(iconX, cy, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-
-    const since = now - gw.executerLaunchEffect.frame;
-    const p = since >= 0 && since < 10 ? easeOutCubic(since / 10) : 1;
-    const gone = gw.executerLaunchEffect.variant;
-    if (gone && p < 1) {
-      ctx.save();
-      ctx.globalAlpha = 1 - p;
-      ctx.translate(iconX, cy);
-      ctx.scale(1 + p, 1 + p);
-      this.drawExecuterIcon(ctx, gone.id, 17);
-      ctx.restore();
-    }
+  private drawNextHazard(ctx: CanvasRenderingContext2D, gw: GameWorld, x: number, y: number, now: number): void {
     const [next] = gw.executerQueue.peek(1);
     if (!next) return;
-    ctx.save();
-    ctx.globalAlpha = p;
-    ctx.translate(iconX, cy);
-    ctx.scale(0.6 + 0.4 * p, 0.6 + 0.4 * p);
-    this.drawExecuterIcon(ctx, next.id, 17);
-    ctx.restore();
-    ctx.save();
-    ctx.globalAlpha = p;
-    ctx.fillStyle = '#c23a2e';
-    ctx.fillText(next.label, iconX + r + 5, cy + 0.5);
-    ctx.restore();
+    const since = now - gw.executerLaunchEffect.frame;
+    const p = since >= 0 && since < 10 ? easeOutCubic(since / 10) : 1;
+    ctx.save(); ctx.translate(x + 6, y); ctx.globalAlpha = 0.65 + 0.35 * p;
+    ctx.scale(0.85 + 0.15 * p, 0.85 + 0.15 * p);
+    this.drawExecuterIcon(ctx, next.id, 12); ctx.restore();
+    const label = next.id === 'comet' ? 'PORTER' : next.id === 'slime' ? 'SPA' : next.label;
+    ctx.fillStyle = '#d3dfe2'; ctx.font = '600 6.5px system-ui'; ctx.textAlign = 'left';
+    ctx.fillText('NEXT: ' + label, x + 17, y);
   }
 
   /** The ball often flies above the frame; point at it from the top edge. */
@@ -1597,91 +1274,63 @@ export class Renderer {
 
   private drawHud(ctx: CanvasRenderingContext2D, gw: GameWorld, hud: HudState, now: number): void {
     const g = gw.game;
-    const night = hasResortBackground();
-    const leftX = HUD_LEFT_X;
-    const rightX = HUD_RIGHT_X;
-    const midX = HUD_BAR.midX;
-
-    const side = (id: 1 | 2) => {
-      const p = id === 1 ? gw.p1 : gw.p2;
-      const x = id === 1 ? leftX : rightX;
-      const align: CanvasTextAlign = id === 1 ? 'left' : 'right';
-      const level = gw.levelOf(id);
-      const label = gw.isCpu(id)
-        ? (level === OPTIONS.championLevel ? 'CPU · CHAMPION' : `CPU · LV ${level}`)
-        : hud.singlePlayer ? 'YOU' : `PLAYER ${id}`;
-      ctx.textAlign = align;
-      ctx.textBaseline = 'top';
-      ctx.fillStyle = night ? 'rgba(233,244,255,0.88)' : 'rgba(15,25,35,0.72)';
-      ctx.font = '700 9px system-ui, sans-serif';
-      ctx.fillText(label, x, 12);
-      ctx.fillStyle = night ? (id === 1 ? '#74baff' : '#ff887d') : PAL.jersey[id];
-      ctx.font = '800 30px system-ui, sans-serif';
-      ctx.fillText(String(g.score[id]), x, 22);
-      // Touch pips. The third lights the warning (§11.3).
-      const warn = p.contact >= MAX_TOUCHES;
-      for (let i = 0; i < MAX_TOUCHES; i++) {
-        const px = id === 1 ? x + 4 + i * 11 : x - 4 - i * 11;
-        ctx.beginPath();
-        ctx.arc(px, 62, 3.6, 0, Math.PI * 2);
-        const on = i < Math.min(p.contact, MAX_TOUCHES);
-        ctx.fillStyle = on
-          ? (warn ? '#e63b2e' : night ? '#c5e5ff' : 'rgba(15,25,35,0.75)')
-          : night ? 'rgba(190,215,245,0.3)' : 'rgba(15,25,35,0.16)';
-        ctx.fill();
-      }
-    };
-    side(1);
-    side(2);
-
-    // The top bar; the match info goes under it.
-    const top = this.drawTopBar(ctx, gw, now);
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-
-    // Serve clock: 6 - count (§11).
-    if (g.phase === 'play' && gw.ball.ballOfPlayer !== 0) {
-      const holder = gw.ball.ballOfPlayer;
-      const secs = g.serveSecondsLeft;
-      ctx.fillStyle = secs <= 2 ? '#e63b2e' : night ? '#edf6ff' : 'rgba(15,25,35,0.8)';
-      ctx.font = '800 18px system-ui, sans-serif';
-      ctx.fillText(String(secs), midX, top + 8);
-      ctx.font = '700 8px system-ui, sans-serif';
-      ctx.fillStyle = night ? 'rgba(222,237,255,0.82)' : 'rgba(15,25,35,0.6)';
-      const who = hud.singlePlayer ? (holder === 1 ? 'YOUR SERVE' : 'CPU SERVE') : `P${holder} SERVE`;
-      ctx.fillText(who, midX, top + 30);
-      if (hud.controlsHint && holder === 1) {
-        ctx.fillText(hud.controlsHint, midX, top + 41);
-      }
-    }
-
-    if (hud.message) this.drawBanner(ctx, hud.message, hud.messageTone, midX, 150);
-
+    ctx.save();
     for (const id of [1, 2] as const) {
-      const live = gw.executers.filter((e) => !e.dead && e.target.id === id);
-      ctx.textAlign = id === 1 ? 'left' : 'right';
-      ctx.textBaseline = 'top';
-      ctx.font = '800 8px system-ui, sans-serif';
-      const x = id === 1 ? leftX : rightX;
-      if (live.length > 0) {
-        const secs = Math.max(...live.map((e) => e.secondsLeft));
-        ctx.fillStyle = night ? '#ff927f' : '#e63b2e';
-        const label = live.length > 1 ? `${live.length} HAZARDS · ${secs}s` : `${live[0].variant.label} · ${secs}s`;
-        ctx.fillText(label, x, 72);
+      const player = id === 1 ? gw.p1 : gw.p2;
+      const x = id === 1 ? HUD_LEFT_X : HUD_RIGHT_X;
+      const dir = id === 1 ? 1 : -1;
+      const ink = id === 1 ? '#a2e4ff' : '#e5ddd0';
+      ctx.textAlign = id === 1 ? 'left' : 'right'; ctx.textBaseline = 'top';
+      // A small architectural bracket replaces the generic scoreboard card.
+      const shade = ctx.createLinearGradient(x - dir * 10, 0, x + dir * 52, 0);
+      shade.addColorStop(0, 'rgba(5,14,23,0.66)'); shade.addColorStop(1, 'rgba(5,14,23,0)');
+      ctx.fillStyle = shade; ctx.fillRect(Math.min(x - dir * 10, x + dir * 52), 8, 62, 54);
+      ctx.strokeStyle = 'rgba(225,187,127,0.5)'; ctx.lineWidth = 0.65;
+      ctx.beginPath(); ctx.moveTo(x - dir * 8, 10); ctx.lineTo(x - dir * 12, 14);
+      ctx.lineTo(x - dir * 12, 50); ctx.lineTo(x - dir * 8, 54); ctx.stroke();
+      const level = gw.levelOf(id);
+      const label = gw.isCpu(id) ? 'CPU · ' + level : hud.singlePlayer ? 'YOU' : 'P' + id;
+      ctx.font = '600 7px system-ui'; ctx.fillStyle = '#cdd8dd'; ctx.fillText(label, x, 13);
+      ctx.font = '600 24px system-ui'; ctx.fillStyle = ink; ctx.fillText(String(g.score[id]), x, 24);
+      for (let i = 0; i < MAX_TOUCHES; i++) {
+        const on = i < Math.min(player.contact, MAX_TOUCHES);
+        ctx.fillStyle = on ? player.contact >= MAX_TOUCHES ? '#ed805e' : ink : 'rgba(148,170,188,0.3)';
+        ctx.beginPath(); ctx.arc(x + dir * (3 + i * 8), 54, 2.1, 0, Math.PI * 2); ctx.fill();
+      }
+      const status = (label: string, fraction: number, color: string, y: number) => {
+        const cx = x + dir * 6;
+        ctx.strokeStyle = 'rgba(148,170,188,0.25)'; ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.arc(cx, y + 5, 5.5, -Math.PI / 2, Math.PI * 1.5); ctx.stroke();
+        ctx.strokeStyle = color; ctx.beginPath();
+        ctx.arc(cx, y + 5, 5.5, -Math.PI / 2, -Math.PI / 2 + clamp01(fraction) * Math.PI * 2); ctx.stroke();
+        ctx.fillStyle = '#becdd6'; ctx.font = '600 6px system-ui'; ctx.fillText(label, x + dir * 16, y + 1);
+      };
+      let y = 65;
+      const live = gw.executers.filter(e => !e.dead && e.target.id === id);
+      if (live.length) {
+        const remaining = Math.max(...live.map(e => e.secondsLeft));
+        const label = live.length > 1 ? live.length + ' HAZARDS' : live[0].variant.id === 'comet' ? 'PORTER' : live[0].variant.id === 'slime' ? 'SPA' : live[0].variant.label;
+        status(label + ' · ' + remaining + 's', Math.max(...live.map(e => e.lifeFraction)), '#d8b07b', y); y += 14;
       }
       const power = gw.powerUps.active[id];
       if (power) {
-        ctx.fillStyle = night ? '#ffd383' : '#9a6400';
-        const seconds = Math.max(0, Math.ceil((power.expiresAt - gw.frame) / 30));
-        ctx.fillText(`${POWER_LABELS[power.kind]} · ${seconds}s`, x, live.length > 0 ? 84 : 72);
+        const remaining = Math.max(0, power.expiresAt - gw.frame);
+        status(POWER_LABELS[power.kind] + ' · ' + Math.ceil(remaining / FPS) + 's', remaining / (power.expiresAt - power.startedAt), ink, y); y += 14;
       }
       const cooldown = gw.swingCooldownFramesLeft(id);
-      if (cooldown > 0) {
-        ctx.fillStyle = night ? 'rgba(222,237,255,0.82)' : 'rgba(15,25,35,0.7)';
-        const y = 72 + (live.length > 0 ? 12 : 0) + (power ? 12 : 0);
-        ctx.fillText(`FLIP · ${Math.ceil(cooldown / FPS)}s`, x, y);
-      }
+      if (cooldown > 0) status('FLIP · ' + Math.ceil(cooldown / FPS) + 's', 0, '#9fb5c5', y);
     }
+    const top = this.drawTopBar(ctx, gw, now);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    if (g.phase === 'play' && gw.ball.ballOfPlayer !== 0) {
+      const secs = g.serveSecondsLeft;
+      ctx.fillStyle = secs <= 2 ? '#f4a078' : '#bdcdd6'; ctx.font = '600 8px system-ui';
+      const holder = gw.ball.ballOfPlayer;
+      const who = hud.singlePlayer ? holder === 1 ? 'YOUR SERVE' : 'CPU SERVE' : 'P' + holder + ' SERVE';
+      ctx.fillText(who + ' · ' + secs, HUD_BAR.midX, top + 6);
+    }
+    if (hud.message) this.drawBanner(ctx, hud.message, hud.messageTone, HUD_BAR.midX, 104);
+    ctx.restore();
   }
 
   /**
@@ -1690,7 +1339,7 @@ export class Renderer {
    */
   private drawBanner(ctx: CanvasRenderingContext2D, text: string, tone: 0 | 1 | 2, x: number, y: number): void {
     const [title, detail] = text.split(' · ');
-    const titleFont = '900 21px system-ui, sans-serif';
+    const titleFont = '700 15px system-ui, sans-serif';
     const detailFont = '800 8px system-ui, sans-serif';
     ctx.save();
     ctx.textAlign = 'center';
@@ -1702,15 +1351,15 @@ export class Renderer {
       w = Math.max(w, ctx.measureText(detail).width);
     }
     w += 40;
-    const h = detail ? 46 : 36;
+    const h = detail ? 37 : 26;
     ctx.shadowColor = 'rgba(15,25,35,0.28)';
     ctx.shadowBlur = 14 * this.k;
     ctx.shadowOffsetY = 3 * this.k;
-    ctx.fillStyle = tone ? PAL.jersey[tone] : 'rgba(15,25,35,0.86)';
+    ctx.fillStyle = 'rgba(8,20,32,0.85)';
     roundRect(ctx, x - w / 2, y - h / 2, w, h, h / 2);
     ctx.fill();
     ctx.shadowColor = 'transparent';
-    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.strokeStyle = tone === 1 ? 'rgba(145,220,226,0.5)' : tone === 2 ? 'rgba(236,161,147,0.5)' : 'rgba(189,205,214,0.4)';
     ctx.lineWidth = 1;
     ctx.stroke();
     ctx.fillStyle = '#fff';
@@ -1750,7 +1399,7 @@ const IMPACT_RGB: Record<ExecuterId, string> = {
 };
 
 /** The slime's goo. */
-const SLIME_RGB = '111,209,74';
+const SLIME_RGB = '63,199,197';
 
 /**
  * The spring's drawn length, 1 at rest: drawn out with speed as it charges,
@@ -1802,17 +1451,6 @@ function ring(
   ctx.stroke();
 }
 
-/** One of the top bar's frosted pills, `w` wide from `x`. */
-function hudPill(ctx: CanvasRenderingContext2D, x: number, w: number): void {
-  const { y, h } = HUD_BAR;
-  ctx.fillStyle = 'rgba(255,255,255,0.6)';
-  roundRect(ctx, x, y, w, h, h / 2);
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(15,25,35,0.12)';
-  ctx.lineWidth = 1;
-  ctx.stroke();
-}
-
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
   const rr = Math.max(0, Math.min(r, w / 2, h / 2));
   ctx.beginPath();
@@ -1825,8 +1463,8 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
 }
 
 export const worldToStage = (xPx: number, yPx: number) => ({
-  x: xPx * VIEW.scale + VIEW.offsetX,
-  y: yPx * VIEW.scale + VIEW.offsetY,
+  x: xPx * VIEW.scale + STAGE.offsetX,
+  y: yPx * VIEW.scale + STAGE.offsetY,
 });
 
 export { toPx };

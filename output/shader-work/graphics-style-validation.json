@@ -1,0 +1,37 @@
+{
+  "build": "passed",
+  "browserErrors": [],
+  "checks": {
+    "peopleDefault": true,
+    "previousArenaAndHumanTexturesRestored": true,
+    "shaderPlayersAndSceneryPreserved": true,
+    "shaderWideFieldsPreserved": true,
+    "immediateMenuPreview": true,
+    "peopleSelectionSurvivesReload": true,
+    "shaderSelectionSurvivesReload": true,
+    "returnToMenuPreservesSelection": true,
+    "narrowMenuBothStylesAccessible": true
+  },
+  "viewports": [
+    [
+      1280,
+      720
+    ],
+    [
+      2560,
+      1270
+    ],
+    [
+      390,
+      844
+    ]
+  ],
+  "screenshots": [
+    "graphics-style-menu.jpg",
+    "people-variant-restored.jpg",
+    "shaders-variant-preserved.jpg",
+    "graphics-style-menu-small.jpg"
+  ],
+  "finalSelectedStyle": "people",
+  "scope": "Rendering and start-menu settings only; no simulation changes."
+}
