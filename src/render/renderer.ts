@@ -19,6 +19,7 @@ import { ShaderScene } from './shaderScene';
 import { AmbientBackdrop } from './ambientBackdrop';
 import { drawResortBackground, loadResortArt } from './resortArt';
 import { drawHumanPlayers } from './humanPlayers';
+import { AIR_HEATER, RUBBER_NET, SHARP_SPIKE } from '../sim/centerObstacle';
 
 export type VisualStyle = 'people' | 'shaders';
 
@@ -238,11 +239,6 @@ export class Renderer {
       roundRect(ctx, inward === 1 ? wallFace - depth : wallFace, p.y - p.hh - 4, depth, p.hh * 2 + 8, 2);
       ctx.fill();
     }
-    const n = COURT.net;
-    const top = n.y - n.hh;
-    ctx.save(); ctx.shadowColor = '#88cfff'; ctx.shadowBlur = 7;
-    ctx.fillStyle = '#c2e8ff'; ctx.fillRect(n.x - 1.2, top, 2.4, SOLES_PX - top);
-    this.drawNetSpike(ctx, n.x, top); ctx.restore();
   }
 
   private paintPeopleCourt(ctx: CanvasRenderingContext2D): void {
@@ -284,11 +280,68 @@ export class Renderer {
       roundRect(ctx, inward === 1 ? wallFace - depth : wallFace, button.y - button.hh - 4, depth, button.hh * 2 + 8, 2);
       ctx.fill();
     }
-    const net = COURT.net;
-    const netTop = net.y - net.hh;
-    ctx.fillStyle = '#d7e4e6';
-    ctx.fillRect(net.x - 1.2, netTop, 2.4, SOLES_PX - netTop);
-    this.drawNetSpike(ctx, net.x, netTop);
+  }
+
+  /** Draw the selected geometry in both graphics styles, including physical bending. */
+  private drawCenterObstacle(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: PoseSource, alpha: number): void {
+    const obstacle = gw.centerObstacle;
+    const x = COURT.net.x, top = COURT.net.y - COURT.net.hh;
+    ctx.save();
+    ctx.fillStyle = this.visualStyle === 'shaders' ? '#c2e8ff' : '#d7e4e6';
+    if (obstacle.id === 'classic') {
+      ctx.fillRect(x - 1.2, top, 2.4, SOLES_PX - top);
+      this.drawNetSpike(ctx, x, top);
+    } else if (obstacle.id === 'sharp') {
+      const metal = ctx.createLinearGradient(x - SHARP_SPIKE.halfWidthPx, 0, x + SHARP_SPIKE.halfWidthPx, 0);
+      metal.addColorStop(0, '#66808c'); metal.addColorStop(0.5, '#f5e6c9'); metal.addColorStop(1, '#758995');
+      ctx.fillStyle = metal;
+      ctx.beginPath(); ctx.moveTo(x - SHARP_SPIKE.halfWidthPx, FLOOR_TOP_PX);
+      ctx.lineTo(x, SHARP_SPIKE.topPx); ctx.lineTo(x + SHARP_SPIKE.halfWidthPx, FLOOR_TOP_PX);
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = '#ffe0a9'; ctx.lineWidth = 0.8; ctx.stroke();
+    } else if (obstacle.id === 'blower') {
+      const radius = AIR_HEATER.rangePx + AIR_HEATER.halfWidthPx;
+      const air = ctx.createLinearGradient(x - radius, 0, x + radius, 0);
+      air.addColorStop(0, 'rgba(100,218,255,0)'); air.addColorStop(0.5, 'rgba(100,218,255,0.17)');
+      air.addColorStop(1, 'rgba(100,218,255,0)');
+      ctx.fillStyle = air;
+      roundRect(ctx, x - radius, top - radius, radius * 2, FLOOR_TOP_PX - top + radius * 2, radius);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(164,238,255,0.6)'; ctx.lineWidth = 1.2;
+      for (const side of [-1, 1]) for (let i = 0; i < 7; i++) {
+        const travel = ((this.scenerySeconds * 22 + i * 9) % AIR_HEATER.rangePx);
+        const ax = x + side * (AIR_HEATER.halfWidthPx + travel), y = top + 10 + i * 20;
+        ctx.beginPath(); ctx.moveTo(ax - side * 5, y); ctx.lineTo(ax, y);
+        ctx.lineTo(ax - side * 3, y - 2); ctx.moveTo(ax, y); ctx.lineTo(ax - side * 3, y + 2); ctx.stroke();
+      }
+      ctx.fillStyle = '#ecb67e';
+      roundRect(ctx, x - AIR_HEATER.halfWidthPx, top, AIR_HEATER.halfWidthPx * 2, FLOOR_TOP_PX - top, 3);
+      ctx.fill(); ctx.strokeStyle = '#694d44'; ctx.lineWidth = 1;
+      for (let y = top + 10; y < FLOOR_TOP_PX - 4; y += 8) {
+        ctx.beginPath(); ctx.moveTo(x - 2, y); ctx.lineTo(x + 2, y); ctx.stroke();
+      }
+    } else {
+      const halfHeight = (RUBBER_NET.basePx - top) / RUBBER_NET.segments / 2;
+      const points: Array<{ x: number; y: number }> = [{ x, y: RUBBER_NET.basePx }];
+      for (const body of obstacle.bodies) {
+        const pose = interp.pose(body, alpha);
+        points.push({ x: pose.x + Math.sin(pose.a) * halfHeight, y: pose.y - Math.cos(pose.a) * halfHeight });
+      }
+      ctx.lineJoin = ctx.lineCap = 'round';
+      for (const [width, color] of [[9, '#163c42'], [6, '#83dbc8']] as const) {
+        ctx.lineWidth = width; ctx.strokeStyle = color;
+        ctx.beginPath(); ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < points.length - 1; i++) {
+          ctx.quadraticCurveTo(points[i].x, points[i].y, (points[i].x + points[i + 1].x) / 2, (points[i].y + points[i + 1].y) / 2);
+        }
+        const tip = points[points.length - 1]; ctx.lineTo(tip.x, tip.y); ctx.stroke();
+      }
+      ctx.setLineDash([2, 5]); ctx.lineWidth = 2; ctx.strokeStyle = '#e6fff4'; ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.fillStyle = '#536573';
+    roundRect(ctx, x - 9, FLOOR_TOP_PX, 18, SOLES_PX - FLOOR_TOP_PX + 3, 2); ctx.fill();
+    ctx.restore();
   }
 
   private drawNetSpike(ctx: CanvasRenderingContext2D, x: number, top: number): void {
@@ -321,6 +374,7 @@ export class Renderer {
     this.drawShadows(gw, interp, alpha);
 
     this.worldSpace(ctx);
+    this.drawCenterObstacle(ctx, gw, interp, alpha);
     // Animation clock in frames: the interpolated poses sit between the
     // previous frame and the latest, so this does too.
     const now = gw.frame - 1 + alpha;

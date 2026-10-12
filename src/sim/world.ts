@@ -13,7 +13,7 @@ import { Executer, type ExecuterTuning } from './executer';
 import { ExecuterQueue, seededRandom, type ExecuterId, type ExecuterVariant } from './executerVariants';
 import { Game, type GameEvents } from './game';
 import { Ground } from './ground';
-import { NetSpike } from './netSpike';
+import type { CenterObstacleId } from './centerObstacle';
 import { Player, type PlayerId } from './player';
 import { PowerUps, type PowerId } from './powerUps';
 import { airDamping, normalizePhysics, type PhysicsSettings } from './physics';
@@ -32,6 +32,8 @@ export interface GameWorldOptions {
   p1Level?: number;
   /** Hazards on/off. Off, a button still clicks but launches nothing. */
   hazards?: boolean;
+  /** Centre obstacle chosen in the pre-match menu; independent of wall hazards. */
+  centerObstacle?: CenterObstacleId;
   /** Override executer physics, for tuning and tests. */
   executerTuning?: Partial<ExecuterTuning>;
   /** Solver iterations on frames where an executer is touching a doll. */
@@ -73,7 +75,8 @@ export class GameWorld {
   readonly world: World;
   private tuning: PhysicsSettings;
   readonly ground: Ground;
-  readonly netSpike = new NetSpike();
+  get centerObstacle() { return this.ground.centerObstacle; }
+  get netSpike() { return this.centerObstacle.blade; }
   readonly p1: Player;
   readonly p2: Player;
   readonly ball: Ball;
@@ -149,7 +152,7 @@ export class GameWorld {
     // that the horizontal rails anchor to.
     const railAnchor = this.world.createBody({ type: 'static', position: Vec2(0, 0) });
 
-    this.ground = new Ground(this.world);
+    this.ground = new Ground(this.world, opts.centerObstacle);
     this.p1 = new Player(this.world, railAnchor, SPAWN_P1_PX.x, SPAWN_P1_PX.y, 1);
     this.p2 = new Player(this.world, railAnchor, SPAWN_P2_PX.x, SPAWN_P2_PX.y, 2);
     this.ball = new Ball(this.world);
@@ -168,6 +171,12 @@ export class GameWorld {
         this.counter = null;
         opts.events?.onPoint?.(winner, reason);
       },
+      onBeforeNewRound: () => {
+        this.centerObstacle.resetRound();
+        // Release external grips before healing or moving any ragdoll parts.
+        for (const e of this.executers) e.shakeOff();
+        opts.events?.onBeforeNewRound?.();
+      },
       onNewRound: () => {
         this.ais[1]?.reset();
         this.ais[2]?.reset();
@@ -176,13 +185,11 @@ export class GameWorld {
         this.aiCounterWindupFrames[1] = this.aiCounterWindupFrames[2] = 0;
         // Every round starts with both hands' swing ready.
         this.nextSwingFrame[1] = this.nextSwingFrame[2] = 0;
-        // The dolls were just re-stood: glue between parts now far apart
-        // would yank them back together, so any slime lets go.
-        for (const e of this.executers) e.shakeOff();
         opts.events?.onNewRound?.();
       },
       onResetMatch: () => {
         this.clearExecuters();
+        this.centerObstacle.resetRound();
         this.p1.restoreBody();
         this.p2.restoreBody();
         this.powerUps.reset();
@@ -304,17 +311,15 @@ export class GameWorld {
     );
     this.applyFeather();
     this.applyAir();
-    // The original's 10 iterations everywhere, except while an executer is at
-    // a doll: a 0.07 kg hand hitting a 6 kg ball is badly conditioned, and at
-    // 10 iterations the joints visibly stretch.
-    const it = this.executerNearDoll() ? this.contactIterations : ITERATIONS;
-    this.netSpike.capture([this.p1, this.p2]);
+    // Heavy hazards and the flexible net need extra iterations to keep their
+    // contact chains stable. The classic court retains the original solver.
+    const it = Math.max(this.executerNearDoll() ? this.contactIterations : ITERATIONS,
+      this.centerObstacle.id === 'rubber' ? 30 : ITERATIONS);
+    this.centerObstacle.beforeStep([this.p1, this.p2], this.game.phase === 'play');
     this.world.step(dt, it, it);
     if (this.game.phase === 'play') {
-      for (const player of [this.p1, this.p2]) {
-        let cut = false;
-        for (const part of this.netSpike.hits(player)) cut = player.sever(part) || cut;
-        if (cut) for (const executer of this.executers) {
+      for (const player of this.centerObstacle.afterStep([this.p1, this.p2])) {
+        for (const executer of this.executers) {
           if (executer.target === player) executer.shakeOff();
         }
       }

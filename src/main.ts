@@ -17,6 +17,7 @@ import type { PointReason } from './sim/game';
 import type { PlayerId } from './sim/player';
 import { bodyTypeOf } from './sim/types';
 import { GameWorld } from './sim/world';
+import { CENTER_OBSTACLES, normalizeCenterObstacle } from './sim/centerObstacle';
 
 type Screen = 'menu' | 'playing' | 'paused' | 'over';
 
@@ -51,6 +52,11 @@ const MUSIC_ENABLED = false;
 type Mode = '1p' | '2p' | 'cpu';
 const VISUAL_STYLE_KEY = 'rackdoll-visual-style';
 const ARENA_SCENE_KEY = 'rackdoll-arena-scene';
+const CENTER_OBSTACLE_KEY = 'rackdoll-center-obstacle';
+function loadCenterObstacle() {
+  try { return normalizeCenterObstacle(localStorage.getItem(CENTER_OBSTACLE_KEY)); }
+  catch { return normalizeCenterObstacle(null); }
+}
 function loadArenaScene(): ArenaScene {
   try {
     const saved = localStorage.getItem(ARENA_SCENE_KEY);
@@ -73,6 +79,7 @@ const settings = {
   mode: '1p' as Mode,
   visualStyle: loadVisualStyle(),
   arenaScene: loadArenaScene(),
+  centerObstacle: loadCenterObstacle(),
   level: OPTIONS.currentLevel as number,
   /** Bot vs bot: the left CPU's level. */
   p1Level: OPTIONS.championLevel as number,
@@ -143,6 +150,7 @@ function createWorld(demo = false): GameWorld {
     level: settings.level,
     p1Level: settings.p1Level,
     hazards: settings.hazards,
+    centerObstacle: settings.centerObstacle,
     bindings: toKeyBindings(settings.bindings),
     physics: physicsLibrary.current,
     executerSeed: Math.floor(Math.random() * 0x100000000),
@@ -454,6 +462,26 @@ function wireBindings(): void {
 
 function wireMenu(): void {
   wireBindings();
+  const obstacleIcons = {
+    classic: '<path d="M12 3l-4 8h8zM12 11v10M7 21h10"/>',
+    sharp: '<path d="M12 3L8 21h8z"/>',
+    blower: '<path d="M11 5h2v16h-2zM7 9H2m2-2L2 9l2 2M17 9h5m-2-2l2 2-2 2M7 16H2m2-2l-2 2 2 2M17 16h5m-2-2l2 2-2 2"/>',
+    rubber: '<path d="M8 21c0-8 11-10 7-18M5 21h6M10 17l3 2m0-7l3 2m0-7l3 1"/>',
+  };
+  for (const option of CENTER_OBSTACLES) {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'mode obstacle-option';
+    button.dataset.centerObstacle = option.id;
+    button.setAttribute('aria-pressed', String(option.id === settings.centerObstacle));
+    button.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${obstacleIcons[option.id]}</svg>`;
+    const label = document.createElement('span'); label.className = 'mode-title'; label.textContent = option.label;
+    const caption = document.createElement('span'); caption.className = 'mode-cap'; caption.textContent = option.caption;
+    button.append(label, caption); $('center-obstacles').append(button);
+  }
+  const syncObstacleDescription = () => {
+    $('center-obstacle-description').textContent = CENTER_OBSTACLES.find(option => option.id === settings.centerObstacle)!.description;
+  };
+  syncObstacleDescription();
   const group = (attr: string, apply: (v: string) => void) => {
     const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>(`[data-${attr}]`));
     for (const b of buttons) {
@@ -510,6 +538,13 @@ function wireMenu(): void {
   });
   group('level', (v) => { settings.level = Number(v); syncLevels(); });
   group('p1level', (v) => { settings.p1Level = Number(v); syncLevels(); });
+  group('center-obstacle', value => {
+    settings.centerObstacle = normalizeCenterObstacle(value);
+    syncObstacleDescription();
+    try { localStorage.setItem(CENTER_OBSTACLE_KEY, settings.centerObstacle); } catch { /* Selection still works in memory. */ }
+    // The menu backdrop previews the same geometry that the next match uses.
+    gw = createWorld(true);
+  });
   syncLevels();
 
   const hazards = $('hazards');
@@ -661,7 +696,9 @@ function simFrame(): void {
 /** The menu backdrop: the physics at the menu time step, no rules running. */
 function menuFrame(): void {
   gw.applyAir();
-  gw.world.step(MENU_TIME_STEP, ITERATIONS, ITERATIONS);
+  gw.centerObstacle.beforeStep([gw.p1, gw.p2]);
+  const iterations = gw.centerObstacle.id === 'rubber' ? 30 : ITERATIONS;
+  gw.world.step(MENU_TIME_STEP, iterations, iterations);
   interp.commit(allBodies(gw));
 }
 

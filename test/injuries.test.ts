@@ -1,6 +1,6 @@
 import { Vec2, type Body } from 'planck';
 import { describe, expect, it } from 'vitest';
-import { BODYTYPE, NET_TOP_PX, NET_X_PX, PARTS, toM } from '../src/sim/constants';
+import { BODYTYPE, NET_TOP_PX, NET_X_PX, PARTS, SPAWN_P1_PX, toM } from '../src/sim/constants';
 import { NetSpike } from '../src/sim/netSpike';
 import { ud } from '../src/sim/types';
 import { closedPoses } from '../src/render/dollPose';
@@ -97,7 +97,6 @@ describe('playing with injuries', () => {
     gw.p1.knock(Vec2(2, -2), 4);
     gw.p1.flip();
     gw.p1.endFlip();
-    gw.game.newRound();
     expect(foot.getLinearVelocity()).toEqual(Vec2(2, 0));
     expect(foot.getAngularVelocity()).toBe(3);
     expect(foot.getPosition().y).toBe(toM(150));
@@ -134,7 +133,7 @@ describe('playing with injuries', () => {
     expect(gw.p2.contact).toBe(0);
   });
 
-  it('preserves cuts and debris size through size powers and restores the complete body for a new match', () => {
+  it('preserves cuts and debris size through size powers and restores the complete body for every round', () => {
     const gw = world();
     gw.p1.sever('LegLeft');
     const foot = gw.p1.part('FootLeft');
@@ -147,7 +146,11 @@ describe('playing with injuries', () => {
     expect(foot.getPosition()).toEqual(position);
     expect(gw.p1.partScale('FootLeft')).toBe(1);
     gw.game.newRound();
-    expect(gw.p1.injured).toBe(true);
+    expect(gw.p1.injured).toBe(false);
+    expect(gw.p1.bodies).toHaveLength(13);
+    expect(gw.p1.revolutes).toHaveLength(12);
+    expect(gw.p1.sizeScale).toBe(1.5);
+    expect(ud(foot).e_bodytype).toBe(BODYTYPE.PLAYER);
     gw.game.resetMatch();
     expect(gw.p1.injured).toBe(false);
     expect(gw.p1.bodies).toHaveLength(13);
@@ -167,7 +170,7 @@ describe('playing with injuries', () => {
     expect(gw.p1.head).toBe(gw.p1.part('Tors'));
     expect(gw.p1.railV.getBodyB()).toBe(gw.p1.head);
     gw.p1.resizeTo(1.5, true);
-    gw.game.newRound();
+    gw.p1.standPlayer(SPAWN_P1_PX.x, SPAWN_P1_PX.y);
     run(gw, 30);
     const before = gw.p1.ass.getLinearVelocity().x;
     gw.p1.turn(Vec2(4, 0));
@@ -187,7 +190,6 @@ describe('playing with injuries', () => {
     gw.p1.sever('Tors');
     expect(gw.p1.bodies).toEqual([gw.p1.head]);
     expect(gw.p1.sever('Head')).toBe(false);
-    gw.game.newRound();
     const beforeJump = gw.p1.head.getLinearVelocity().y;
     gw.p1.jump();
     expect(gw.p1.head.getLinearVelocity().y).toBeLessThan(beforeJump);
@@ -213,7 +215,7 @@ describe('playing with injuries', () => {
     for (const name of ['Head', 'Tors', 'Ass', 'LegLeft'] as const) {
       expect(gw.p1.sever(name)).toBe(true);
       gw.p1.resizeTo(1.5, true);
-      gw.game.newRound();
+      gw.p1.standPlayer(SPAWN_P1_PX.x, SPAWN_P1_PX.y);
       gw.p1.turn(Vec2(4, 0));
       gw.p1.jump();
       gw.p1.flip();

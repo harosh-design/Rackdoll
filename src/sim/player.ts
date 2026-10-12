@@ -293,7 +293,7 @@ export class Player {
     return true;
   }
 
-  /** Heal only for a new match; round resets leave the cuts in place. */
+  /** Rebuild the complete skeleton before the next round or match. */
   restoreBody(): void {
     if (!this.injured) return;
     this.endFlip();

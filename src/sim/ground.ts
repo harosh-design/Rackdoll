@@ -1,12 +1,12 @@
 import { Box, Vec2, type Body, type World } from 'planck';
 import { COLLISION, COURT, EXECUTER_BARRIER, PRIZE_BUTTONS, toM } from './constants';
 import { PrizeButton } from './prizeButton';
+import { CenterObstacle, type CenterObstacleId } from './centerObstacle';
 import type { BodyUserData } from './types';
 
 /**
- * §4 Court. Every body is static because the original leaves the polygon defs
- * at density 0 — it still calls SetMassFromShapes(), which yields mass 0 and so
- * a body the solver treats as immovable (§16.10). We say `static` outright.
+ * §4 Static court and the selected centre obstacle. The rubber net supplies
+ * its own dynamic segments; the remaining court retains the original geometry.
  */
 export class Ground {
   readonly bodies: Body[] = [];
@@ -15,16 +15,19 @@ export class Ground {
   readonly ceiling: Body;
   readonly floor: Body;
   readonly net: Body;
+  readonly centerObstacle: CenterObstacle;
   readonly prizeButtons: PrizeButton[];
   /** Keeps executers on their own half. Invisible; touches nothing else. */
   readonly executerBarrier: Body;
 
-  constructor(world: World) {
+  constructor(world: World, obstacle: CenterObstacleId = 'classic') {
     this.leftWall = this.make(world, COURT.leftWall, 'leftWall');
     this.rightWall = this.make(world, COURT.rightWall, 'rightWall');
     this.ceiling = this.make(world, COURT.ceiling, 'ceiling');
     this.floor = this.make(world, COURT.ground, 'floor');
-    this.net = this.make(world, COURT.net, 'net');
+    this.centerObstacle = new CenterObstacle(world, obstacle);
+    this.net = this.centerObstacle.net;
+    this.bodies.push(...this.centerObstacle.bodies);
 
     // §13 Prize buttons: two static targets at the far left and right.
     this.prizeButtons = PRIZE_BUTTONS.map((d) => new PrizeButton(world, d));

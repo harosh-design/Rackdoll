@@ -418,6 +418,7 @@
       /* Mode cards */
       .mode-group { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
       .graphics-group { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .obstacle-group { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .mode {
         display: flex;
         flex-direction: column;
@@ -441,6 +442,9 @@
         box-shadow: inset 0 0 0 1px var(--accent);
       }
       .mode[aria-pressed='true'] svg { color: var(--accent-ink); }
+      .obstacle-option { display: grid; grid-template-columns: 24px 1fr; column-gap: 8px; padding: 10px 12px; }
+      .obstacle-option svg { grid-row: span 2; align-self: center; margin: 0; }
+      .obstacle-option .mode-cap { grid-column: 2; }
 
       /* Segmented control */
       .seg-group {
@@ -872,6 +876,12 @@
               </div>
             </div>
 
+            <div class="field">
+              <div class="field-head"><span class="label">Centre obstacle</span></div>
+              <div class="mode-group obstacle-group" id="center-obstacles" role="group" aria-label="Centre obstacle" aria-describedby="center-obstacle-description"></div>
+              <p class="hint" id="center-obstacle-description" aria-live="polite"></p>
+            </div>
+
             <div class="levels" id="levels">
               <div class="field" id="p1-level-field" hidden>
                 <div class="field-head">
@@ -936,7 +946,7 @@
                   <li><b>First to 10 points</b> wins the match. Three touches max per side.</li>
                   <li><b>Jump first, then tap <kbd data-keyof="serve">Space</kbd></b> for a serve that clears the net. You have six seconds to serve.</li>
                   <li>The ball takes the colour of whoever touched it last.</li>
-                  <li><b>Avoid the sharp net tip.</b> It cuts off body parts. Keep playing with your remaining body; injuries last until the next match.</li>
+                  <li><b>Choose your centre obstacle before playing.</b> Classic spike cuts off parts; Sharp spike impales them; Air heater blows you away; Rubber net bends under pressure. Every round restores both players and resets the obstacle.</li>
                 </ul>
               </section>
               <section>

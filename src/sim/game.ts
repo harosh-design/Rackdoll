@@ -13,6 +13,8 @@ export type Phase = 'play' | 'goal' | 'matchOver';
 export interface GameEvents {
   onPoint?: (winner: PlayerId, reason: PointReason) => void;
   onNewRound?: () => void;
+  /** Release obstacle constraints before restoring the players' bodies. */
+  onBeforeNewRound?: () => void;
   onResetMatch?: () => void;
   onMatchOver?: (winner: PlayerId) => void;
 }
@@ -221,6 +223,10 @@ export class Game {
 
   /** §11 newRound(). */
   newRound(): void {
+    this.events.onBeforeNewRound?.();
+    this.releaseGrips();
+    this.p1.restoreBody();
+    this.p2.restoreBody();
     this.p1.standPlayer(SPAWN_P1_PX.x, SPAWN_P1_PX.y);
     this.p2.standPlayer(SPAWN_P2_PX.x, SPAWN_P2_PX.y);
     this.p1.contact = 0;
@@ -235,10 +241,7 @@ export class Game {
     if (this.flags.ballPlayerHits) this.flags.ballPlayerHits.length = 0;
     if (this.flags.playerHeadHits) this.flags.playerHeadHits.length = 0;
 
-    // The winner of the last point takes the ball. takeBall() refuses a ball
-    // that already has a joint, so drop any grip first. Normal play never
-    // needs this (points only happen with the ball free); resetMatch() does.
-    this.releaseGrips();
+    // Grips were released before healing. The winner takes the reset ball.
     const server = this.win1 ? this.p1 : this.p2;
     this.ball.reset();
     server.takeBall(this.ball.body);
