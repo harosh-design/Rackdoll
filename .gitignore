@@ -1,4 +1,8 @@
 node_modules/
 dist/
+/output/
+/sa3_raw/
+coverage/
+*.tsbuildinfo
 *.local
 .DS_Store

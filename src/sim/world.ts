@@ -38,7 +38,7 @@ export interface GameWorldOptions {
   executerTuning?: Partial<ExecuterTuning>;
   /** Solver iterations on frames where an executer is touching a doll. */
   contactIterations?: number;
-  /** Seed for the hazard order and the boxer's aim. */
+  /** Seed for the hazard order and the slime's aim. */
   executerSeed?: number;
   /** A fixed, repeating hazard order instead of the shuffle, for tuning and tests. */
   executerOrder?: readonly ExecuterId[];

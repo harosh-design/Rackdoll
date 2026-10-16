@@ -9,15 +9,18 @@ All project code and documentation must be written in English. See
 
 The game now uses a single [pencil horror-comic art direction](docs/HORROR-COMIC-ART.md):
 a masked player in an ochre coat, a skeleton in plum shorts, and a sparse
-moonlit court with small distant crosses. The moon and black silhouettes use
-subtle line-boil animation; coarse cached procedural paper grain overlays the
+moonlit court with small distant crosses. The moon moves smoothly across the
+sky on a 90-second elliptical orbit. It and the black silhouettes use subtle
+line-boil animation; coarse cached procedural paper grain overlays the
 artwork at a fixed 16% intensity. The previous People, Shaders, and location selectors
 have been removed. Old saved selections no longer affect rendering.
 
-The earlier resort story and visual studies remain in `docs/` as historical
-references. The comic direction also covers hazards, power-carrying bats,
-the ink-panel volleyball, motion marks, obstacles, scoreboards, menus, pause
+The comic direction also covers hazards, power-carrying bats,
+three illustrated ball skins, motion marks, obstacles, scoreboards, menus, pause
 and results. Those visual changes preserve the existing physics and rules.
+Each match randomly selects a stitched leather ball, a cratered moon or a mint
+eyeball, avoiding consecutive repeats. The skin stays fixed throughout that
+match's rounds, serves and pauses; a restart or rematch selects another skin.
 The start menu sits over a blurred view of the court. Both players' current
 controls stay visible beside match setup, with character portraits and small
 comic stickers. The guide updates immediately when keys are remapped.
@@ -28,6 +31,16 @@ npm run dev        # play at http://localhost:5173
 npm test           # the spec's §17 checks, headless
 npm run build      # static site in dist/
 ```
+
+## Repository contents
+
+Only the current game's source, tests, specifications, documentation and runtime
+assets are kept in the working tree. Earlier art directions, source renders,
+screenshots, one-off previews and validation reports can be recovered from Git
+history. New generated experiments and reports belong in the ignored `output/`
+directory; raw audio sources belong in the ignored `sa3_raw/` directory.
+`node_modules/`, `dist/` and coverage output are also ignored. Use `npm ci` to
+restore dependencies and `npm run build` to regenerate the production site.
 
 ## Engine: planck.js
 
@@ -271,7 +284,8 @@ changes that on purpose:
   on how many can be alive; one impact is one launch. It hunts the player on
   that side, so aim for your opponent's button. An executer-only barrier above
   the net (collision-filtered, so nothing else ever meets it) keeps it on its
-  half.
+  half. The two original wall buttons are drawn as cracked gravestones; their
+  positions, colliders, launch points and activation rules are unchanged.
 - **Five hazards, shuffled.** Both buttons share one queue: magnet, boxer,
   comet, spring and slime, each run of five in a fresh random order, never the
   same one twice in a row. The next hazard is previewed at the top of the screen
@@ -285,15 +299,15 @@ changes that on purpose:
   It bends a free ball's flight too: sideways harder than gravity, but upward
   never more than half of it, so it can't hold a ball up. On contact it
   latches and holds still until its player drags themselves 34 px clear.
-- **Voodoo boxer.** Hovers a fist's length from one part of its player and jabs:
-  head, torso, hips, an arm, a hand, a leg or a foot, whichever it can reach
-  from its side, picking a new one after every blow. Each blow shoves the
-  whole doll a little and jolts the part it lands on, so a leg is swept or an
-  arm knocked aside.
+- **Voodoo boxer.** Hovers a fist's length from its player's head and aims
+  every jab directly at it, following jumps and flips. Each blow shoves the
+  whole doll a little and jolts the head.
 - **Fire skull (`comet`).** The fastest hunter. It circles to a run-up point 150 px to the
   side of its player nearest the ball (over their head, if it has to cross),
   then dashes through them at 16 m/s and knocks them away from the ball. It
-  glances off, brakes, and lines up again — about one ram a second.
+  glances off, brakes, and lines up again — about one ram a second. Its skull
+  turns smoothly around its centre toward the player independently of its
+  flight direction; motion streaks still follow the flight.
 - **Bone trap (`spring`).** It settles level with its player's chest, then charges,
   building speed the whole way in (8 m/s², up to 11 m/s). Impact strength is
   65% the speed it reached and 35% the distance it ran; the push grows

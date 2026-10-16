@@ -20,7 +20,7 @@ export function executerVariant(id: ExecuterId): ExecuterVariant {
   return EXECUTER_VARIANTS.find((v) => v.id === id)!;
 }
 
-/** Seeded LCG, so a match's hazard order and the boxer's aim are reproducible. */
+/** Seeded LCG, so a match's hazard order and the slime's aim are reproducible. */
 export function seededRandom(seed: number): () => number {
   let s = seed >>> 0;
   return () => (s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 0x100000000;

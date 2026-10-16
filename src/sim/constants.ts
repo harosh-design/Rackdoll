@@ -553,6 +553,8 @@ export const MAGNET = {
  * where they need to be. It glances off, brakes, and lines up again.
  */
 export const COMET = {
+  /** Maximum turn toward its player, radians per second. */
+  turnSpeed: Math.PI * 3,
   /** Speed it circles to its run-up point at, m/s. Faster than anything else hunts. */
   stalkSpeed: 9,
   /** Force budget while lining up, N: it turns on a dime. */
@@ -623,9 +625,8 @@ export const SPRING = {
 } as const;
 
 /**
- * Boxer: it hovers a fist's length from one part of its player and throws
- * jabs, picking a new part — head, body, an arm, a leg, a foot — after every
- * blow that lands.
+ * Boxer: it hovers a fist's length from its player's head and aims every
+ * jab at the head, including while the player jumps or flips.
  */
 export const BOXER = {
   standOffPx: 48,

@@ -28,7 +28,7 @@ export interface ExecuterOptions {
   speed?: number;
   lifeSeconds?: number;
   tuning?: Partial<ExecuterTuning>;
-  /** Seeded, so the boxer's choice of target is reproducible. */
+  /** Seeded, so the slime's choice of target is reproducible. */
   random?: () => number;
   onDeath?: (e: Executer) => void;
 }
@@ -78,11 +78,6 @@ const FIRST_PHASE: Record<ExecuterVariant['id'], ExecuterPhase> = {
   // The spring settles level with its player before its first run.
   magnet: 'hunt', boxer: 'chase', comet: 'stalk', spring: 'recover', slime: 'fly',
 };
-
-/** What the boxer aims at. Fingertips are too small to read as a target. */
-const PUNCH_PARTS: readonly PartName[] = [
-  'Head', 'Tors', 'Ass', 'ArmLeft', 'ArmRight', 'HandLeft', 'HandRight', 'LegLeft', 'LegRight', 'FootLeft', 'FootRight',
-];
 
 /** What the magnet's field draws out toward it, on top of the whole-doll pull. */
 const REACHING_PARTS: readonly PartName[] = ['HandLeft', 'HandRight', 'FingerLeft', 'FingerRight'];
@@ -148,13 +143,16 @@ export class Executer {
   lastImpact: ExecuterImpact | null = null;
   /** Magnet: how hard its field is pulling its player right now, 0..1. */
   field = 0;
-  /** Boxer: the part it is going for, and its swing frame (-1 out of reach). */
-  punchPart: PartName;
+  /** Boxer: every jab targets the head; -1 means out of reach. */
+  readonly punchPart = 'Head';
   punchFrame = -1;
   /** Comet: the side of its player it rams from, +1 is to their right. */
   ramSide: 1 | -1;
   /** Comet: the line of the current dash. */
   dashDir = Vec2(0, 0);
+  /** Comet: visual facing, independent of the physics body's tumble and flight. */
+  facingAngle = 0;
+  previousFacingAngle = 0;
   /** Spring: distance run on the current charge, m. */
   travel = 0;
   /** Slime: the limb it is flying at. */
@@ -216,7 +214,7 @@ export class Executer {
       linearDamping: 0,
       gravityScale: 0,
       bullet: this.tuning.bullet,
-      // Only the comet tumbles; the others are drawn facing their player.
+      // The comet tumbles physically; its art turns toward its player separately.
       fixedRotation: o.variant.id !== 'comet',
     });
     this.fixture = this.body.createFixture({
@@ -234,13 +232,13 @@ export class Executer {
     const tors = this.target.tors.getWorldCenter();
     const sideOf = (x: number): 1 | -1 => (x >= tors.x ? 1 : -1);
     this.ramSide = sideOf(o.origin.x);
-    this.punchPart = this.choosePunchPart(sideOf(o.origin.x));
     if (o.variant.id === 'slime') this.aimPart = this.openPart(SLIME_PARTS, sideOf(o.origin.x), null);
 
     // Fire it straight at its target.
     const c = this.body.getWorldCenter();
-    const aim = this.chestPoint();
+    const aim = this.variant.id === 'boxer' ? this.target.head.getWorldCenter() : this.chestPoint();
     const d = unit(aim.x - c.x, aim.y - c.y);
+    this.facingAngle = this.previousFacingAngle = Math.atan2(d.y, d.x);
     this.body.setLinearVelocity(Vec2(d.x * this.tuning.launchSpeed, d.y * this.tuning.launchSpeed));
     this.lastVelocity = this.body.getLinearVelocity().clone();
 
@@ -332,6 +330,7 @@ export class Executer {
     if (this.dead) return;
     this.age += 1;
     this.phaseAge += 1;
+    if (this.variant.id === 'comet') this.facePlayer(dt);
 
     if (!this.solid) {
       if (this.age >= this.tuning.emergeFrames && !this.overlapsAnything()) {
@@ -429,11 +428,11 @@ export class Executer {
   // Boxer
   // -------------------------------------------------------------------------
 
-  /** Keep a fist's length from the chosen part and throw jabs at it. */
+  /** Keep a fist's length from the head and throw every jab at it. */
   private updateBoxer(dt: number): void {
     const c = this.body.getWorldCenter();
     const side: 1 | -1 = c.x >= this.target.tors.getWorldCenter().x ? 1 : -1;
-    const part = this.target.activePart(this.punchPart);
+    const part = this.target.head;
     const p = part.getWorldCenter();
     const stand = Vec2(p.x + side * toM(BOXER.standOffPx), this.clampY(p.y));
     this.drive(this.seek(stand, Math.max(this.speed * 1.5, BOXER.chaseSpeed)), dt);
@@ -448,22 +447,12 @@ export class Executer {
     this.punchFrame = (this.punchFrame + 1) % BOXER.punchFrames;
     if (this.punchFrame !== BOXER.impactFrame || distance > BOXER.impactReachPx) return;
 
-    // The whole doll takes a small shove and the part it lands on a jolt, so
-    // a leg is swept, an arm knocked aside, the head snapped back.
+    // The whole doll takes a small shove while the head snaps back.
     const u = unit(dx, dy);
     const shove = Vec2(u.x * BOXER.punchSpeed, (u.y - 0.15) * BOXER.punchSpeed);
     this.target.knock(shove, BOXER.recoilFrames, part, Vec2(u.x * BOXER.partJolt, u.y * BOXER.partJolt));
     this.body.applyLinearImpulse(Vec2(-u.x * BOXER.recoilImpulse, -u.y * BOXER.recoilImpulse), c, true);
-    this.landed(part, 0.35);
-    this.punchPart = this.choosePunchPart(side);
-  }
-
-  /**
-   * Any part it can reach from its side without punching through the body,
-   * never the same one twice running.
-   */
-  private choosePunchPart(side: 1 | -1): PartName {
-    return this.openPart(PUNCH_PARTS, side, this.punchPart);
+    this.landed(part, 0.35, p);
   }
 
   /** One of `parts` it can reach from its side without going through the body, never `last` again. */
@@ -480,6 +469,18 @@ export class Executer {
   // -------------------------------------------------------------------------
   // Comet
   // -------------------------------------------------------------------------
+
+  /** Take the shortest turn toward the player, independently of flight direction. */
+  private facePlayer(dt: number): void {
+    const c = this.body.getWorldCenter();
+    const aim = this.chestPoint();
+    const angle = this.facingAngle;
+    this.previousFacingAngle = angle;
+    const desired = Math.atan2(aim.y - c.y, aim.x - c.x);
+    const delta = Math.atan2(Math.sin(desired - angle), Math.cos(desired - angle));
+    const step = Math.max(-COMET.turnSpeed * dt, Math.min(COMET.turnSpeed * dt, delta));
+    this.facingAngle += step;
+  }
 
   private updateComet(dt: number, ball: Body | null): void {
     const c = this.body.getWorldCenter();
@@ -916,11 +917,11 @@ export class Executer {
 
   // -------------------------------------------------------------------------
 
-  private landed(part: Body, power: number): void {
+  private landed(part: Body, power: number, point?: Vec2Value): void {
     const c = this.body.getWorldCenter();
     const p = part.getWorldCenter();
     this.hits += 1;
-    this.lastImpact = { age: this.age, power, xPx: toPx((c.x + p.x) / 2), yPx: toPx((c.y + p.y) / 2) };
+    this.lastImpact = { age: this.age, power, xPx: toPx(point?.x ?? (c.x + p.x) / 2), yPx: toPx(point?.y ?? (c.y + p.y) / 2) };
   }
 
   /** An active player swing pushes this body away and interrupts its attack. */

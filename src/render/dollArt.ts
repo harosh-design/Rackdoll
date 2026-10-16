@@ -138,16 +138,8 @@ export const DRAW_ORDER: readonly PartName[] = [
 /** The head keeps its own oval face, fitted to the original head sprite's bounds. */
 export const HEAD = { cx: -0.35, cy: 0.25, rx: 10.55, ry: 10.8 } as const;
 
-/** Torso y where the neck widens into the shoulders. */
-export const NECKLINE_Y = -17.5;
-/** Shin y of the ankle, the narrowest point. The foot starts below it. */
-export const ANKLE_Y = 12.5;
 /** Shin y of the drawn sole, 10.74 px below the collider's bottom. */
 export const SOLE_Y = 21.74;
-/** Thigh y of the shorts' hem. */
-export const HEM_Y = -6;
-/** How far a sleeve reaches down the upper arm from the shoulder pivot. */
-export const SLEEVE_PX = 7.5;
 
 const paths = new Map<PartName, Path2D>();
 

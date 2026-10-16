@@ -868,12 +868,13 @@ describe('hazards (reworked §13)', () => {
     expect(new Set(gw.executerQueue.peek(4).map((v) => v.id)).size).toBe(4);
   });
 
-  it('the comet hunts fastest and the magnet slowest', () => {
+  it('the comet hunts fastest and the magnet travels slower than the other hunters', () => {
     // The slime by its flight: stuck, it only moves as its player does.
     const speeds = Object.fromEntries(IDS.map((id) => [id, meanSpeed(id, id === 'slime' ? 'fly' : undefined)]));
     for (const id of IDS) {
       if (id !== 'comet') expect(speeds.comet).toBeGreaterThan(speeds[id]);
-      if (id !== 'magnet') expect(speeds.magnet).toBeLessThan(speeds[id] / 2);
+      // The boxer now holds position at the head between jabs.
+      if (id !== 'magnet' && id !== 'boxer') expect(speeds.magnet).toBeLessThan(speeds[id] / 2);
     }
   });
 
@@ -938,22 +939,22 @@ describe('hazards (reworked §13)', () => {
     expect(gw.ball.velocity.y).toBeGreaterThan(2);
   });
 
-  it('the boxer punches all over the body, not just the head', () => {
-    const gw = hazardWorld({ executerOrder: ['boxer'] });
-    fireAtButton(gw, 1);
-    const e = gw.executers[0];
-    const punched = new Set<string>();
-    for (let f = 0; f < 30 * 20 && !e.dead; f++) {
-      const aim = e.punchPart;
-      const before = e.hits;
-      gw.step();
-      gw.reap();
-      if (e.hits > before) punched.add(aim);
+  it('the boxer lands every jab on the head on either half of the court', () => {
+    for (const side of [1, 2] as const) {
+      const gw = hazardWorld({ executerOrder: ['boxer'] });
+      fireAtButton(gw, side);
+      const e = gw.executers[0];
+      const player = side === 1 ? gw.p1 : gw.p2;
+      const knock = vi.spyOn(player, 'knock');
+      for (let f = 0; f < 30 * 20 && !e.dead; f++) {
+        gw.step();
+        gw.reap();
+        expect(e.punchPart).toBe('Head');
+      }
+      expect(e.hits).toBeGreaterThan(5);
+      expect(knock).toHaveBeenCalledTimes(e.hits);
+      for (const call of knock.mock.calls) expect(call[2]).toBe(player.head);
     }
-    expect(punched.size).toBeGreaterThanOrEqual(5);
-    expect([...punched].some((p) => p.startsWith('Leg') || p.startsWith('Foot'))).toBe(true);
-    expect([...punched].some((p) => p.startsWith('Arm') || p.startsWith('Hand'))).toBe(true);
-    expect([...punched].some((p) => p === 'Tors' || p === 'Ass')).toBe(true);
   });
 
   it('a punch nudges the player away during ordinary play', () => {

@@ -1,8 +1,17 @@
-/** Geometry stays fixed; only ink edges get a subpixel redraw. */
+/** Scenery silhouettes stay fixed; only ink edges get a subpixel redraw. */
 export const SCENERY_BOIL_PX = 0.025;
 export const SCENERY_BOIL_HZ = 5;
 const SEQUENCE = [0, 1, 0, 2, 1, 2] as const;
 const STAGE_WIDTH = 640;
+const MOON_RADIUS = 29;
+const MOON_PADDING = MOON_RADIUS + 2;
+const MOON_ORBIT_SECONDS = 90;
+
+/** A wide, shallow ellipse keeps the moon above the court throughout its orbit. */
+function moonPosition(floor: number, seconds: number): Point {
+  const phase = -Math.PI / 4 + (seconds % MOON_ORBIT_SECONDS) / MOON_ORBIT_SECONDS * Math.PI * 2;
+  return { x: STAGE_WIDTH / 2 + 225 * Math.cos(phase), y: floor * (0.28 + 0.125 * Math.sin(phase)) };
+}
 
 interface Point { x: number; y: number }
 interface Branch { points: Point[]; width: number; seed: number }
@@ -12,6 +21,7 @@ export class HorrorScenery {
   private readonly reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   private cacheKey = '';
   private frames: HTMLCanvasElement[] = [];
+  private moonFrames: HTMLCanvasElement[] = [];
 
   draw(ctx: CanvasRenderingContext2D, width: number, height: number, floorY: number, seconds: number): void {
     const deviceScale = Math.abs(ctx.getTransform().a);
@@ -19,9 +29,19 @@ export class HorrorScenery {
     const key = resolution + ':' + height / width + ':' + floorY / width;
     if (key !== this.cacheKey) {
       this.frames = makeFrames(resolution, height / width * STAGE_WIDTH, floorY / width * STAGE_WIDTH);
+      this.moonFrames = makeMoonFrames(resolution);
       this.cacheKey = key;
     }
     const frame = this.reducedMotion.matches ? 0 : SEQUENCE[Math.floor(seconds * SCENERY_BOIL_HZ) % SEQUENCE.length];
+    const scale = width / STAGE_WIDTH;
+    const moon = moonPosition(floorY / scale, this.reducedMotion.matches ? 0 : seconds);
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, 0, width, floorY); ctx.clip();
+    ctx.globalAlpha *= 0.32;
+    ctx.drawImage(this.moonFrames[frame], (moon.x - MOON_PADDING) * scale, (moon.y - MOON_PADDING) * scale,
+      MOON_PADDING * 2 * scale, MOON_PADDING * 2 * scale);
+    ctx.restore();
+    // The moon passes behind the stationary branches and forest silhouettes.
     ctx.drawImage(this.frames[frame], 0, 0, width, height);
   }
 }
@@ -42,7 +62,6 @@ function makeFrames(resolution: number, height: number, floor: number): HTMLCanv
     const ctx = canvas.getContext('2d')!;
     ctx.scale(resolution / STAGE_WIDTH, resolution / STAGE_WIDTH);
     ctx.beginPath(); ctx.rect(0, 0, STAGE_WIDTH, floor); ctx.clip();
-    drawMoon(ctx, 474, floor * 0.19, 29, frame);
     drawCrosses(ctx, floor);
     // A single solid skyline matches the reference; no individual distant trees.
     const bank = new Path2D();
@@ -75,6 +94,19 @@ function makeFrames(resolution: number, height: number, floor: number): HTMLCanv
       ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + rng() * 2 - 1, y + 3 + rng() * 11); ctx.stroke();
     }
     ctx.restore();
+    return canvas;
+  });
+}
+
+/** Cache the ink texture separately so the orbit is smooth at display refresh rate. */
+function makeMoonFrames(resolution: number): HTMLCanvasElement[] {
+  const size = Math.ceil(MOON_PADDING * 2 * resolution / STAGE_WIDTH);
+  return [0, 1, 2].map(frame => {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext('2d')!;
+    ctx.scale(size / (MOON_PADDING * 2), size / (MOON_PADDING * 2));
+    drawMoon(ctx, MOON_PADDING, MOON_PADDING, MOON_RADIUS, frame);
     return canvas;
   });
 }
@@ -211,7 +243,7 @@ function drawMoon(ctx: CanvasRenderingContext2D, x: number, y: number, radius: n
     }
     path.closePath(); ctx.fillStyle = 'rgba(91,79,58,0.12)'; ctx.fill(path);
     ctx.save(); ctx.clip(path);
-    ctx.strokeStyle = '#222019';
+    ctx.strokeStyle = 'rgba(34,32,25,0.4)';
     for (let i = 0; i < 32; i++) {
       let px = cx * radius + (marks() - 0.5) * size * radius * 2;
       let py = cy * radius + (marks() - 0.5) * size * radius * 1.6;
@@ -227,7 +259,7 @@ function drawMoon(ctx: CanvasRenderingContext2D, x: number, y: number, radius: n
     for (let i = 0; i < 18; i++) {
       const px = cx * radius + (marks() - 0.5) * size * radius * 2;
       const py = cy * radius + (marks() - 0.5) * size * radius * 1.6;
-      ctx.fillStyle = 'rgba(24,24,31,0.78)';
+      ctx.fillStyle = 'rgba(24,24,31,0.35)';
       ctx.beginPath(); ctx.ellipse(px, py, 0.25 + marks() * 0.8, 0.15 + marks() * 0.55, marks() * 3, 0, Math.PI * 2); ctx.fill();
     }
   }

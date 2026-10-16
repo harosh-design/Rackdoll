@@ -19,6 +19,7 @@ import { AmbientBackdrop } from './ambientBackdrop';
 import { drawHorrorBackground, drawHorrorPlayers, loadHorrorArt } from './horrorArt';
 import { PencilGrain } from './pencilGrain';
 import { AIR_HEATER, RUBBER_NET, SHARP_SPIKE } from '../sim/centerObstacle';
+import { drawBallArt, loadBallArt, pickBallSkin, type BallSkin } from './ballArt';
 
 
 /**
@@ -99,6 +100,8 @@ export class Renderer {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly motion = new WeakMap<GameWorld, MotionState>();
   private readonly ballTrails = new WeakMap<GameWorld, BallTrailPoint[]>();
+  private readonly ballSkins = new WeakMap<GameWorld, BallSkin>();
+  private previousBallSkin?: BallSkin;
   /** Device pixels per stage pixel. */
   private k = 1;
   private grainPixelRatio = 1;
@@ -113,7 +116,18 @@ export class Renderer {
     this.ctx = canvas.getContext('2d', { alpha: false })!;
     this.backdrop = backdrop ? new AmbientBackdrop(backdrop) : null;
     this.resize();
-    this.ready = loadHorrorArt();
+    this.ready = Promise.all([loadHorrorArt(), loadBallArt()]).then(() => {});
+  }
+
+  /** Called only for a new match; rounds and pauses retain their selected skin. */
+  startMatch(gw: GameWorld): void {
+    const skin = pickBallSkin(this.previousBallSkin);
+    this.ballSkins.set(gw, skin);
+    this.previousBallSkin = skin;
+  }
+
+  ballSkinFor(gw: GameWorld): BallSkin {
+    return this.ballSkins.get(gw) ?? this.previousBallSkin ?? 'stitched';
   }
 
   /** Fit the 640x400 stage into the canvas's CSS box at device resolution. */
@@ -561,6 +575,7 @@ export class Renderer {
     const r = gw.ball.radiusPx;
     const now = gw.frame - 1 + alpha;
     const tint = this.currentBallTint(gw, now);
+    const skin = this.ballSkinFor(gw);
 
     this.drawBallTrail(ctx, gw, pose, now, speed, r);
 
@@ -574,10 +589,10 @@ export class Renderer {
       const ux = speed > 0 ? v.x / speed : 0;
       const uy = speed > 0 ? v.y / speed : 0;
       ctx.globalAlpha = 0.12 / i;
-      this.ballArt(ctx, { x: pose.x - ux * back, y: pose.y - uy * back, a: pose.a }, tint);
+      this.ballArt(ctx, { x: pose.x - ux * back, y: pose.y - uy * back, a: pose.a }, skin, tint);
     }
     ctx.globalAlpha = 1;
-    this.ballArt(ctx, pose, tint);
+    this.ballArt(ctx, pose, skin, tint);
   }
 
   /** A tapered comet wake follows the actual flight, including curved shots and bounces. */
@@ -615,21 +630,14 @@ export class Renderer {
     return { rgb, alpha: BALL_TINT.alpha * (t.previous ? 1 : k) };
   }
 
-  private ballArt(ctx: CanvasRenderingContext2D, pose: Pose, tint?: { rgb: string; alpha: number } | null): void {
+  private ballArt(ctx: CanvasRenderingContext2D, pose: Pose, skin: BallSkin, tint?: { rgb: string; alpha: number } | null): void {
     const r = BALL.radiusPx; ctx.save(); ctx.translate(pose.x, pose.y); ctx.rotate(pose.a);
-    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fillStyle = COMIC.paper; ctx.fill();
-    ctx.save(); ctx.clip();
-    for (let i = 0; i < 6; i++) {
-      ctx.save(); ctx.rotate(i * Math.PI / 3);
-      ctx.beginPath(); ctx.moveTo(0, 0); ctx.bezierCurveTo(r * 0.6, -r * 0.55, r * 0.85, -r * 0.5, r, 0);
-      ctx.arc(0, 0, r, 0, Math.PI / 3); ctx.quadraticCurveTo(r * 0.1, r * 0.7, 0, 0);
-      ctx.fillStyle = i % 2 ? COMIC.paper : COMIC.mint; ctx.fill();
-      ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 0.65; ctx.stroke(); ctx.restore();
+    drawBallArt(ctx, skin, r);
+    if (tint && tint.alpha > 0) {
+      ctx.beginPath(); ctx.arc(0, 0, r - 0.65, 0, Math.PI * 2); ctx.clip();
+      ctx.globalAlpha *= tint.alpha * 0.65;
+      ctx.fillStyle = 'rgb(' + tint.rgb + ')'; ctx.fillRect(-r, -r, r * 2, r * 2);
     }
-    if (tint && tint.alpha > 0) { ctx.globalAlpha *= tint.alpha * 0.65; ctx.fillStyle = 'rgb(' + tint.rgb + ')'; ctx.fillRect(-r, -r, r * 2, r * 2); }
-    ctx.restore();
-    ctx.save(); ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.clip(); hatch(ctx, -r, r * 0.28, r * 2, r, 3.5); ctx.restore();
-    ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 1.3; ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke();
     ctx.restore();
   }
 
@@ -652,11 +660,12 @@ export class Renderer {
         this.drawMagnetArt(ctx, toTarget, e.field, e.phase === 'latched', t);
         break;
       case 'boxer':
-        this.drawBoxer(ctx, e);
+        this.drawBoxer(ctx, e, pose, interp.pose(e.target.head, alpha));
         break;
       case 'comet': {
         const v = e.body.getLinearVelocity();
-        this.drawCometArt(ctx, pose.a, Math.atan2(v.y, v.x), v.length(), e.phase === 'dash', t);
+        const facing = e.previousFacingAngle + (e.facingAngle - e.previousFacingAngle) * alpha;
+        this.drawCometArt(ctx, facing, Math.atan2(v.y, v.x), v.length(), e.phase === 'dash', t);
         break;
       }
       case 'spring':
@@ -672,6 +681,7 @@ export class Renderer {
         );
         break;
       }
+
     }
     ctx.restore();
 
@@ -683,6 +693,36 @@ export class Renderer {
       ring(ctx, hit.xPx, hit.yPx, since, 12, 5, 16 + 34 * hit.power, 2 + 4 * hit.power, rgb);
       ring(ctx, hit.xPx, hit.yPx, since - 2, 10, 3, 10 + 18 * hit.power, 1.5, '255,255,255');
     }
+  }
+
+  /** A gravestone skin for the original wall button, in local artwork coordinates. */
+  private drawGraveButtonArt(ctx: CanvasRenderingContext2D, active: boolean, life: number, flash: number, t: number): void {
+    ctx.save();
+    ctx.fillStyle = COMIC.ink; inkRect(ctx, -25, -6, 50, 6, 1); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(-23, -4); ctx.lineTo(-21, -42);
+    ctx.bezierCurveTo(-20, -66, 19, -68, 22, -43);
+    ctx.lineTo(24, -4); ctx.closePath();
+    ctx.fillStyle = COMIC.muted; ctx.fill(); ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 2.5; ctx.stroke();
+    if (flash > 0) {
+      ctx.save(); ctx.globalAlpha *= flash; ctx.fillStyle = COMIC.paper; ctx.fill(); ctx.restore();
+    }
+    ctx.save(); ctx.clip(); hatch(ctx, -25, -67, 15, 66, 4); hatch(ctx, -24, -15, 49, 12, 4); ctx.restore();
+    ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.moveTo(-16, -9); ctx.lineTo(-15, -43); ctx.quadraticCurveTo(0, -63, 16, -43); ctx.lineTo(17, -9); ctx.stroke();
+    ctx.strokeStyle = active ? COMIC.mint : COMIC.ink; ctx.lineWidth = active ? 2.2 : 1.4;
+    ctx.beginPath(); ctx.moveTo(0, -51); ctx.lineTo(0, -35); ctx.moveTo(-6, -45); ctx.lineTo(6, -45); ctx.stroke();
+    ctx.fillStyle = COMIC.ink; ctx.font = 'bold 9px ' + COMIC_TEXT; ctx.textAlign = 'center'; ctx.fillText('RIP', 0, -22);
+    ctx.strokeStyle = active ? COMIC.mint : COMIC.ink; ctx.lineWidth = active ? 1.8 : 0.9;
+    ctx.beginPath(); ctx.moveTo(11, -57); ctx.lineTo(6, -49); ctx.lineTo(11, -40);
+    ctx.lineTo(6, -31); ctx.lineTo(10, -23); ctx.lineTo(4, -13); ctx.lineTo(8, -5); ctx.stroke();
+    if (active && life > 0) {
+      ctx.fillStyle = COMIC.ink; ctx.fillRect(-10, -13, 20, 2.5);
+      ctx.fillStyle = COMIC.mint; ctx.fillRect(-10, -13, 20 * life, 2.5);
+      ctx.globalAlpha *= 0.35 + Math.sin(t * 0.18) * 0.15;
+      ctx.strokeStyle = COMIC.mint; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(-18, -8); ctx.lineTo(18, -8); ctx.stroke();
+    }
+    ctx.restore();
   }
 
   /**
@@ -703,12 +743,14 @@ export class Renderer {
     drawHorrorProp(ctx, 'magnet', -2, 0, 52, 52); ctx.restore();
   }
 
-  private drawCometArt(ctx: CanvasRenderingContext2D, spin: number, heading: number, speed: number, dashing: boolean, t: number): void {
-    ctx.save(); ctx.rotate(heading); ctx.rotate(Math.sin(spin) * 0.05);
+  private drawCometArt(ctx: CanvasRenderingContext2D, facing: number, heading: number, speed: number, dashing: boolean, t: number): void {
+    ctx.save(); ctx.rotate(heading);
     if (speed > 2) for (let i = 0; i < 3; i++) {
       const shift = (t * 2 + i * 7) % 12; ctx.strokeStyle = dashing ? COMIC.ochre : COMIC.paper; ctx.lineWidth = 1.1;
       ctx.beginPath(); ctx.moveTo(-25 - shift, -7 + i * 7); ctx.lineTo(-34 - shift - Math.min(speed, 15), -5 + i * 7); ctx.stroke();
     }
+    ctx.restore();
+    ctx.save(); ctx.rotate(facing);
     drawHorrorProp(ctx, 'fire-skull', 0, 0, 61, 48); ctx.restore();
   }
 
@@ -800,30 +842,30 @@ export class Renderer {
     ctx.restore();
   }
 
-  /** The boxer, with its jab aimed at whichever part it is going for. */
-  private drawBoxer(ctx: CanvasRenderingContext2D, e: Executer): void {
-    const c = e.body.getWorldCenter();
-    const p = e.target.part(e.punchPart).getWorldCenter();
+  /** Aim the active fist directly at the head, even above or below the boxer. */
+  private drawBoxer(ctx: CanvasRenderingContext2D, e: Executer, c: Pose, p: Pose): void {
     const facing = p.x >= c.x ? 1 : -1;
     // In the flipped frame the target is always ahead; aim the arms at it.
-    const aim = Math.max(-1.1, Math.min(1.1, Math.atan2(p.y - c.y, Math.abs(p.x - c.x))));
+    const aim = Math.atan2(p.y - c.y, Math.abs(p.x - c.x));
     const frame = e.punchFrame;
     const reach = frame < 0 ? 0 : frame <= BOXER.impactFrame
       ? frame / BOXER.impactFrame
       : Math.max(0, 1 - (frame - BOXER.impactFrame) / 8);
     const active = (e.hits + (frame >= BOXER.impactFrame ? 1 : 0)) % 2;
-    this.drawBoxerArt(ctx, facing, aim, reach, active);
+    this.drawBoxerArt(ctx, facing, aim, reach, active, Math.max(18, Math.hypot(p.x - c.x, p.y - c.y) - 5));
   }
 
-  private drawBoxerArt(ctx: CanvasRenderingContext2D, facing: number, aim: number, reach: number, active: number): void {
+  private drawBoxerArt(ctx: CanvasRenderingContext2D, facing: number, aim: number, reach: number, active: number,
+    impactDistance: number = BOXER.armRestPx + BOXER.armExtensionPx): void {
     ctx.save(); ctx.scale(facing, 1); ctx.save(); ctx.rotate(aim); ctx.lineCap = 'round';
     for (let i = 0; i < 2; i++) {
-      const y = i === 0 ? -9 : 9, extension = i === active ? reach * BOXER.armExtensionPx : 0;
+      const y = i === 0 ? -9 : 9, extension = i === active ? reach * (impactDistance - BOXER.armRestPx) : 0;
+      const fistY = (y - (i === 0 ? -2 : 2)) * (i === active ? 1 - reach : 1);
       for (const [width, color] of [[6, COMIC.ink], [3.5, COMIC.paper]] as const) {
         ctx.strokeStyle = color; ctx.lineWidth = width; ctx.beginPath(); ctx.moveTo(8, y);
-        ctx.lineTo(21, y + (i === 0 ? -3 : 3)); ctx.lineTo(BOXER.armRestPx - 1 + extension, y - (i === 0 ? -2 : 2)); ctx.stroke();
+        ctx.lineTo(21, y + (i === 0 ? -3 : 3)); ctx.lineTo(BOXER.armRestPx - 1 + extension, fistY); ctx.stroke();
       }
-      drawHorrorProp(ctx, 'fist', BOXER.armRestPx + extension, y - (i === 0 ? -2 : 2), 15, 13);
+      drawHorrorProp(ctx, 'fist', BOXER.armRestPx + extension, fistY, 15, 13);
     }
     ctx.restore(); drawHorrorProp(ctx, 'voodoo', 0, 0, 36, 46); ctx.restore();
   }
@@ -845,25 +887,19 @@ export class Renderer {
     ctx.restore();
   }
 
-  /**
-   * The prize buttons. A hit sinks the face into the wall, flashes it and
-   * throws a shockwave, every time — each hit launches another executer. While
-   * any of them lives the button glows red, with a column that drains with the
-   * longest-lived one; when the last dies it springs back out.
-   */
+  /** Gravestone artwork follows the original wall buttons' press, flash and lifetime. */
   private drawPrizeButtons(ctx: CanvasRenderingContext2D, gw: GameWorld, now: number): void {
     for (const b of gw.ground.prizeButtons) {
       const d = b.def, live = !b.armed, depth = buttonDepth(b, now);
-      const x = d.x - d.hw - b.inward * depth, y = d.y - d.hh, w = d.hw * 2, h = d.hh * 2;
-      ctx.save(); ctx.fillStyle = live ? COMIC.rust : d.side === 1 ? COMIC.ochre : COMIC.mint;
-      inkRect(ctx, x, y, w, h, 1); ctx.fill(); ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 1.5; ctx.stroke();
-      ctx.save(); ctx.clip(); hatch(ctx, x, y, w, h, 8); ctx.restore();
       const life = Math.max(0, ...b.executers.filter(e => !e.dead).map(e => e.lifeFraction));
-      if (live && life > 0) { ctx.fillStyle = COMIC.paper; ctx.fillRect(x + w / 2 - 0.6, y + h - 3 - (h - 6) * life, 1.2, (h - 6) * life); }
       const flash = Math.max(flashCurve(now - b.pressedAt, 6, 1), flashCurve(now - b.releasedAt, 6, 0.5));
-      if (flash > 0) { ctx.globalAlpha = flash; ctx.fillStyle = COMIC.paper; inkRect(ctx, x, y, w, h, 1); ctx.fill(); ctx.globalAlpha = 1; }
+      ctx.save();
+      ctx.translate(d.x - b.inward * depth, d.y + d.hh);
+      ctx.scale(0.7, d.hh * 2 / 62);
+      this.drawGraveButtonArt(ctx, live, life, flash, now);
+      ctx.restore();
       ring(ctx, d.x + b.inward * d.hw, d.y, now - b.pressedAt, 14, 8, 95, 2.5, PAL.prizeLiveGlow);
-      ring(ctx, d.x + b.inward * d.hw, d.y, now - b.releasedAt, 10, 6, 45, 1.5, PAL.prizeGlow); ctx.restore();
+      ring(ctx, d.x + b.inward * d.hw, d.y, now - b.releasedAt, 10, 6, 45, 1.5, PAL.prizeGlow);
     }
   }
 

@@ -158,6 +158,7 @@ function startMatch(): void {
   }
   applyMute(muted);            // keep mute state consistent when starting a fresh match
   gw = createWorld();
+  renderer.startMatch(gw);
   message = null;
   setScreen('playing');
 }
