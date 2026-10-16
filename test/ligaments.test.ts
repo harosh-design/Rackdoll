@@ -1,6 +1,6 @@
 import { Vec2 } from 'planck';
 import { describe, expect, it } from 'vitest';
-import { NET_TOP_PX, NET_X_PX, toM, toPx } from '../src/sim/constants';
+import { ACTIONS, NET_TOP_PX, NET_X_PX, toM, toPx } from '../src/sim/constants';
 import { closedPoses } from '../src/render/dollPose';
 import { Interpolator } from '../src/render/interp';
 import { ligamentSegments } from '../src/render/ligamentArt';
@@ -11,7 +11,7 @@ describe('impaled doll rendering', () => {
     const gw = world({ centerObstacle: 'sharp' });
     const player = id === 1 ? gw.p1 : gw.p2;
     const hand = player.part('FingerLeft');
-    hand.setTransform(Vec2(toM(NET_X_PX), toM(NET_TOP_PX - 6)), 0);
+    hand.setTransform(Vec2(toM(NET_X_PX), toM(NET_TOP_PX - 10)), 0);
     gw.centerObstacle.beforeStep([player]); gw.centerObstacle.afterStep([player]);
     const frames = new Interpolator();
     for (const scale of [2 / 3, 1, 1.5]) {
@@ -27,7 +27,7 @@ describe('impaled doll rendering', () => {
         expect(links.some(link => [link.a, link.b].some(p =>
           Math.hypot(p.x - toPx(endpoint.x), p.y - toPx(endpoint.y)) < 1e-6))).toBe(true);
         // The pin retains its original local wound anchor when the doll resizes.
-        expect(pin.getBodyB()).toBe(hand);
+        expect(pin.wound.getBodyB()).toBe(hand);
         for (const link of links) expect(link.width).toBeGreaterThan(0);
       }
     }
@@ -62,9 +62,9 @@ describe('elastic spike joints', () => {
       body.setLinearVelocity(Vec2(0, 0)); body.setAngularVelocity(0);
     }
     gw.centerObstacle.beforeStep([player]); gw.centerObstacle.afterStep([player]);
-    gw.control.press(37);
-    run(gw, 45);
-    gw.control.release(37);
+    // Pull with the movement impulse but no held key: a held key is a
+    // struggle, which would tear the tendons instead of only stretching them.
+    for (let frame = 0; frame < 45; frame++) { gw.step(); player.turn(Vec2(-ACTIONS.turnImpulse, 0)); }
     expect(gw.centerObstacle.pins.has(hand)).toBe(true);
     expect(player.injured).toBe(false);
     expect(player.skeletonJoints).toHaveLength(12);

@@ -101,8 +101,16 @@ same ink and lettering treatment. None of these passes changes collisions.
 The five existing hazards now appear as a haunted magnet, voodoo boxer, fire
 skull, bone-jaw spring trap and ectoplasm. Their existing IDs and lifetimes remain.
 The boxer now aims its alternating fists at the head, and the fire skull
-rotates toward its player independently of its flight direction.
-Jaw caps stay rigid while the coil stretches; skeletal arms and separate cloth
+rotates toward its player independently of its flight direction, then turns
+through one full somersault during the diving recovery after each dash.
+The bone spring falls under gravity and redirects at physical bounces. Its
+five overlapping inked coil loops bow and stretch with flight, compress on
+surface contact, then release a damped wobble. The original textured jaw caps
+hinge independently at the two ends. Plum coils gain ochre highlights and
+longer paper-colored speed scratches as distance and impact strength build;
+small directional ink marks show each surface rebound. The palette, existing
+bone cutouts and ink outlines match the other props without digital bloom.
+Skeletal arms and separate cloth
 fists follow the actual punch reach. Both the HUD preview and live hazards
 use the same production art. No service equipment or arena prop image loads.
 

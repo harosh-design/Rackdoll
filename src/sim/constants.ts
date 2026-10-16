@@ -556,7 +556,8 @@ export const MAGNET = {
 /**
  * Comet: the fastest hunter. It circles to a run-up point on the side of its
  * player nearest the ball, then dashes through them, knocking them away from
- * where they need to be. It glances off, brakes, and lines up again.
+ * where they need to be. Every dash ends with a small diving loop before
+ * it brakes and lines up again.
  */
 export const COMET = {
   /** Maximum turn toward its player, radians per second. */
@@ -590,21 +591,36 @@ export const COMET = {
   knockLift: 0.25,
   /** Frames the player stumbles and cannot steer after a hit. */
   stumbleFrames: 12,
+  /** A complete recovery somersault after every hit or missed dash. */
+  loopFrames: 30,
+  loopRadiusPx: 32,
+  loopSpeed: 6,
+  loopForce: 110,
   /** After a dash it brakes for this long before lining up again. */
   recoverFrames: 10,
   brakeForce: 160,
 } as const;
 
 /**
- * Spring: it charges its player, building speed the whole way, and slams
- * into them. The longer and faster the run, the harder the push and the
- * harder it rebounds itself. It flies back, brakes gradually, settles, then
- * charges again.
+ * Spring: falls under gravity and aims only when bouncing off a surface.
+ * Distance travelled since the last bounce increases its acceleration and
+ * impact strength. A player hit sends it away and delays the next attack.
  */
 export const SPRING = {
-  /** Acceleration while charging, m/s², and the speed it tops out at. */
-  accel: 8,
+  /** Acceleration along its flight, from a short hop to a long flight, m/s². */
+  accel: 1.5,
+  travelAccel: 6,
   topSpeed: 11,
+  /** It drops immediately from the grave with only a small inward nudge, m/s. */
+  emergeSpeed: 1.6,
+  dropSpeed: 1.5,
+  /** Launch speed after a surface impact, m/s, plus the distance charge. */
+  bounceSpeed: 7.2,
+  bounceBoost: 2,
+  /** Keep a definite outward component when aiming along a wall or floor. */
+  normalShare: 0.42,
+  /** Retry a blocked bounce after this many frames so it cannot settle on a prop. */
+  contactRetryFrames: 6,
   /** A run this long counts in full toward the impact, px. */
   fullTravelPx: 320,
   /** Impact strength: mostly the speed it reached, partly the distance run. */
@@ -621,13 +637,12 @@ export const SPRING = {
   /** It rebounds at this fraction of its impact speed, plus a minimum, m/s. */
   reboundScale: 0.6,
   reboundMin: 3,
-  /** Free flight after the rebound, frames at full strength. */
-  reboundFrames: 8,
-  /** Then it brakes at this rate, m/s², and recovers this many frames at least. */
-  brake: 14,
-  recoverFrames: 24,
-  /** Speed it rises or sinks at to line up with its player's chest, m/s. */
-  settleSpeed: 6,
+  /** Minimum sideways escape speed after hitting the player, m/s. */
+  escapeSpeed: 6,
+  /** No further player shove or aimed return during this escape, frames. */
+  reboundFrames: 30,
+  /** Extra change in speed given to loose objects at full charge, m/s. */
+  objectPushSpeed: 4,
 } as const;
 
 /**

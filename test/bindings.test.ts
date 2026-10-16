@@ -4,6 +4,24 @@ import {
 } from '../src/input/bindings';
 import { GameWorld } from '../src/sim/world';
 
+describe('held movement keys', () => {
+  it('report a held jump after it has fired, for each player’s own bindings', () => {
+    const bindings = defaultBindings();
+    bindings[2].left = 'KeyJ';
+    const gw = new GameWorld({ singlePlayer: false, hazards: false, bindings: toKeyBindings(bindings) });
+    gw.control.press(38);
+    gw.control.press('KeyJ');
+    gw.step();
+    expect(gw.control.isDown(38)).toBe(false);
+    expect(gw.control.heldDirection(1)).toEqual({ x: 0, y: -1 });
+    expect(gw.control.heldDirection(2)).toEqual({ x: -1, y: 0 });
+    gw.control.press(40);
+    expect(gw.control.heldDirection(1)).toEqual({ x: 0, y: 0 });
+    gw.control.clear();
+    expect(gw.control.heldDirection(1)).toEqual({ x: 0, y: 0 });
+  });
+});
+
 describe('player keyboard settings', () => {
   it('rejects duplicate and reserved keys in saved settings', () => {
     const bindings = defaultBindings();

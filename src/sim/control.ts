@@ -24,6 +24,8 @@ export interface ChargeInfo {
  */
 export class Control {
   private readonly down = new Map<ControlKey, boolean>();
+  /** Physically held keys. Unlike `down`, a consumed jump press stays held. */
+  private readonly held = new Set<ControlKey>();
   private readonly active = new Map<PlayerId, { kind: 'serve' | 'swing'; key: ControlKey }>();
   private readonly chargeFrames = new Map<PlayerId, number>();
   private readonly keys: KeyBindings;
@@ -32,16 +34,24 @@ export class Control {
     this.keys = { 1: { ...bindings[1] }, 2: { ...bindings[2] } };
   }
 
-  press(code: ControlKey): void { this.down.set(code, true); }
-  release(code: ControlKey): void { this.down.set(code, false); }
+  press(code: ControlKey): void { this.down.set(code, true); this.held.add(code); }
+  release(code: ControlKey): void { this.down.set(code, false); this.held.delete(code); }
   isDown(code: ControlKey): boolean { return this.down.get(code) === true; }
   uses(code: ControlKey): boolean {
     return Object.values(this.keys[1]).includes(code) || Object.values(this.keys[2]).includes(code);
   }
   clear(): void {
     this.down.clear();
+    this.held.clear();
     this.active.clear();
     this.chargeFrames.clear();
+  }
+
+  /** The held movement keys as a screen direction: x right, y down, each -1, 0 or 1. */
+  heldDirection(id: PlayerId): { x: number; y: number } {
+    const k = this.keys[id];
+    const axis = (minus: ControlKey, plus: ControlKey) => Number(this.held.has(plus)) - Number(this.held.has(minus));
+    return { x: axis(k.left, k.right), y: axis(k.jump, k.down) };
   }
 
   isChargingSwing(): boolean {

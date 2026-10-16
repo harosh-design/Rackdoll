@@ -105,8 +105,24 @@ Choose a **Centre obstacle** in the start menu. The selection is remembered in
 this browser, previews on the court and applies to all modes and rematches:
 
 - **Classic spike** retains the cutting blade described below.
-- **Sharp spike** is a tapered spear. Parts that cross its tip are physically
-  pinned to it while the rest of the skeleton remains attached, until the next round.
+- **Sharp spike** is a tapered spear. Like the classic blade, its point acts
+  only on a deep impalement, using the same test; grazes and touches are safe.
+  An impaled part is physically pinned while the rest of the skeleton remains
+  attached. It slides along the shaft and still turns freely on it. Hold
+  **jump** (up) to pull it back up and off the point, or **down** to drive it
+  deeper, at most 72 world pixels below the point. A hazard's blow or the
+  opponent's flip kick also drives it deeper: fully when the blow points down
+  the shaft, half when it is sideways, and not at all when it lifts the doll.
+  Parts dragged onto the point behind it are caught too, and each 10 px deeper
+  bleeds again. Struggling with any movement key while a caught arm or leg is
+  under strong tension (above 30 N per kg of doll, typically by pulling away from
+  the net) strains its tendons; about 1.5 seconds of that tears the caught part
+  and everything beyond it off. It stays on the spike and the rest of the doll
+  drops free. The head, torso and hips are never torn off. A freed part cannot
+  be caught again until it has moved clear of the point, a doll that has just
+  come free is not caught for 20 frames, and freed hinges heal as their gaps
+  close. CPU players do not struggle; anything still caught, or torn off, is
+  released or restored at the next round.
   Its trapped player's joints visibly stretch under load, with red ligaments
   joining the separated body parts. Hinges next to the caught part become damped
   springs, with a rope limiting each gap to 48 world pixels at normal size.
@@ -319,16 +335,22 @@ changes that on purpose:
   whole doll a little and jolts the head.
 - **Fire skull (`comet`).** The fastest hunter. It circles to a run-up point 150 px to the
   side of its player nearest the ball (over their head, if it has to cross),
-  then dashes through them at 16 m/s and knocks them away from the ball. It
-  glances off, brakes, and lines up again — about one ram a second. Its skull
+  then dashes through them at 16 m/s and knocks them away from the ball. Every attack, including a miss, ends with a one-second diving
+  somersault before it brakes and lines up again. Its skull
   turns smoothly around its centre toward the player independently of its
   flight direction; motion streaks still follow the flight.
-- **Bone trap (`spring`).** It settles level with its player's chest, then charges,
-  building speed the whole way in (8 m/s², up to 11 m/s). Impact strength is
-  65% the speed it reached and 35% the distance it ran; the push grows
-  steeper than linearly with it, so a bump from a standing start stays a bump
-  and a long run throws the player hard. It rebounds off them at a speed set
-  by its own, flies free, brakes gradually and settles, then charges again.
+- **Bone trap (`spring`).** Drops straight from its gravestone under gravity,
+  with a small inward nudge, and first launches toward its player by bouncing
+  off the floor. Each floor, wall, net or object contact starts a new hop aimed
+  into that surface's outward hemisphere. It never homes or hovers in mid-air:
+  gravity curves its flight while acceleration follows its existing momentum.
+  The distance flown since the last bounce increases acceleration from 1.5 to
+  7.5 m/s², capped at 11 m/s, and contributes to a stronger impact on the player
+  and loose objects. The coil stretches and bows in flight, compresses on every
+  bounce, and gains ochre highlights and longer ink speed scratches as it charges.
+  A player hit sends it sideways at least 6 m/s and suppresses further shoves
+  and aimed returns for one second; it can still ricochet off scenery during
+  that escape. A flip also interrupts its pursuit without cancelling gravity.
 - **Ectoplasm (`slime`).** A glob of glue that flies at one of its player's hands, thighs
   or shins (4.5 m/s, bobbing) and sticks to whatever part it reaches first,
   weighing it down. Stuck, it reels the nearest end of another limb in on a
@@ -378,8 +400,7 @@ changes that on purpose:
   | Solver near a doll | 10 iterations | 20, within 40 px | A light hand hitting a heavy ball is badly conditioned. It is 10 everywhere else. |
 
   It is a bullet (CCD), because a doll's hands whip past 25 m/s in a jump and
-  would otherwise tunnel into it. It has no gravity: it hovers, as the velocity
-  overwrite made the original's do. It comes out of the button
+  would otherwise tunnel into it. The spring falls under gravity; the other flyers hover. Each comes out of the button
   as a sensor and turns solid once clear, so it can never spawn inside the ball
   that pressed it.
 

@@ -14,7 +14,7 @@ const anchorAt = (pose: Pose, local: Vec2Value): Point => ({
 
 /** The same interpolated anchors as the cutouts, including size powers. */
 export function ligamentSegments(player: Player, poses: PoseSource, alpha: number): LigamentSegment[] {
-  if (!player.impaled) return [];
+  if (!player.stretched) return [];
   const segments: LigamentSegment[] = [];
   for (const joint of player.skeletonJoints) {
     const a = anchorAt(poses.pose(joint.getBodyA(), alpha), joint.getLocalAnchorA());

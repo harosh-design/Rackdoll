@@ -1,11 +1,11 @@
-import { Vec2 } from 'planck';
+import { Circle, Vec2 } from 'planck';
 import { describe, expect, it } from 'vitest';
-import { CHAMELEON, COMET, FLOOR_TOP_PX, FPS, OPTIONS, SWING, TIME_STEP, toM, toPx } from '../src/sim/constants';
+import { CHAMELEON, COMET, EXECUTER, FLOOR_TOP_PX, FPS, OPTIONS, SPRING, SWING, TIME_STEP, toM, toPx } from '../src/sim/constants';
 import { Executer } from '../src/sim/executer';
 import { executerVariant } from '../src/sim/executerVariants';
 import { fireAtButton, hazardWorld, jointErrPx, run } from './helpers';
 
-describe('fire skull facing', () => {
+describe('fire skull', () => {
   it('turns toward the player from every side, regardless of velocity or physical spin', () => {
     const gw = hazardWorld();
     const skull = new Executer({ world: gw.world, timers: gw.timers, target: gw.p1, side: 1,
@@ -28,6 +28,137 @@ describe('fire skull facing', () => {
       expect(skull.body.getAngle()).toBe(1.7);
     }
     skull.destroy();
+  });
+
+  it('completes a visible diving somersault after both hits and missed dashes before attacking again', () => {
+    for (const miss of [false, true]) {
+      const gw = hazardWorld({ executerOrder: ['comet'] });
+      fireAtButton(gw, 1);
+      const e = gw.executers[0];
+      if (miss) gw.p1.power = 'shield';
+      let sawDash = false;
+      for (let f = 0; f < 180 && e.phase !== 'loop'; f++) {
+        gw.step();
+        if (e.phase === 'dash') {
+          sawDash = true;
+          if (miss) {
+            // Move the committed dash clear of every limb and let it time out.
+            e.body.setTransform(Vec2(toM(-80), toM(-300)), 0);
+            e.phaseAge = COMET.dashFrames;
+          }
+        }
+      }
+      expect(sawDash).toBe(true);
+      expect(e.phase).toBe('loop');
+      expect(e.hits).toBe(miss ? 0 : 1);
+      const hits = e.hits, facing = e.facingAngle, ys: number[] = [];
+      for (let f = 1; f <= COMET.loopFrames; f++) {
+        gw.step();
+        ys.push(e.body.getPosition().y);
+        expect(e.hits).toBe(hits);
+        if (f < COMET.loopFrames) expect(e.phase).toBe('loop');
+      }
+      expect(Math.abs(e.facingAngle - facing)).toBeCloseTo(Math.PI * 2, 6);
+      expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(toM(20));
+      expect(e.phase).toBe('recover');
+      run(gw, COMET.recoverFrames);
+      expect(e.phase).toBe('stalk');
+    }
+  });
+});
+
+describe('bouncing bone spring', () => {
+  it.each([1, 2] as const)('falls from grave %i, bounces toward its player and keeps ricocheting with breathing room', side => {
+    const gw = hazardWorld({ executerOrder: ['spring'] });
+    fireAtButton(gw, side);
+    const e = gw.executers[0];
+    expect(e.phase).toBe('drop');
+    expect(e.body.getGravityScale()).toBe(1);
+    let lastY = e.body.getPosition().y;
+    for (let f = 0; f < 100 && !e.lastBounce; f++) {
+      gw.step();
+      if (!e.lastBounce) {
+        expect(e.body.getPosition().y).toBeGreaterThan(lastY);
+        expect(e.hits).toBe(0);
+      }
+      lastY = e.body.getPosition().y;
+    }
+    expect(e.lastBounce).not.toBeNull();
+    expect(e.lastBounce!.ny).toBe(-1);
+    expect(e.lastBounce!.yPx).toBeCloseTo(FLOOR_TOP_PX, -1);
+    expect(e.body.getLinearVelocity().y).toBeLessThan(0);
+    expect(e.body.getLinearVelocity().x * (side === 1 ? 1 : -1)).toBeGreaterThan(2);
+    let lastBounce = e.lastBounce!.age, bounces = 1, lastHit = -Infinity, separated = false;
+    for (let f = 0; f < 420; f++) {
+      const hits = e.hits;
+      gw.step();
+      if (e.lastBounce!.age !== lastBounce) { bounces++; lastBounce = e.lastBounce!.age; }
+      if (e.hits > hits) {
+        expect(e.age - lastHit).toBeGreaterThanOrEqual(SPRING.reboundFrames);
+        lastHit = e.age;
+        expect(e.phase).toBe('rebound');
+      }
+      if (e.age - lastHit === 12) {
+        separated ||= Math.abs(toPx(e.body.getPosition().x - e.target.tors.getPosition().x)) > 85;
+      }
+      expect(toPx(e.body.getPosition().y)).toBeLessThanOrEqual(FLOOR_TOP_PX - EXECUTER.radiusPx + 2);
+    }
+    expect(bounces).toBeGreaterThan(8);
+    expect(e.hits).toBeGreaterThanOrEqual(2);
+    expect(separated).toBe(true);
+  });
+
+  it('keeps falling and accelerating along its flight instead of steering or hovering in the air', () => {
+    const gw = hazardWorld({ executerOrder: ['spring'] });
+    fireAtButton(gw, 1);
+    const e = gw.executers[0];
+    run(gw, 65);
+    e.body.setTransform(Vec2(toM(230), toM(-100)), 0);
+    e.body.setLinearVelocity(Vec2(3, 0));
+    e.travel = 0;
+    run(gw, 10);
+    expect(e.body.getLinearVelocity().x).toBeGreaterThan(3);
+    expect(e.body.getLinearVelocity().y).toBeGreaterThan(3);
+    expect(toPx(e.body.getPosition().x)).toBeGreaterThan(260);
+    expect(e.travel).toBeGreaterThan(1);
+  });
+
+  it('a longer real flight builds more speed and hits a loose object harder', () => {
+    const fly = (frames: number) => {
+      const gw = hazardWorld({ executerOrder: ['spring'], physics: { gravity: 0 } });
+      fireAtButton(gw, 1);
+      const e = gw.executers[0];
+      run(gw, 8);
+      e.phase = 'charge';
+      e.body.setTransform(Vec2(toM(-120), toM(-100)), 0);
+      e.body.setLinearVelocity(Vec2(2, 0));
+      e.travel = 0;
+      run(gw, frames);
+      const speed = e.body.getLinearVelocity().length(), power = e.slamPower;
+      const object = gw.world.createDynamicBody({ position: Vec2(e.body.getPosition().x + toM(35), toM(-100)) });
+      object.createFixture(Circle(toM(12)), { density: 2 });
+      const beforeBounce = e.lastBounce?.age;
+      for (let f = 0; f < 12 && e.lastBounce?.age === beforeBounce; f++) gw.step();
+      expect(e.lastBounce?.age).not.toBe(beforeBounce);
+      return { speed, power, objectSpeed: object.getLinearVelocity().length() };
+    };
+    const short = fly(5), long = fly(40);
+    expect(long.speed).toBeGreaterThan(short.speed * 1.8);
+    expect(long.power).toBeGreaterThan(short.power + 0.3);
+    expect(long.objectSpeed).toBeGreaterThan(short.objectSpeed * 1.8);
+  });
+
+  it('lets a flip send it away without cancelling gravity or immediately resuming pursuit', () => {
+    const gw = hazardWorld({ executerOrder: ['spring'] });
+    fireAtButton(gw, 1);
+    const e = gw.executers[0];
+    run(gw, 65);
+    e.hitByPlayer(Vec2(-12, -8));
+    const hits = e.hits;
+    run(gw, 20);
+    expect(e.hits).toBe(hits);
+    expect(e.body.getGravityScale()).toBe(1);
+    expect(e.phase).toBe('rebound');
   });
 });
 

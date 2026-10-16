@@ -37,13 +37,13 @@ export interface ExecuterOptions {
  * What it is doing now:
  * - magnet: `hunt`, then `latched` once it touches its player;
  * - boxer: `chase`, throwing jabs whenever it is in reach;
- * - comet: `stalk` to a run-up point, `dash` through its player, `recover`;
- * - spring: `charge`, `rebound` off its player, `recover`, and again;
+ * - comet: `stalk` to a run-up point, `dash`, a diving `loop`, then `recover`;
+ * - spring: `drop` from the grave, `charge` between bounces, `rebound` off its player;
  * - slime: `fly` at a limb, `stuck` to the part it reached, `recover`, and again.
  * - chameleon: `crawl` down the wall, `tongue-extend`, `tongue-pull`, `tongue-retract`.
  */
 export type ExecuterPhase =
-  'hunt' | 'latched' | 'chase' | 'stalk' | 'dash' | 'charge' | 'rebound' | 'recover' | 'fly' | 'stuck' |
+  'hunt' | 'latched' | 'chase' | 'stalk' | 'dash' | 'loop' | 'drop' | 'charge' | 'rebound' | 'recover' | 'fly' | 'stuck' |
   'crawl' | 'tongue-extend' | 'tongue-pull' | 'tongue-retract';
 
 /** A blow that landed, for the renderer's flash and the sound. */
@@ -77,8 +77,7 @@ export interface SlimeSnap {
 }
 
 const FIRST_PHASE: Record<ExecuterVariant['id'], ExecuterPhase> = {
-  // The spring settles level with its player before its first run.
-  magnet: 'hunt', boxer: 'chase', comet: 'stalk', spring: 'recover', slime: 'fly',
+  magnet: 'hunt', boxer: 'chase', comet: 'stalk', spring: 'drop', slime: 'fly',
   chameleon: 'crawl',
 };
 
@@ -122,7 +121,7 @@ const unit = (x: number, y: number): Vec2 => {
  * - then steered by a bounded force rather than having its velocity
  *   overwritten, so a player in the way stops it instead of being crushed;
  * - the wall crawler stays a kinematic sensor and only pulls with its tongue;
- * - no gravity: it hovers, as the velocity overwrite made the original's do;
+ * - the spring uses gravity and redirects only on contact; other flyers hover;
  * - every blow it deals goes through Player.knock(): a shove shared between
  *   the rail-mounted head and the hips, which moves the doll without tearing
  *   it, and which the shield ignores.
@@ -157,8 +156,10 @@ export class Executer {
   /** Comet: visual facing, independent of the physics body's tumble and flight. */
   facingAngle = 0;
   previousFacingAngle = 0;
-  /** Spring: distance run on the current charge, m. */
+  /** Spring: distance flown since its last surface contact, m. */
   travel = 0;
+  /** Spring: every physical bounce drives the coil's squash and impact marks. */
+  lastBounce: (ExecuterImpact & { nx: number; ny: number }) | null = null;
   /** Slime: the limb it is flying at. */
   aimPart: PartName = 'HandLeft';
   /** Slime: the part it is stuck to, and where on it, in its own coordinates. */
@@ -186,7 +187,13 @@ export class Executer {
   private readonly onDeath?: (e: Executer) => void;
   /** Velocity going into the last step: what it hit with. */
   private lastVelocity = Vec2(0, 0);
-  private reboundFrames = 0;
+  private springEscapeUntil = 0;
+  private springEscapeSide = 1;
+  private springPosition = Vec2(0, 0);
+  private springContacts = new Set<Body>();
+  private loopOrigin = Vec2(0, 0);
+  private loopDirection = 1;
+  private loopFacing = 0;
   /** Slime: frames it has left to hold on. */
   private holdLeft = 0;
   /** Slime: frames spent reeling in the current part. */
@@ -226,7 +233,7 @@ export class Executer {
       position: Vec2(o.origin.x, o.origin.y),
       angularDamping: 0,
       linearDamping: 0,
-      gravityScale: 0,
+      gravityScale: o.variant.id === 'spring' ? 1 : 0,
       bullet: this.tuning.bullet,
       // The comet tumbles physically; its art turns toward its player separately.
       fixedRotation: o.variant.id !== 'comet',
@@ -254,6 +261,10 @@ export class Executer {
     const d = unit(aim.x - c.x, aim.y - c.y);
     this.facingAngle = this.previousFacingAngle = Math.atan2(d.y, d.x);
     this.body.setLinearVelocity(Vec2(d.x * this.tuning.launchSpeed, d.y * this.tuning.launchSpeed));
+    if (o.variant.id === 'spring') {
+      this.body.setLinearVelocity(Vec2((this.side === 1 ? 1 : -1) * SPRING.emergeSpeed, SPRING.dropSpeed));
+      this.springPosition = this.body.getPosition().clone();
+    }
     if (o.variant.id === 'chameleon') {
       const inward = this.side === 1 ? 1 : -1;
       this.body.setTransform(Vec2(this.wallX - inward * toM(CHAMELEON.emergeDistancePx), o.origin.y), 0);
@@ -355,7 +366,18 @@ export class Executer {
       this.updateChameleon(dt, ball);
       return;
     }
-    if (this.variant.id === 'comet') this.facePlayer(dt);
+    if (this.variant.id === 'comet' && this.phase !== 'loop') this.facePlayer(dt);
+
+    if (this.variant.id === 'spring') {
+      if (!this.solid && this.age >= this.tuning.emergeFrames && !this.overlapsAnything()) {
+        this.fixture.setSensor(false);
+        this.solid = true;
+      }
+      if (this.knockbackFrames > 0) this.knockbackFrames -= 1;
+      this.updateSpring(dt);
+      this.lastVelocity = this.body.getLinearVelocity().clone();
+      return;
+    }
 
     if (!this.solid) {
       if (this.age >= this.tuning.emergeFrames && !this.overlapsAnything()) {
@@ -372,7 +394,6 @@ export class Executer {
         case 'magnet': this.updateMagnet(dt, ball); break;
         case 'boxer': this.updateBoxer(dt); break;
         case 'comet': this.updateComet(dt, ball); break;
-        case 'spring': this.updateSpring(dt); break;
         case 'slime': this.updateSlime(dt); break;
       }
     }
@@ -640,7 +661,7 @@ export class Executer {
         }
         const past = (aim.x - c.x) * this.dashDir.x + (aim.y - c.y) * this.dashDir.y < -toM(30);
         if (past || this.phaseAge > COMET.dashFrames) {
-          this.setPhase('recover');
+          this.startCometLoop();
           return;
         }
         // Mostly committed to its line, so a jump can still dodge it.
@@ -650,10 +671,38 @@ export class Executer {
         this.drive(Vec2(this.dashDir.x * COMET.dashSpeed, this.dashDir.y * COMET.dashSpeed), dt, COMET.dashForce);
         return;
       }
+      case 'loop': {
+        // One complete downward loop, away from the player. It cannot ram
+        // during this phase, even when its path brushes a limb.
+        const theta = Math.min(1, this.phaseAge / COMET.loopFrames) * Math.PI * 2;
+        const radius = toM(COMET.loopRadiusPx);
+        const omega = Math.PI * 2 / (COMET.loopFrames * dt);
+        const x = this.loopOrigin.x + this.loopDirection * radius * Math.sin(theta);
+        const y = this.loopOrigin.y + radius * (1 - Math.cos(theta));
+        this.drive(Vec2(
+          this.loopDirection * Math.cos(theta) * COMET.loopSpeed + (x - c.x) * 5,
+          Math.sin(theta) * Math.min(COMET.loopSpeed, radius * omega) + (y - c.y) * 5,
+        ), dt, COMET.loopForce);
+        this.previousFacingAngle = this.facingAngle;
+        this.facingAngle = this.loopFacing + this.loopDirection * theta;
+        if (this.phaseAge >= COMET.loopFrames) this.setPhase('recover');
+        return;
+      }
       default:
         this.drive(Vec2(0, 0), dt, COMET.brakeForce);
         if (this.phaseAge >= COMET.recoverFrames) this.setPhase('stalk');
     }
+  }
+
+  private startCometLoop(): void {
+    const c = this.body.getWorldCenter();
+    const radius = toM(COMET.loopRadiusPx);
+    const [minX, maxX] = this.halfBounds;
+    this.loopOrigin = Vec2(Math.max(minX + radius, Math.min(maxX - radius, c.x)),
+      Math.min(c.y, this.clampY(toM(FLOOR_TOP_PX) - radius * 2 - toM(EXECUTER.radiusPx + 4))));
+    this.loopDirection = this.dashDir.x >= 0 ? 1 : -1;
+    this.loopFacing = this.facingAngle;
+    this.setPhase('loop');
   }
 
   /**
@@ -688,7 +737,7 @@ export class Executer {
     // It glances off, up and on over them.
     this.body.setLinearVelocity(Vec2(d.x * speed * 0.35, -speed * 0.45));
     this.landed(part, power);
-    this.setPhase('recover');
+    this.startCometLoop();
   }
 
   // -------------------------------------------------------------------------
@@ -696,41 +745,87 @@ export class Executer {
   // -------------------------------------------------------------------------
 
   private updateSpring(dt: number): void {
-    switch (this.phase) {
-      case 'charge': {
-        const hit = this.touchedPart();
-        if (hit) {
-          this.slam(hit);
-          return;
-        }
-        const v = this.body.getLinearVelocity();
-        this.travel += Math.hypot(v.x, v.y) * dt;
-        // Full speed is the goal, but the force budget only allows `accel`,
-        // so speed builds the whole way in.
-        const c = this.body.getWorldCenter();
-        const aim = this.chestPoint();
-        const d = unit(aim.x - c.x, aim.y - c.y);
-        this.drive(Vec2(d.x * SPRING.topSpeed, d.y * SPRING.topSpeed), dt, this.tuning.mass * SPRING.accel);
-        return;
+    const c = this.body.getWorldCenter();
+    // Actual displacement charges the coil. Bound corrections and external
+    // teleports cannot manufacture a long flight in a single frame.
+    this.travel += Math.min(Vec2.distance(c, this.springPosition), SPRING.topSpeed * dt * 1.5);
+    this.springPosition = c.clone();
+    if (!this.solid) return;
+    const escaping = this.age < this.springEscapeUntil || this.knockbackFrames > 0;
+    if (this.phase === 'rebound' && !escaping) this.setPhase('charge');
+
+    const contacts = new Set<Body>();
+    let surface: { body: Body; normal: Vec2; point: Vec2 } | null = null;
+    let playerPart: Body | null = null;
+    for (let edge = this.body.getContactList(); edge; edge = edge.next) {
+      const contact = edge.contact;
+      const a = contact.getFixtureA(), b = contact.getFixtureB();
+      if (!contact.isTouching() || a.isSensor() || b.isSensor() || !edge.other) continue;
+      contacts.add(edge.other);
+      if (this.springContacts.has(edge.other) &&
+        this.age - (this.lastBounce?.age ?? this.age) < SPRING.contactRetryFrames) continue;
+      if (this.target.bodies.includes(edge.other)) {
+        playerPart ??= edge.other;
+        continue;
       }
-      case 'rebound':
-        if (this.phaseAge >= this.reboundFrames) this.setPhase('recover');
-        return;
-      default: {
-        // Brakes gradually, settling level with its player's chest, so the
-        // next run comes in from the side: a slam from above would only sag
-        // the doll on its rail.
-        // Spent, it gives way to a player who walks into it.
-        const dy = this.chestPoint().y - this.body.getWorldCenter().y;
-        const vy = Math.max(-SPRING.settleSpeed, Math.min(SPRING.settleSpeed, dy * 3));
-        if (!this.touchedPart()) this.drive(Vec2(0, vy), dt, this.tuning.mass * SPRING.brake);
-        const v = this.body.getLinearVelocity();
-        if (this.phaseAge >= SPRING.recoverFrames && Math.abs(v.x) < 0.5 && Math.abs(dy) < toM(24)) {
-          this.travel = 0;
-          this.setPhase('charge');
-        }
-      }
+      const manifold = contact.getWorldManifold(null);
+      if (!manifold || contact.getManifold().pointCount === 0) continue;
+      const sign = a.getBody() === this.body ? -1 : 1;
+      const normal = Vec2(manifold.normal.x * sign, manifold.normal.y * sign);
+      surface ??= { body: edge.other, normal, point: Vec2(manifold.points[0]) };
     }
+    this.springContacts = contacts;
+    if (playerPart) {
+      this.slam(playerPart, !escaping && this.phase !== 'drop');
+      return;
+    }
+    if (surface) {
+      this.bounceSpring(surface.body, surface.normal, surface.point, escaping);
+      return;
+    }
+
+    // Gravity bends every flight. Acceleration follows its existing momentum,
+    // never the player, so a missed hop cannot turn around in mid-air.
+    const v = this.body.getLinearVelocity();
+    const speed = v.length();
+    const run = clamp01(toPx(this.travel) / SPRING.fullTravelPx);
+    const boost = this.phase === 'drop' || escaping ? 0 : (SPRING.accel + SPRING.travelAccel * run) * dt;
+    const next = Math.min(SPRING.topSpeed, speed + boost);
+    if (speed > 0.01) this.body.setLinearVelocity(Vec2(v.x * next / speed, v.y * next / speed));
+  }
+
+  /** Aim a new hop inside the surface's outward hemisphere. */
+  private bounceSpring(other: Body, normal: Vec2, point: Vec2, escaping: boolean): void {
+    const c = this.body.getWorldCenter();
+    const aim = this.chestPoint();
+    const power = this.slamPower;
+    const speed = Math.min(SPRING.topSpeed, SPRING.bounceSpeed + SPRING.bounceBoost * power);
+    const flightTime = Math.max(0.45, Math.min(1.05, Math.abs(aim.x - c.x) / speed));
+    const dx = escaping ? this.springEscapeSide * speed : (aim.x - c.x) / flightTime;
+    const dy = escaping ? -speed * 0.7
+      : (aim.y - c.y) / flightTime - this.world.getGravity().y * flightTime * 0.5;
+    let direction = unit(dx, dy);
+    const dot = direction.x * normal.x + direction.y * normal.y;
+    if (dot < SPRING.normalShare) {
+      const tangent = unit(direction.x - dot * normal.x, direction.y - dot * normal.y);
+      const share = Math.sqrt(1 - SPRING.normalShare ** 2);
+      direction = unit(normal.x * SPRING.normalShare + tangent.x * share,
+        normal.y * SPRING.normalShare + tangent.y * share);
+    }
+    if (other.isDynamic() && ud(other)?.e_bodytype !== BODYTYPE.PLAYER) {
+      // The physical impact already transfers momentum. A bounded extra shove
+      // makes a charged hit readable even on a heavy prop or another hazard.
+      const push = other.getMass() * SPRING.objectPushSpeed * power ** 1.5;
+      other.applyLinearImpulse(Vec2(-normal.x * push, -normal.y * push), other.getWorldCenter(), true);
+    }
+    this.body.setLinearVelocity(Vec2(direction.x * speed, direction.y * speed));
+    this.recordSpringBounce(power, normal, point);
+    if (this.phase === 'drop') this.setPhase('charge');
+  }
+
+  private recordSpringBounce(power: number, normal: Vec2, point: Vec2Value): void {
+    this.lastBounce = { age: this.age, power, xPx: toPx(point.x), yPx: toPx(point.y), nx: normal.x, ny: normal.y };
+    this.travel = 0;
   }
 
   /** Impact strength, 0..1: mostly the speed it reached, partly how far it ran. */
@@ -741,7 +836,7 @@ export class Executer {
     return SPRING.speedShare * speed + (1 - SPRING.speedShare) * run;
   }
 
-  private slam(part: Body): void {
+  private slam(part: Body, canAttack: boolean): void {
     const v = this.lastVelocity;
     const speed = Math.hypot(v.x, v.y);
     const power = this.slamPower;
@@ -753,14 +848,22 @@ export class Executer {
     // Steeper than linear, so a bump from a standing start stays a bump.
     const k = SPRING.pushSpeed * power ** 1.5;
     const j = SPRING.pushJolt * power;
-    this.target.knock(
-      Vec2(push.x * k, push.y * k - SPRING.pushLift * k), Math.round(SPRING.stumbleFrames * power), part, Vec2(d.x * j, d.y * j),
-    );
-    // It bounces back off them, harder the harder it hit.
-    const back = SPRING.reboundMin + SPRING.reboundScale * speed;
-    this.body.setLinearVelocity(Vec2(-d.x * back, -d.y * back - 1));
-    this.reboundFrames = Math.round(SPRING.reboundFrames * (0.4 + 0.6 * power));
-    this.landed(part, power);
+    if (canAttack) {
+      this.target.knock(
+        Vec2(push.x * k, push.y * k - SPRING.pushLift * k), Math.round(SPRING.stumbleFrames * power), part, Vec2(d.x * j, d.y * j),
+      );
+      this.landed(part, power);
+    }
+    // Leave enough room to play. Sideways separation is guaranteed even on
+    // a nearly vertical hit; floor/wall bounces also respect this escape.
+    const away = c.x - this.target.tors.getWorldCenter().x;
+    this.springEscapeSide = Math.abs(away) > toM(4) ? Math.sign(away) : (d.x >= 0 ? -1 : 1);
+    const back = Math.min(SPRING.topSpeed, SPRING.reboundMin + SPRING.reboundScale * speed);
+    const vx = this.springEscapeSide * Math.max(SPRING.escapeSpeed, back);
+    const vy = -Math.min(Math.sqrt(SPRING.topSpeed ** 2 - vx ** 2), Math.max(3.5, Math.abs(d.y) * back));
+    this.body.setLinearVelocity(Vec2(vx, vy));
+    this.springEscapeUntil = this.age + SPRING.reboundFrames;
+    this.recordSpringBounce(power, unit(c.x - part.getWorldCenter().x, c.y - part.getWorldCenter().y), part.getWorldCenter());
     this.setPhase('rebound');
   }
 
@@ -1052,9 +1155,16 @@ export class Executer {
       return;
     }
     this.punchFrame = -1;
+    if (this.variant.id === 'spring') {
+      this.springEscapeUntil = this.age + SPRING.reboundFrames;
+      this.springEscapeSide = impulse.x >= 0 ? 1 : -1;
+      this.travel = 0;
+      this.setPhase('rebound');
+    }
     if (this.phase === 'latched') this.setPhase('hunt');
     else if (this.phase === 'stuck') this.peel();
-    else if (this.phase === 'dash' || this.phase === 'charge' || this.phase === 'rebound' || this.phase === 'fly') {
+    else if (this.variant.id !== 'spring' &&
+      (this.phase === 'dash' || this.phase === 'loop' || this.phase === 'charge' || this.phase === 'rebound' || this.phase === 'fly')) {
       this.setPhase('recover');
     }
     this.knockbackFrames = SWING.executerKnockFrames;

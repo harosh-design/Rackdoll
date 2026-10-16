@@ -869,9 +869,9 @@ describe('hazards (reworked §13)', () => {
     expect(new Set(gw.executerQueue.peek(4).map((v) => v.id)).size).toBe(4);
   });
 
-  it('the comet hunts fastest and the magnet travels slower than the other hunters', () => {
+  it('the comet dashes fastest and the magnet travels slower than the other hunters', () => {
     // The slime by its flight: stuck, it only moves as its player does.
-    const speeds = Object.fromEntries(IDS.map((id) => [id, meanSpeed(id, id === 'slime' ? 'fly' : undefined)]));
+    const speeds = Object.fromEntries(IDS.map((id) => [id, meanSpeed(id, id === 'slime' ? 'fly' : id === 'comet' ? 'dash' : undefined)]));
     for (const id of IDS) {
       if (id !== 'comet') expect(speeds.comet).toBeGreaterThan(speeds[id]);
       // The boxer now holds position at the head between jabs.
@@ -1002,44 +1002,6 @@ describe('hazards (reworked §13)', () => {
       const mean = shifts.reduce((a, b) => a + b, 0) / shifts.length;
       expect(mean * ballSide).toBeLessThan(-15);
     }
-  });
-
-  it('the spring slams harder after a longer run, rebounds, recovers and charges again', () => {
-    const slam = (runUpPx: number) => {
-      const gw = hazardWorld({ executerOrder: ['spring'] });
-      fireAtButton(gw, 1);
-      const e = gw.executers[0];
-      // It settles level with its player before its first run.
-      expect(e.phase).toBe('recover');
-      for (let f = 0; f < 30 * 6 && e.phase !== 'charge'; f++) gw.step();
-      expect(e.phase).toBe('charge');
-      const h = gw.p1.head.getWorldCenter();
-      const t = gw.p1.tors.getWorldCenter();
-      e.body.setTransform(Vec2(t.x + toM(runUpPx + 20), (h.y + t.y) / 2), 0);
-      e.body.setLinearVelocity(Vec2(0, 0));
-      e.travel = 0;
-      const x0 = px(gw.p1.ass.getWorldCenter().x);
-      for (let f = 0; f < 90 && e.hits === 0; f++) gw.step();
-      expect(e.hits).toBe(1);
-      expect(e.phase).toBe('rebound');
-      const rebound = e.body.getLinearVelocity().length();
-      run(gw, 20);
-      return { gw, e, power: e.lastImpact!.power, rebound, pushed: x0 - px(gw.p1.ass.getWorldCenter().x) };
-    };
-    const short = slam(50);
-    const long = slam(200);
-    expect(long.power).toBeGreaterThan(short.power + 0.25);
-    expect(long.rebound).toBeGreaterThan(short.rebound + 1.5);
-    expect(long.pushed).toBeGreaterThan(short.pushed * 2);
-    expect(long.pushed).toBeGreaterThan(60);
-    // Then it brakes to a stop, settles, and comes again.
-    const phases: string[] = [];
-    for (let f = 0; f < 30 * 5 && long.e.hits < 2; f++) {
-      long.gw.step();
-      if (phases.at(-1) !== long.e.phase) phases.push(long.e.phase);
-    }
-    expect(phases.slice(0, 2)).toEqual(['recover', 'charge']);
-    expect(long.e.hits).toBe(2);
   });
 
   /** Which limb a part is on, as the slime sees it. */

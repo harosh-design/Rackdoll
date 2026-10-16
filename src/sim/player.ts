@@ -22,6 +22,26 @@ interface Ligament {
   spring: DistanceJoint;
   limit: RopeJoint;
   referenceAngle: number;
+  /** Frames since neither end has been caught, or null while one still is. */
+  healing: number | null;
+}
+
+/**
+ * A freed part's elastic links stiffen to this spring, and each becomes a
+ * hinge again once its gap closes to `gapPx` (at full size), or after
+ * `maxFrames` even if a flailing doll keeps it open.
+ */
+const LIGAMENT_HEAL = { frequencyHz: 6, dampingRatio: 1, gapPx: 4, maxFrames: 20 } as const;
+
+/** The part next to `name` on its way to `root` through the whole skeleton. */
+function towardRoot(root: PartName, name: PartName): PartName | null {
+  const parent = new Map<PartName, PartName>();
+  const queue = [root];
+  for (let i = 0; i < queue.length; i++) for (const j of JOINTS) {
+    const next = j.a === queue[i] ? j.b : j.b === queue[i] ? j.a : null;
+    if (next && next !== root && !parent.has(next)) { parent.set(next, queue[i]); queue.push(next); }
+  }
+  return parent.get(name) ?? null;
 }
 
 /** Head centre to sole at full size, px: the Head part's dy 2 to the Foot's 90 + 11. */
@@ -78,6 +98,8 @@ export class Player {
   recoilFrames = 0;
   /** Head-hit dizziness weakens actions without disabling the controls. */
   stunFrames = 0;
+  /** Velocity change dealt by hazards and opponents since the last physics step, m/s. */
+  readonly blows = Vec2(0, 0);
   power: PowerId | null = null;
   /** Current collision scale. Eases toward targetScale in tickSize(). */
   sizeScale = 1;
@@ -239,9 +261,14 @@ export class Player {
   get ass(): Body { return this.activePart('Ass'); }
   get injured(): boolean { return this.detachedBodies.length > 0; }
   get impaled(): boolean { return this.impaledParts.size > 0; }
+  /** Elastic links remain while a freed part's hinges heal. */
+  get stretched(): boolean { return this.ligaments.length > 0; }
   get skeletonJoints(): (RevoluteJointT | DistanceJoint)[] {
     return [...this.revolutes, ...this.ligaments.map(link => link.spring)];
   }
+
+  /** Mass of the parts still attached. */
+  get mass(): number { return this.bodies.reduce((sum, body) => sum + body.getMass(), 0); }
 
   isAttached(name: PartName): boolean { return this.bodies.includes(this.part(name)); }
   activePart(name: PartName): Body { return this.isAttached(name) ? this.part(name) : this.head; }
@@ -265,12 +292,61 @@ export class Player {
       this.world.destroyJoint(joint);
       this.revolutes.splice(i, 1);
       this.ligaments.push({
-        def, referenceAngle,
+        def, referenceAngle, healing: null,
         spring: this.world.createJoint(new DistanceJoint({
           ...anchors, length: toM(0.5 * this.sizeScale), frequencyHz: 1.8, dampingRatio: 0.7,
         }))!,
         limit: this.world.createJoint(new RopeJoint({ ...anchors, maxLength: toM(48 * this.sizeScale) }))!,
       });
+    }
+  }
+
+  /**
+   * The part came off the spike. Its links heal back into hinges once their
+   * gaps close; links to a part that is still caught stay elastic.
+   */
+  freePart(name: PartName): void {
+    this.impaledParts.delete(name);
+    for (const link of this.ligaments) {
+      if (link.healing !== null || this.impaledParts.has(link.def.a) || this.impaledParts.has(link.def.b)) continue;
+      // Stiffen the free link so it draws its joint closed.
+      link.healing = 0;
+      link.spring.setFrequency(LIGAMENT_HEAL.frequencyHz);
+      link.spring.setDampingRatio(LIGAMENT_HEAL.dampingRatio);
+    }
+  }
+
+  /**
+   * Force carried by the elastic link that joins a caught part to the rest of
+   * the body, N. Read it only after a step: a link has no force before one.
+   */
+  tendonTension(name: PartName, invDt: number): number {
+    const toward = towardRoot(this.controlPart, name);
+    const link = this.ligaments.find(l => (l.def.a === name && l.def.b === toward) || (l.def.b === name && l.def.a === toward));
+    return link ? link.spring.getReactionForce(invDt).length() + link.limit.getReactionForce(invDt).length() : 0;
+  }
+
+  /**
+   * The tendons joining a caught part to the body tore: cut its branch away,
+   * and keep every other caught part on its elastic links.
+   */
+  tearAt(name: PartName): boolean {
+    const caught = [...this.impaledParts].filter(other => other !== name);
+    if (!this.sever(name)) return false;
+    for (const other of caught) if (this.isAttached(other)) this.stretchAt(other);
+    return true;
+  }
+
+  /** Run after the solver, once a frame: rehinge every free link whose gap has closed. */
+  healLigaments(): void {
+    for (let i = this.ligaments.length - 1; i >= 0; i--) {
+      const link = this.ligaments[i];
+      if (link.healing === null) continue;
+      const gap = Vec2.distance(link.spring.getAnchorA(), link.spring.getAnchorB());
+      if (gap > toM(LIGAMENT_HEAL.gapPx * this.sizeScale) && link.healing++ < LIGAMENT_HEAL.maxFrames) continue;
+      this.world.destroyJoint(link.spring); this.world.destroyJoint(link.limit);
+      this.revolutes.push(this.makeJoint(link.def, this.sizeScale, link.referenceAngle));
+      this.ligaments.splice(i, 1);
     }
   }
 
@@ -613,6 +689,7 @@ export class Player {
       const m = part.getMass();
       part.applyLinearImpulse(Vec2(jolt.x * m, jolt.y * m), part.getWorldCenter(), true);
     }
+    this.blows.add(dv);
     this.recoilFrames = Math.max(this.recoilFrames, frames);
     return true;
   }

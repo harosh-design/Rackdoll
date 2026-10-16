@@ -703,9 +703,18 @@ export class Renderer {
         this.drawCometArt(ctx, facing, Math.atan2(v.y, v.x), v.length(), e.phase === 'dash', t);
         break;
       }
-      case 'spring':
-        this.drawSpringArt(ctx, toTarget, springStretch(e, t));
+      case 'spring': {
+        const v = e.body.getLinearVelocity();
+        const bounce = e.lastBounce;
+        const since = bounce ? t - bounce.age : 100;
+        const squash = Math.exp(-since * 0.17);
+        const heading = Math.atan2(v.y, v.x);
+        const normalAngle = bounce ? Math.atan2(bounce.ny, bounce.nx) : heading;
+        const delta = Math.atan2(Math.sin(normalAngle - heading), Math.cos(normalAngle - heading));
+        this.drawSpringArt(ctx, heading + delta * squash, springStretch(e, t), e.slamPower, t,
+          Math.sin(t * 0.7) * (0.8 + 2 * e.slamPower) + Math.sin(since * 0.65) * squash * 6);
         break;
+      }
       case 'slime': {
         // Its eyes are on the part it is reeling in, or else its player.
         const look = (e.reelPart ?? e.target.head).getWorldCenter();
@@ -724,6 +733,21 @@ export class Renderer {
       }
     }
     ctx.restore();
+
+    if (e.variant.id === 'spring' && e.lastBounce) {
+      const hit = e.lastBounce, since = t - hit.age;
+      if (since >= 0 && since < 9) {
+        ctx.save(); ctx.translate(hit.xPx, hit.yPx); ctx.rotate(Math.atan2(hit.ny, hit.nx));
+        ctx.globalAlpha = (1 - since / 9) * 0.8; ctx.lineCap = 'round';
+        for (let i = -1; i <= 1; i++) {
+          ctx.strokeStyle = i === 0 && hit.power > 0.65 ? COMIC.ochre : COMIC.paper;
+          ctx.lineWidth = 1 + hit.power;
+          ctx.beginPath(); ctx.moveTo(3 + since, i * 5);
+          ctx.lineTo(9 + since * (1.5 + hit.power), i * (8 + since)); ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
 
     // A ring where each blow lands, sized by how hard it was.
     const hit = e.lastImpact;
@@ -764,18 +788,35 @@ export class Renderer {
     drawHorrorProp(ctx, 'fire-skull', 0, 0, 61, 48); ctx.restore();
   }
 
-  private drawSpringArt(ctx: CanvasRenderingContext2D, facing: number, stretch: number): void {
-    const half = 15 * stretch; ctx.save(); ctx.rotate(facing + Math.PI / 2);
-    for (const [width, color] of [[4, COMIC.ink], [2, COMIC.plum]] as const) {
-      ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineJoin = 'round'; ctx.beginPath();
-      for (let i = 0; i <= 50; i++) {
-        const p = i / 50, x = Math.sin(p * Math.PI * 10) * 10, y = -half + 5 + p * (half * 2 - 10);
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      }
-      ctx.stroke();
+  private drawSpringArt(ctx: CanvasRenderingContext2D, facing: number, stretch: number, power = 0, t = 0, bend = 0): void {
+    const half = 15 * stretch, width = 10 / Math.sqrt(stretch);
+    ctx.save(); ctx.rotate(facing + Math.PI / 2); ctx.lineCap = 'round';
+    // Printed speed scratches grow with the same energy that powers the hit.
+    if (power > 0.25) for (let i = -1; i <= 1; i++) {
+      const offset = (t * 2 + i * 5 + 20) % 13;
+      ctx.globalAlpha = power * 0.75; ctx.strokeStyle = i === 0 ? COMIC.ochre : COMIC.paper;
+      ctx.lineWidth = 0.8 + power;
+      ctx.beginPath(); ctx.moveTo(i * 12, half + 8 + offset);
+      ctx.lineTo(i * 15 + bend * 0.4, half + 12 + offset + power * 29); ctx.stroke();
     }
-    drawHorrorProp(ctx, 'jaw-base', 0, half + 4, 39, 19);
-    drawHorrorProp(ctx, 'jaw-cap', 0, -half, 39, 19); ctx.restore();
+    ctx.globalAlpha = 1;
+    // Separate overlapping loops give the coil depth. A bowed centre line
+    // and independent jaw hinges keep the bone cutouts supple in flight.
+    for (let turn = 0; turn < 5; turn++) {
+      const p = (turn + 0.5) / 5, y = -half + 5 + p * (half * 2 - 10);
+      const bow = Math.sin(p * Math.PI) * bend;
+      ctx.save(); ctx.translate(bow, y); ctx.rotate(bend * (p - 0.5) * 0.035);
+      for (const [lineWidth, color] of [[4.2, COMIC.ink], [2.5, power > 0.72 ? COMIC.ochre : COMIC.plum], [0.7, COMIC.muted]] as const) {
+        ctx.strokeStyle = color; ctx.lineWidth = lineWidth;
+        ctx.beginPath(); ctx.ellipse(0, 0, width, Math.max(1.4, stretch * 3), -0.18, 0, Math.PI * 2); ctx.stroke();
+      }
+      ctx.restore();
+    }
+    ctx.save(); ctx.translate(0, half + 3); ctx.rotate(-bend * 0.035);
+    drawHorrorProp(ctx, 'jaw-base', 0, 0, 37 / Math.sqrt(stretch), 19); ctx.restore();
+    ctx.save(); ctx.translate(0, -half); ctx.rotate(bend * 0.045);
+    drawHorrorProp(ctx, 'jaw-cap', 0, 0, 37 / Math.sqrt(stretch), 19); ctx.restore();
+    ctx.restore();
   }
 
   private drawSlimeArt(ctx: CanvasRenderingContext2D, heading: number, speed: number, splat: number | null, gaze: number, t: number): void {
@@ -1070,16 +1111,15 @@ const IMPACT_RGB: Record<ExecuterId, string> = {
 const SLIME_RGB = '159,198,173';
 
 /**
- * The spring's drawn length, 1 at rest: drawn out with speed as it charges,
- * crushed on impact (further the harder it hit), then a damped wobble back
- * to full length while it recovers.
+ * Every bounce compresses the coil, then releases a damped elastic wobble.
+ * In flight it stretches with momentum and the distance stored in the coil.
  */
 function springStretch(e: Executer, t: number): number {
-  if (e.phase === 'charge') return 1 + 0.3 * clamp01(e.body.getLinearVelocity().length() / SPRING.topSpeed);
-  const hit = e.lastImpact;
-  if (!hit) return 1;
-  const since = t - hit.age;
-  return 1 - (0.25 + 0.35 * hit.power) * Math.cos(since * 0.45) * Math.exp(-since * 0.07);
+  const flight = 1 + 0.2 * clamp01(e.body.getLinearVelocity().length() / SPRING.topSpeed) + 0.16 * e.slamPower;
+  const hit = e.lastBounce;
+  if (!hit) return flight;
+  const since = Math.max(0, t - hit.age);
+  return Math.max(0.48, flight - (0.48 + 0.3 * hit.power) * Math.cos(since * 0.6) * Math.exp(-since * 0.16));
 }
 const easeOutCubic = (p: number) => 1 - Math.pow(1 - p, 3);
 /** Overshoots past 1 before settling — the spring when a button pops out. */

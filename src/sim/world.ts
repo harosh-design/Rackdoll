@@ -315,7 +315,8 @@ export class GameWorld {
     // contact chains stable. The classic court retains the original solver.
     const it = Math.max(this.executerNearDoll() ? this.contactIterations : ITERATIONS,
       this.centerObstacle.id === 'rubber' ? 30 : ITERATIONS);
-    this.centerObstacle.beforeStep([this.p1, this.p2], this.game.phase === 'play');
+    this.centerObstacle.beforeStep([this.p1, this.p2], this.game.phase === 'play',
+      (p) => this.isCpu(p.id) ? null : this.control.heldDirection(p.id), dt);
     this.world.step(dt, it, it);
     if (this.game.phase === 'play') {
       for (const player of this.centerObstacle.afterStep([this.p1, this.p2])) {
@@ -576,6 +577,7 @@ export class GameWorld {
     const impulse = Vec2(sign * SWING.opponentImpulseX * strength, SWING.opponentImpulseY * strength);
     defender.head.applyLinearImpulse(impulse, defender.head.getWorldCenter(), true);
     defender.ass.applyLinearImpulse(impulse, defender.ass.getWorldCenter(), true);
+    defender.blows.add(Vec2.mul(impulse, 2 / defender.mass));
     this.opponentHitEffects[defender.id] = { frame: this.frame, power };
     if (headHit) defender.stun();
   }

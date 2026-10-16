@@ -1,9 +1,12 @@
-import { Vec2 } from 'planck';
+import { Vec2, type Body } from 'planck';
 import { describe, expect, it } from 'vitest';
-import { AIR_HEATER, CENTER_OBSTACLES, ORIGINAL_PLAYER_HEIGHT_PX, normalizeCenterObstacle } from '../src/sim/centerObstacle';
-import { NET_TOP_PX, NET_X_PX, PARTS, SPAWN_P1_PX, SPAWN_P2_PX, toM, toPx } from '../src/sim/constants';
+import { AIR_HEATER, CENTER_OBSTACLES, ORIGINAL_PLAYER_HEIGHT_PX, SHARP_SPIKE, normalizeCenterObstacle } from '../src/sim/centerObstacle';
+import { NET_TOP_PX, NET_X_PX, PARTS, SPAWN_P1_PX, SPAWN_P2_PX, TIME_STEP, toM, toPx, type PartName } from '../src/sim/constants';
+import { KEYS } from '../src/sim/control';
+import type { Player } from '../src/sim/player';
 import { ud } from '../src/sim/types';
-import { hazardWorld, run, world } from './helpers';
+import type { GameWorld } from '../src/sim/world';
+import { fireAtButton, hazardWorld, run, world } from './helpers';
 
 describe('centre obstacle selection and round lifecycle', () => {
   it('defaults to the classic spike and accepts all four variants', () => {
@@ -47,7 +50,7 @@ describe('sharp spike', () => {
     const gw = hazardWorld({ centerObstacle: 'sharp' });
     const player = id === 1 ? gw.p1 : gw.p2;
     const hand = player.part('FingerLeft');
-    hand.setTransform(Vec2(toM(NET_X_PX), toM(NET_TOP_PX - 6)), 0);
+    hand.setTransform(Vec2(toM(NET_X_PX), toM(NET_TOP_PX - 10)), 0);
     gw.step();
     expect(gw.centerObstacle.pins.has(hand)).toBe(true);
     expect(player.impaled).toBe(true);
@@ -58,7 +61,7 @@ describe('sharp spike', () => {
     run(gw, 25);
     expect(gw.centerObstacle.pins.has(hand)).toBe(true);
     const pin = gw.centerObstacle.pins.get(hand)!;
-    expect(toPx(Vec2.distance(pin.getAnchorA(), pin.getAnchorB()))).toBeLessThan(5);
+    expect(toPx(Vec2.distance(pin.wound.getAnchorA(), pin.wound.getAnchorB()))).toBeLessThan(5);
     gw.game.win1 = id === 1;
     gw.game.newRound();
     expect(gw.centerObstacle.pins.size).toBe(0);
@@ -74,9 +77,9 @@ describe('sharp spike', () => {
   it('catches a fast crossing and clears all pins on a match reset', () => {
     const gw = world({ centerObstacle: 'sharp' });
     const hand = gw.p1.part('FingerLeft');
-    hand.setTransform(Vec2(toM(NET_X_PX - 35), toM(NET_TOP_PX - 6)), 0);
+    hand.setTransform(Vec2(toM(NET_X_PX - 35), toM(NET_TOP_PX - 10)), 0);
     gw.centerObstacle.beforeStep([gw.p1]);
-    hand.setTransform(Vec2(toM(NET_X_PX + 35), toM(NET_TOP_PX - 6)), 0);
+    hand.setTransform(Vec2(toM(NET_X_PX + 35), toM(NET_TOP_PX - 10)), 0);
     gw.centerObstacle.afterStep([gw.p1]);
     expect(gw.centerObstacle.pins.has(hand)).toBe(true);
     gw.game.resetMatch();
@@ -85,11 +88,22 @@ describe('sharp spike', () => {
     expect(gw.centerObstacle.bloodstains).toHaveLength(0);
   });
 
+  it.each([1, 2] as const)('leaves player %s untouched when the point only grazes a part', id => {
+    const gw = hazardWorld({ centerObstacle: 'sharp' });
+    const player = id === 1 ? gw.p1 : gw.p2;
+    player.part('FingerLeft').setTransform(Vec2(toM(NET_X_PX), toM(NET_TOP_PX - 6)), 0);
+    gw.step();
+    expect(gw.centerObstacle.pins.size).toBe(0);
+    expect(player.impaled).toBe(false);
+    expect(player.stretched).toBe(false);
+    expect(gw.centerObstacle.bloodstains).toHaveLength(0);
+  });
+
   it('ignores shields and harmless contacts below the point', () => {
     const gw = world({ centerObstacle: 'sharp' });
     const hand = gw.p1.part('FingerLeft');
     gw.p1.power = 'shield';
-    hand.setTransform(Vec2(toM(NET_X_PX), toM(NET_TOP_PX - 6)), 0);
+    hand.setTransform(Vec2(toM(NET_X_PX), toM(NET_TOP_PX - 10)), 0);
     gw.centerObstacle.beforeStep([gw.p1]); gw.centerObstacle.afterStep([gw.p1]);
     gw.p1.power = null;
     hand.setTransform(Vec2(toM(NET_X_PX), toM(NET_TOP_PX + 25)), 0);
@@ -101,13 +115,160 @@ describe('sharp spike', () => {
 
   it('ages blood without adding another stain for the same pinned part', () => {
     const gw = world({ centerObstacle: 'sharp' });
-    gw.p1.part('FingerLeft').setTransform(Vec2(toM(NET_X_PX), toM(NET_TOP_PX - 6)), 0);
+    gw.p1.part('FingerLeft').setTransform(Vec2(toM(NET_X_PX), toM(NET_TOP_PX - 10)), 0);
     for (let frame = 0; frame < 30; frame++) {
       gw.centerObstacle.beforeStep([gw.p1]); gw.centerObstacle.afterStep([gw.p1]);
     }
     expect(gw.centerObstacle.pins.size).toBe(1);
     expect(gw.centerObstacle.bloodstains).toHaveLength(1);
     expect(gw.centerObstacle.bloodstains[0].age).toBe(29);
+  });
+});
+
+describe('sharp spike struggle', () => {
+  /** Lift the whole doll so one part (by default its net-side finger) sits 2 px down the point, and catch it there. */
+  function catchPart(gw: GameWorld, player: Player, name: PartName = player.id === 1 ? 'FingerRight' : 'FingerLeft'): Body {
+    const part = player.part(name);
+    const delta = Vec2.sub(Vec2(toM(NET_X_PX), toM(NET_TOP_PX - 10)), part.getPosition());
+    for (const body of [...player.bodies, player.prismBody]) {
+      body.setTransform(Vec2.add(body.getPosition(), delta), body.getAngle());
+      body.setLinearVelocity(Vec2(0, 0)); body.setAngularVelocity(0);
+    }
+    gw.centerObstacle.beforeStep([player]); gw.centerObstacle.afterStep([player]);
+    expect(gw.centerObstacle.depthPx(part)).toBeCloseTo(2, 5);
+    return part;
+  }
+  const pxPerFrame = toPx(SHARP_SPIKE.struggleSpeed * TIME_STEP);
+
+  it.each([1, 2] as const)('lets player %s drive a caught part deeper with down and pull it off with up', id => {
+    const gw = hazardWorld({ centerObstacle: 'sharp' });
+    const player = id === 1 ? gw.p1 : gw.p2;
+    const part = catchPart(gw, player);
+    const { jump, down } = KEYS[id];
+
+    gw.control.press(down); run(gw, 20); gw.control.release(down);
+    const deep = gw.centerObstacle.depthPx(part)!;
+    expect(deep).toBeCloseTo(2 + 20 * pxPerFrame, 1);
+    // Each 10 px driven deeper bleeds again. Neighbours dragged onto the point are caught and bleed too.
+    const deepestStain = Math.max(...gw.centerObstacle.bloodstains.map(stain => stain.height));
+    expect(deepestStain).toBeGreaterThan(SHARP_SPIKE.topPx + deep - SHARP_SPIKE.bleedEveryPx);
+    run(gw, 30);
+    expect(gw.centerObstacle.depthPx(part)).toBeCloseTo(deep, 5);
+
+    gw.control.press(jump);
+    let frames = 0;
+    while (gw.centerObstacle.pins.has(part) && frames < 90) { run(gw, 1); frames++; }
+    gw.control.release(jump);
+    // A deeper wound takes longer to pull out.
+    expect(frames).toBe(Math.ceil(deep / pxPerFrame));
+    expect(player.impaled).toBe(false);
+    expect(player.injured).toBe(false);
+
+    // The freed part is not caught again on its way off the point, and its hinges heal.
+    run(gw, 30);
+    expect(gw.centerObstacle.pins.size).toBe(0);
+    expect(player.stretched).toBe(false);
+    expect(player.revolutes).toHaveLength(12);
+    expect(gw.game.phase).toBe('play');
+  });
+
+  it('stops a part at the deepest point and holds it there', () => {
+    const gw = hazardWorld({ centerObstacle: 'sharp' });
+    const part = catchPart(gw, gw.p1, 'FootRight');
+    gw.control.press(KEYS[1].down); run(gw, 80); gw.control.release(KEYS[1].down);
+    expect(gw.centerObstacle.depthPx(part)).toBeCloseTo(SHARP_SPIKE.maxDepthPx, 5);
+    run(gw, 30);
+    expect(gw.centerObstacle.depthPx(part)).toBeCloseTo(SHARP_SPIKE.maxDepthPx, 5);
+    expect(gw.p1.impaled).toBe(true);
+  });
+
+  it('ignores sideways keys, and the CPU stays caught', () => {
+    const gw = hazardWorld({ centerObstacle: 'sharp', singlePlayer: true });
+    const part = catchPart(gw, gw.p1);
+    const cpuPart = catchPart(gw, gw.p2);
+    for (const key of [KEYS[1].left, KEYS[1].right, KEYS[2].jump]) {
+      gw.control.press(key); run(gw, 25); gw.control.release(key);
+    }
+    expect(gw.centerObstacle.depthPx(part)).toBeCloseTo(2, 5);
+    expect(gw.centerObstacle.depthPx(cpuPart)).toBeCloseTo(2, 5);
+  });
+
+  it('drives a caught part deeper when knocked down or sideways, but not when lifted', () => {
+    const depthAfter = (dv: Vec2) => {
+      const gw = hazardWorld({ centerObstacle: 'sharp' });
+      const part = catchPart(gw, gw.p1);
+      gw.p1.knock(dv, 12);
+      run(gw, 40);
+      return gw.centerObstacle.depthPx(part)!;
+    };
+    expect(depthAfter(Vec2(0, -4))).toBeCloseTo(2, 5);
+    const sideways = depthAfter(Vec2(-6, 0));
+    expect(sideways).toBeGreaterThan(15);
+    expect(depthAfter(Vec2(6, 0))).toBeCloseTo(sideways, 5);
+    expect(depthAfter(Vec2(0, 6))).toBeGreaterThan(sideways);
+  });
+
+  it('drives a caught part deeper when the opponent’s flip kick lands', () => {
+    const gw = hazardWorld({ centerObstacle: 'sharp' });
+    const part = catchPart(gw, gw.p1);
+    (gw as unknown as { applyOpponentHit(attacker: 1 | 2, power: number, strength: number, head: boolean): void })
+      .applyOpponentHit(2, 1, 1, false);
+    run(gw, 40);
+    expect(gw.centerObstacle.depthPx(part)).toBeGreaterThan(10);
+  });
+
+  it.each([1, 2] as const)('tears player %s’s caught hand off when it struggles away hard, leaving the hand on the spike', id => {
+    const gw = hazardWorld({ centerObstacle: 'sharp' });
+    const player = id === 1 ? gw.p1 : gw.p2;
+    const side = id === 1 ? 'Right' : 'Left';
+    const hand = catchPart(gw, player, `Hand${side}`);
+    const away = id === 1 ? KEYS[1].left : KEYS[2].right;
+    gw.control.press(away);
+    let frames = 0;
+    while (!player.injured && frames < 120) { run(gw, 1); frames++; }
+    gw.control.release(away);
+    // It takes a sustained struggle, not one tug.
+    expect(frames).toBeGreaterThan(20);
+    expect(frames).toBeLessThan(90);
+    expect(player.isAttached(`Hand${side}`)).toBe(false);
+    expect(player.isAttached(`Finger${side}`)).toBe(false);
+    expect(player.isAttached(`Arm${side}`)).toBe(true);
+    expect(player.impaled).toBe(false);
+    expect(gw.game.phase).toBe('play');
+    // The torn hand stays on the spike; the player's keys no longer move it.
+    const depth = gw.centerObstacle.depthPx(hand)!;
+    gw.control.press(KEYS[id].down); run(gw, 20); gw.control.release(KEYS[id].down);
+    expect(gw.centerObstacle.depthPx(hand)).toBeCloseTo(depth, 5);
+    gw.game.win1 = id === 1;
+    gw.game.newRound();
+    expect(gw.centerObstacle.pins.size).toBe(0);
+    expect(player.injured).toBe(false);
+    expect(player.revolutes).toHaveLength(12);
+  });
+
+  it('never tears off the head or torso, and needs struggling to tear a limb', () => {
+    for (const name of ['Head', 'Tors'] as const) {
+      const gw = hazardWorld({ centerObstacle: 'sharp' });
+      catchPart(gw, gw.p1, name);
+      gw.control.press(KEYS[1].left); run(gw, 120); gw.control.release(KEYS[1].left);
+      expect(gw.p1.injured).toBe(false);
+      expect(gw.p1.impaled).toBe(true);
+    }
+    // Hanging still, or knocked about by a hazard, without struggling.
+    const gw = hazardWorld({ centerObstacle: 'sharp' });
+    catchPart(gw, gw.p1, 'HandRight');
+    for (let i = 0; i < 4; i++) { gw.p1.knock(Vec2(-6, 0), 12); run(gw, 30); }
+    expect(gw.p1.injured).toBe(false);
+    expect(gw.p1.impaled).toBe(true);
+  });
+
+  it('is driven deeper by a comet hitting the caught doll', () => {
+    const gw = hazardWorld({ centerObstacle: 'sharp', executerOrder: ['comet'] });
+    const part = catchPart(gw, gw.p1);
+    run(gw, 20);
+    fireAtButton(gw, 1);
+    run(gw, 120);
+    expect(gw.centerObstacle.depthPx(part)).toBeGreaterThan(10);
   });
 });
 

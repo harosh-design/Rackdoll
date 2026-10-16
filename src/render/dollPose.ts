@@ -36,7 +36,7 @@ function hang(at: { x: number; y: number }, local: Vec2Value, angle: number): Po
 export function closeJoints(p: Player, source: PoseSource, alpha: number, out: Map<Body, Pose>): void {
   // Keep pinned parts on the spear and expose the solver's real joint gaps.
   // Closing this skeleton would hide the stretch and pull the art off its pin.
-  if (p.impaled) {
+  if (p.stretched) {
     for (const body of p.bodies) out.set(body, source.pose(body, alpha));
     return;
   }
