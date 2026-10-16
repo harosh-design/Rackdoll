@@ -1,6 +1,6 @@
 import { Vec2, type Body } from 'planck';
 import { describe, expect, it } from 'vitest';
-import { BODYTYPE, NET_TOP_PX, NET_X_PX, PARTS, SPAWN_P1_PX, toM } from '../src/sim/constants';
+import { BODYTYPE, NET_SPIKE, NET_TOP_PX, NET_X_PX, PARTS, SPAWN_P1_PX, toM } from '../src/sim/constants';
 import { NetSpike } from '../src/sim/netSpike';
 import { ud } from '../src/sim/types';
 import { closedPoses } from '../src/render/dollPose';
@@ -8,12 +8,23 @@ import { Interpolator } from '../src/render/interp';
 import { run, world } from './helpers';
 
 const bladePosition = Vec2(toM(NET_X_PX), toM(NET_TOP_PX - 6));
+const tipY = NET_TOP_PX - NET_SPIKE.heightPx;
+const impaledHandPosition = Vec2(toM(NET_X_PX), toM(tipY + 2));
 
 describe('net blade collision', () => {
-  it.each([1, 2] as const)('cuts player %s at the tip during the real game step without ending the rally', id => {
+  it.each([1, 2] as const)('leaves player %s intact after a shallow touch during the real game step', id => {
     const gw = world();
     const player = id === 1 ? gw.p1 : gw.p2;
     player.part('FingerLeft').setTransform(bladePosition, 0);
+    gw.step();
+    expect(player.isAttached('FingerLeft')).toBe(true);
+    expect(player.injured).toBe(false);
+  });
+
+  it.each([1, 2] as const)('cuts player %s only when deeply impaled without ending the rally', id => {
+    const gw = world();
+    const player = id === 1 ? gw.p1 : gw.p2;
+    player.part('FingerLeft').setTransform(impaledHandPosition, 0);
     gw.step();
     expect(player.isAttached('FingerLeft')).toBe(false);
     expect(player.injured).toBe(true);
@@ -21,14 +32,65 @@ describe('net blade collision', () => {
     expect(gw.game.score).toEqual({ 1: 0, 2: 0 });
   });
 
-  it('detects a fast crossing even when neither endpoint touches the blade', () => {
+  it('ignores a fast shallow crossing even when the path overlaps the blade', () => {
     const gw = world();
     const blade = new NetSpike();
     const finger = gw.p1.part('FingerLeft');
     finger.setTransform(Vec2(toM(NET_X_PX - 35), bladePosition.y), 0);
     blade.capture([gw.p1]);
     finger.setTransform(Vec2(toM(NET_X_PX + 35), bladePosition.y), 0);
+    expect(blade.hits(gw.p1)).not.toContain('FingerLeft');
+  });
+
+  it('detects deep impalement during a fast crossing even when both endpoints miss', () => {
+    const gw = world();
+    const blade = new NetSpike();
+    const finger = gw.p1.part('FingerLeft');
+    finger.setTransform(Vec2(toM(NET_X_PX - 35), impaledHandPosition.y), 0);
+    blade.capture([gw.p1]);
+    finger.setTransform(Vec2(toM(NET_X_PX + 35), impaledHandPosition.y), 0);
     expect(blade.hits(gw.p1)).toContain('FingerLeft');
+  });
+
+  it.each([2 / 3, 1, 1.5])('requires deep insertion for rotated limbs at scale %s', scale => {
+    const gw = world();
+    const blade = new NetSpike();
+    gw.p1.resizeTo(scale, true);
+    const arm = gw.p1.part('ArmLeft');
+    for (const angle of [0, Math.PI / 4, Math.PI / 2]) {
+      const thickness = 2 * scale / Math.max(Math.abs(Math.sin(angle)) / 12, Math.abs(Math.cos(angle)) / 4);
+      const depth = Math.min(NET_SPIKE.heightPx, 8 * scale) * NET_SPIKE.cutDepthRatio;
+      arm.setTransform(Vec2(toM(NET_X_PX), toM(tipY - thickness / 2 + 0.5 * scale)), angle);
+      blade.capture([gw.p1]);
+      expect(blade.hits(gw.p1)).not.toContain('ArmLeft');
+      arm.setTransform(Vec2(toM(NET_X_PX), toM(tipY + depth / 2)), angle);
+      blade.capture([gw.p1]);
+      expect(blade.hits(gw.p1)).toContain('ArmLeft');
+    }
+  });
+
+  it('ignores side scrapes and shallow contact with the circular head', () => {
+    const gw = world();
+    const blade = new NetSpike();
+    const finger = gw.p1.part('FingerLeft');
+    finger.setTransform(Vec2(toM(NET_X_PX + 3.8), impaledHandPosition.y), 0);
+    const head = gw.p1.part('Head');
+    head.setTransform(Vec2(toM(NET_X_PX), toM(tipY - 9)), 0);
+    blade.capture([gw.p1]);
+    expect(blade.hits(gw.p1)).toEqual([]);
+    head.setTransform(Vec2(toM(NET_X_PX), toM(tipY)), 0);
+    blade.capture([gw.p1]);
+    expect(blade.hits(gw.p1)).toContain('Head');
+  });
+
+  it('does not turn repeated shallow touches into a cut', () => {
+    const gw = world();
+    gw.p1.part('FingerLeft').setTransform(bladePosition, 0);
+    for (let frame = 0; frame < 20; frame++) {
+      gw.centerObstacle.beforeStep([gw.p1]);
+      expect(gw.centerObstacle.afterStep([gw.p1]).length).toBe(0);
+    }
+    expect(gw.p1.injured).toBe(false);
   });
 
   it('leaves parts touching the side of the pole below the blade attached', () => {
@@ -42,12 +104,13 @@ describe('net blade collision', () => {
   it('respects shield protection and ignores detached parts', () => {
     const gw = world();
     const blade = new NetSpike();
-    gw.p1.part('FingerLeft').setTransform(bladePosition, 0);
+    gw.p1.part('FingerLeft').setTransform(impaledHandPosition, 0);
     gw.p1.power = 'shield';
     blade.capture([gw.p1]);
     expect(blade.hits(gw.p1)).toEqual([]);
     expect(gw.p1.sever('FingerLeft')).toBe(false);
     gw.p1.power = null;
+    expect(blade.hits(gw.p1)).toContain('FingerLeft');
     expect(gw.p1.sever('FingerLeft')).toBe(true);
     expect(blade.hits(gw.p1)).toEqual([]);
   });

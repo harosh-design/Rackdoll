@@ -74,7 +74,13 @@ export const NET_X_PX = 320;
 export const NET_TOP_PX = 206;
 export const NET_BOTTOM_PX = 356;
 /** The visible blade above the net pole, shared by collision and rendering. */
-export const NET_SPIKE = { halfWidthPx: 5, heightPx: 12, sweepStepPx: 2 } as const;
+export const NET_SPIKE = {
+  halfWidthPx: 5, heightPx: 12, sweepStepPx: 2,
+  /** Insert at least 65% of the blade length or the part's thickness, whichever is shorter. */
+  cutDepthRatio: 0.65,
+  /** Keep the tip away from the part's edges to prevent cuts from side scrapes. */
+  cutInsetRatio: 0.25,
+} as const;
 export const LEFT_WALL_INNER_PX = -215;
 export const RIGHT_WALL_INNER_PX = 840;
 

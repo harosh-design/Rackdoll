@@ -10,7 +10,8 @@ All project code and documentation must be written in English. See
 The game now uses a single [pencil horror-comic art direction](docs/HORROR-COMIC-ART.md):
 a masked player in an ochre coat, a skeleton in plum shorts, and a sparse
 moonlit court with small distant crosses. The moon moves smoothly across the
-sky on a 90-second elliptical orbit. It and the black silhouettes use subtle
+sky along the upper half of an ellipse, taking five minutes to cross and
+easing into each return pass. It and the black silhouettes use subtle
 line-boil animation; coarse cached procedural paper grain overlays the
 artwork at a fixed 16% intensity. The previous People, Shaders, and location selectors
 have been removed. Old saved selections no longer affect rendering.
@@ -21,6 +22,10 @@ and results. Those visual changes preserve the existing physics and rules.
 Each match randomly selects a stitched leather ball, a cratered moon or a mint
 eyeball, avoiding consecutive repeats. The skin stays fixed throughout that
 match's rounds, serves and pauses; a restart or rematch selects another skin.
+The two wall buttons use five side-view gravestone designs without crosses or
+pedestals. Each side gets a different random design per match, with no immediate
+repeat on that side. The carvings face inward and retain press, flash and active
+lifetime feedback.
 The start menu sits over a blurred view of the court. Both players' current
 controls stay visible beside match setup, with character portraits and small
 comic stickers. The guide updates immediately when keys are remapped.
@@ -111,8 +116,12 @@ this browser, previews on the court and applies to all modes and rematches:
 Each round releases impaled parts, straightens the rubber net and restores
 both players' full bodies. Wall-button hazards remain an independent setting.
 
-The classic blade at the top of the net cuts off any body part that crosses it,
-including the limbs connected beyond that part. Detached pieces fall and collide
+The classic blade at the top of the net cuts off a body part only when deeply
+impaled, including the limbs connected beyond that part. Light touches and side
+scrapes are safe. The tip must sit inside the part, away from its edges, with at
+least 65% of the shorter of the blade length and the part's thickness embedded.
+The check accounts for rotation and size powers and detects deep impalement
+even during a fast crossing. Detached pieces fall and collide
 with the court independently. You can keep moving, jumping and serving with the
 remaining body; serving uses another attached hand or the surviving body if both
 arms are gone. Lost parts cannot strike or count as ball touches. Injuries heal

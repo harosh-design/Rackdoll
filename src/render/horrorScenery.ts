@@ -5,12 +5,14 @@ const SEQUENCE = [0, 1, 0, 2, 1, 2] as const;
 const STAGE_WIDTH = 640;
 const MOON_RADIUS = 29;
 const MOON_PADDING = MOON_RADIUS + 2;
-const MOON_ORBIT_SECONDS = 90;
+const MOON_TRAVERSE_SECONDS = 300;
 
-/** A wide, shallow ellipse keeps the moon above the court throughout its orbit. */
+/** Follow the upper half of an ellipse, easing to a stop before each return pass. */
 function moonPosition(floor: number, seconds: number): Point {
-  const phase = -Math.PI / 4 + (seconds % MOON_ORBIT_SECONDS) / MOON_ORBIT_SECONDS * Math.PI * 2;
-  return { x: STAGE_WIDTH / 2 + 225 * Math.cos(phase), y: floor * (0.28 + 0.125 * Math.sin(phase)) };
+  const cycleSeconds = MOON_TRAVERSE_SECONDS * 2;
+  const phase = (seconds % cycleSeconds) / cycleSeconds * Math.PI * 2;
+  const angle = (1 - Math.cos(phase)) * Math.PI / 2;
+  return { x: STAGE_WIDTH / 2 + 225 * Math.cos(angle), y: floor * (0.28 - 0.125 * Math.sin(angle)) };
 }
 
 interface Point { x: number; y: number }

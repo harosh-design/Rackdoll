@@ -20,6 +20,8 @@ import { drawHorrorBackground, drawHorrorPlayers, loadHorrorArt } from './horror
 import { PencilGrain } from './pencilGrain';
 import { AIR_HEATER, RUBBER_NET, SHARP_SPIKE } from '../sim/centerObstacle';
 import { drawBallArt, loadBallArt, pickBallSkin, type BallSkin } from './ballArt';
+import { DEFAULT_GRAVE_SKINS, drawGraveArt, loadGraveArt, pickGraveSkins, type GraveSkins } from './graveArt';
+import { BallSquash, type BallDeformation } from './ballDeformation';
 
 
 /**
@@ -42,10 +44,10 @@ const footHalfHeight = ((s) => (s.kind === 'box' ? s.hh : s.r))(partDef('FootLef
 const SOLES_PX = FLOOR_TOP_PX + SOLE_Y - footHalfHeight;
 
 /**
- * HUD columns, stage px: the scores sit over the court, clear of the prize
- * seals at the top of each wall (stage x ~25 and ~612).
+ * HUD columns, stage px: the score panels flank the central queue caption
+ * with an 11 px gap on either side.
  */
-const HUD_LEFT_X = 48;
+const HUD_LEFT_X = 164;
 const HUD_RIGHT_X = VIEW.stageW - HUD_LEFT_X;
 
 /**
@@ -101,6 +103,9 @@ export class Renderer {
   private readonly motion = new WeakMap<GameWorld, MotionState>();
   private readonly ballTrails = new WeakMap<GameWorld, BallTrailPoint[]>();
   private readonly ballSkins = new WeakMap<GameWorld, BallSkin>();
+  private readonly graveSkins = new WeakMap<GameWorld, GraveSkins>();
+  private previousGraveSkins?: GraveSkins;
+  private readonly ballSquashes = new WeakMap<GameWorld, BallSquash>();
   private previousBallSkin?: BallSkin;
   /** Device pixels per stage pixel. */
   private k = 1;
@@ -116,7 +121,7 @@ export class Renderer {
     this.ctx = canvas.getContext('2d', { alpha: false })!;
     this.backdrop = backdrop ? new AmbientBackdrop(backdrop) : null;
     this.resize();
-    this.ready = Promise.all([loadHorrorArt(), loadBallArt()]).then(() => {});
+    this.ready = Promise.all([loadHorrorArt(), loadBallArt(), loadGraveArt()]).then(() => {});
   }
 
   /** Called only for a new match; rounds and pauses retain their selected skin. */
@@ -124,10 +129,27 @@ export class Renderer {
     const skin = pickBallSkin(this.previousBallSkin);
     this.ballSkins.set(gw, skin);
     this.previousBallSkin = skin;
+    const graves = pickGraveSkins(this.previousGraveSkins);
+    this.graveSkins.set(gw, graves);
+    this.previousGraveSkins = graves;
+    this.ballSquashFor(gw);
+  }
+
+  private ballSquashFor(gw: GameWorld): BallSquash {
+    let squash = this.ballSquashes.get(gw);
+    if (!squash) {
+      squash = new BallSquash(gw);
+      this.ballSquashes.set(gw, squash);
+    }
+    return squash;
   }
 
   ballSkinFor(gw: GameWorld): BallSkin {
     return this.ballSkins.get(gw) ?? this.previousBallSkin ?? 'stitched';
+  }
+
+  graveSkinsFor(gw: GameWorld): GraveSkins {
+    return this.graveSkins.get(gw) ?? this.previousGraveSkins ?? DEFAULT_GRAVE_SKINS;
   }
 
   /** Fit the 640x400 stage into the canvas's CSS box at device resolution. */
@@ -576,6 +598,7 @@ export class Renderer {
     const now = gw.frame - 1 + alpha;
     const tint = this.currentBallTint(gw, now);
     const skin = this.ballSkinFor(gw);
+    const deformation = this.ballSquashFor(gw).sample(now);
 
     this.drawBallTrail(ctx, gw, pose, now, speed, r);
 
@@ -589,10 +612,10 @@ export class Renderer {
       const ux = speed > 0 ? v.x / speed : 0;
       const uy = speed > 0 ? v.y / speed : 0;
       ctx.globalAlpha = 0.12 / i;
-      this.ballArt(ctx, { x: pose.x - ux * back, y: pose.y - uy * back, a: pose.a }, skin, tint);
+      this.ballArt(ctx, { x: pose.x - ux * back, y: pose.y - uy * back, a: pose.a }, skin, tint, deformation);
     }
     ctx.globalAlpha = 1;
-    this.ballArt(ctx, pose, skin, tint);
+    this.ballArt(ctx, pose, skin, tint, deformation);
   }
 
   /** A tapered comet wake follows the actual flight, including curved shots and bounces. */
@@ -630,12 +653,19 @@ export class Renderer {
     return { rgb, alpha: BALL_TINT.alpha * (t.previous ? 1 : k) };
   }
 
-  private ballArt(ctx: CanvasRenderingContext2D, pose: Pose, skin: BallSkin, tint?: { rgb: string; alpha: number } | null): void {
-    const r = BALL.radiusPx; ctx.save(); ctx.translate(pose.x, pose.y); ctx.rotate(pose.a);
+  private ballArt(ctx: CanvasRenderingContext2D, pose: Pose, skin: BallSkin, tint?: { rgb: string; alpha: number } | null, deformation?: BallDeformation | null): void {
+    const r = BALL.radiusPx; ctx.save(); ctx.translate(pose.x, pose.y);
+    if (deformation) {
+      ctx.rotate(deformation.angle);
+      ctx.scale(deformation.normalScale, deformation.tangentScale);
+      ctx.rotate(pose.a - deformation.angle);
+    } else ctx.rotate(pose.a);
     drawBallArt(ctx, skin, r);
     if (tint && tint.alpha > 0) {
       ctx.beginPath(); ctx.arc(0, 0, r - 0.65, 0, Math.PI * 2); ctx.clip();
-      ctx.globalAlpha *= tint.alpha * 0.65;
+      // Tint the printed colors without washing out stitches, craters or the iris.
+      ctx.globalCompositeOperation = 'multiply';
+      ctx.globalAlpha *= tint.alpha * 0.3;
       ctx.fillStyle = 'rgb(' + tint.rgb + ')'; ctx.fillRect(-r, -r, r * 2, r * 2);
     }
     ctx.restore();
@@ -693,36 +723,6 @@ export class Renderer {
       ring(ctx, hit.xPx, hit.yPx, since, 12, 5, 16 + 34 * hit.power, 2 + 4 * hit.power, rgb);
       ring(ctx, hit.xPx, hit.yPx, since - 2, 10, 3, 10 + 18 * hit.power, 1.5, '255,255,255');
     }
-  }
-
-  /** A gravestone skin for the original wall button, in local artwork coordinates. */
-  private drawGraveButtonArt(ctx: CanvasRenderingContext2D, active: boolean, life: number, flash: number, t: number): void {
-    ctx.save();
-    ctx.fillStyle = COMIC.ink; inkRect(ctx, -25, -6, 50, 6, 1); ctx.fill();
-    ctx.beginPath(); ctx.moveTo(-23, -4); ctx.lineTo(-21, -42);
-    ctx.bezierCurveTo(-20, -66, 19, -68, 22, -43);
-    ctx.lineTo(24, -4); ctx.closePath();
-    ctx.fillStyle = COMIC.muted; ctx.fill(); ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 2.5; ctx.stroke();
-    if (flash > 0) {
-      ctx.save(); ctx.globalAlpha *= flash; ctx.fillStyle = COMIC.paper; ctx.fill(); ctx.restore();
-    }
-    ctx.save(); ctx.clip(); hatch(ctx, -25, -67, 15, 66, 4); hatch(ctx, -24, -15, 49, 12, 4); ctx.restore();
-    ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 0.8;
-    ctx.beginPath(); ctx.moveTo(-16, -9); ctx.lineTo(-15, -43); ctx.quadraticCurveTo(0, -63, 16, -43); ctx.lineTo(17, -9); ctx.stroke();
-    ctx.strokeStyle = active ? COMIC.mint : COMIC.ink; ctx.lineWidth = active ? 2.2 : 1.4;
-    ctx.beginPath(); ctx.moveTo(0, -51); ctx.lineTo(0, -35); ctx.moveTo(-6, -45); ctx.lineTo(6, -45); ctx.stroke();
-    ctx.fillStyle = COMIC.ink; ctx.font = 'bold 9px ' + COMIC_TEXT; ctx.textAlign = 'center'; ctx.fillText('RIP', 0, -22);
-    ctx.strokeStyle = active ? COMIC.mint : COMIC.ink; ctx.lineWidth = active ? 1.8 : 0.9;
-    ctx.beginPath(); ctx.moveTo(11, -57); ctx.lineTo(6, -49); ctx.lineTo(11, -40);
-    ctx.lineTo(6, -31); ctx.lineTo(10, -23); ctx.lineTo(4, -13); ctx.lineTo(8, -5); ctx.stroke();
-    if (active && life > 0) {
-      ctx.fillStyle = COMIC.ink; ctx.fillRect(-10, -13, 20, 2.5);
-      ctx.fillStyle = COMIC.mint; ctx.fillRect(-10, -13, 20 * life, 2.5);
-      ctx.globalAlpha *= 0.35 + Math.sin(t * 0.18) * 0.15;
-      ctx.strokeStyle = COMIC.mint; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(-18, -8); ctx.lineTo(18, -8); ctx.stroke();
-    }
-    ctx.restore();
   }
 
   /**
@@ -889,14 +889,15 @@ export class Renderer {
 
   /** Gravestone artwork follows the original wall buttons' press, flash and lifetime. */
   private drawPrizeButtons(ctx: CanvasRenderingContext2D, gw: GameWorld, now: number): void {
+    const skins = this.graveSkinsFor(gw);
     for (const b of gw.ground.prizeButtons) {
       const d = b.def, live = !b.armed, depth = buttonDepth(b, now);
       const life = Math.max(0, ...b.executers.filter(e => !e.dead).map(e => e.lifeFraction));
       const flash = Math.max(flashCurve(now - b.pressedAt, 6, 1), flashCurve(now - b.releasedAt, 6, 0.5));
       ctx.save();
       ctx.translate(d.x - b.inward * depth, d.y + d.hh);
-      ctx.scale(0.7, d.hh * 2 / 62);
-      this.drawGraveButtonArt(ctx, live, life, flash, now);
+      ctx.scale(b.inward, 1);
+      drawGraveArt(ctx, skins[b.side], d.hh * 2, { active: live, life, flash });
       ctx.restore();
       ring(ctx, d.x + b.inward * d.hw, d.y, now - b.pressedAt, 14, 8, 95, 2.5, PAL.prizeLiveGlow);
       ring(ctx, d.x + b.inward * d.hw, d.y, now - b.releasedAt, 10, 6, 45, 1.5, PAL.prizeGlow);

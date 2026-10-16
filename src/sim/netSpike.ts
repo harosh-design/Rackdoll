@@ -1,4 +1,4 @@
-import { Polygon, Transform, Vec2, testOverlap, type Body } from 'planck';
+import { Box, Circle, Polygon, Transform, Vec2, testOverlap, type Body } from 'planck';
 import { NET_SPIKE, NET_TOP_PX, NET_X_PX, PARTS, toM, toPx, type PartName } from './constants';
 import type { Player } from './player';
 
@@ -9,6 +9,7 @@ export interface SpikeHit { part: PartName; localAnchor: Vec2; height: number }
 export class NetSpike {
   private readonly blade;
   private readonly transform = Transform(Vec2(toM(NET_X_PX), toM(NET_TOP_PX)));
+  private readonly tip = Vec2(toM(NET_X_PX), toM(NET_TOP_PX - NET_SPIKE.heightPx));
   private readonly previous = new Map<Body, Sample>();
 
   constructor(private readonly halfWidthPx: number = NET_SPIKE.halfWidthPx) {
@@ -29,8 +30,8 @@ export class NetSpike {
     return this.impacts(player).map(hit => hit.part);
   }
 
-  /** Keep the contact in the swept part's frame so a fast crossing can be pinned. */
-  impacts(player: Player): SpikeHit[] {
+  /** Cuts require deep insertion; the sharp variant can still pin on first contact. */
+  impacts(player: Player, requireImpalement = true): SpikeHit[] {
     if (player.power === 'shield') return [];
     const hits: SpikeHit[] = [];
     for (const def of PARTS) {
@@ -46,11 +47,24 @@ export class NetSpike {
         || Math.max(start.y, end.y) + radius < toM(NET_TOP_PX - NET_SPIKE.heightPx)) continue;
       const angle = body.getAngle() - start.angle;
       const travel = Math.hypot(end.x - start.x, end.y - start.y) + Math.abs(angle) * radius;
-      const steps = Math.max(1, Math.ceil(travel / toM(NET_SPIKE.sweepStepPx)));
+      const shape = body.getFixtureList()!.getShape();
+      const halfThickness = toM(def.shape.kind === 'circle' ? def.shape.r : Math.min(def.shape.hw, def.shape.hh)) * player.sizeScale;
+      const inset = halfThickness * NET_SPIKE.cutInsetRatio;
+      const core = !requireImpalement ? null : def.shape.kind === 'circle'
+        ? Circle(halfThickness - inset)
+        : Box(toM(def.shape.hw) * player.sizeScale - inset, toM(def.shape.hh) * player.sizeScale - inset);
+      // Both ends of this segment must be inside the convex part: that much
+      // of the blade is embedded, with the tip clear of grazing contacts.
+      const depth = Math.min(toM(NET_SPIKE.heightPx), halfThickness * 2) * NET_SPIKE.cutDepthRatio;
+      const embedded = Vec2(this.tip.x, this.tip.y + depth);
+      // Small parts have a narrower insertion window, especially under size powers.
+      const step = requireImpalement ? Math.min(toM(NET_SPIKE.sweepStepPx), halfThickness * 0.25) : toM(NET_SPIKE.sweepStepPx);
+      const steps = Math.max(1, Math.ceil(travel / step));
       for (let i = 0; i <= steps; i++) {
         const t = i / steps;
         const pose = Transform(Vec2(start.x + (end.x - start.x) * t, start.y + (end.y - start.y) * t), start.angle + angle * t);
-        if (testOverlap(this.blade, 0, body.getFixtureList()!.getShape(), 0, this.transform, pose)) {
+        if (core ? core.testPoint(pose, this.tip) && shape.testPoint(pose, embedded)
+          : testOverlap(this.blade, 0, shape, 0, this.transform, pose)) {
           const height = Math.max(NET_TOP_PX - NET_SPIKE.heightPx, Math.min(NET_TOP_PX, toPx(pose.p.y)));
           const width = this.halfWidthPx * (height - NET_TOP_PX + NET_SPIKE.heightPx) / NET_SPIKE.heightPx;
           const x = Math.max(NET_X_PX - width, Math.min(NET_X_PX + width, toPx(pose.p.x)));

@@ -5,7 +5,7 @@ import type { Player } from './player';
 import type { BodyUserData } from './types';
 
 export const CENTER_OBSTACLES = [
-  { id: 'classic', label: 'Classic spike', caption: 'Cuts off body parts', description: 'The original cutting blade. Lost body parts return at the start of every round.' },
+  { id: 'classic', label: 'Classic spike', caption: 'Cuts on deep impalement', description: 'The blade cuts off deeply impaled body parts. Light touches are safe. Lost body parts return at the start of every round.' },
   { id: 'sharp', label: 'Sharp spike', caption: 'Impales and holds', description: 'A tapered spear catches body parts on its point and holds them until the next round.' },
   { id: 'blower', label: 'Air heater', caption: 'Blows players away', description: 'A thin heater pushes players away in every direction within 30% of their original height.' },
   { id: 'rubber', label: 'Rubber net', caption: 'Bends under pressure', description: 'Lean on the flexible rubber net to bend it into your opponent’s half. It springs back when released.' },
@@ -111,7 +111,7 @@ export class CenterObstacle {
     if (this.id !== 'classic' && this.id !== 'sharp') return cut;
     for (const player of players) {
       let severed = false;
-      for (const hit of this.blade.impacts(player)) {
+      for (const hit of this.blade.impacts(player, this.id === 'classic')) {
         if (this.id === 'classic') severed = player.sever(hit.part) || severed;
         else {
           const body = player.part(hit.part);
