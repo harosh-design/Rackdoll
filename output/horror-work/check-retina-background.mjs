@@ -1,0 +1,42 @@
+import fs from 'node:fs/promises';
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+const { chromium } = createRequire('/Users/trckwrk/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/package.json')('playwright');
+const browser = await chromium.launch({ headless: true });
+const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 2 });
+const errors = [];
+page.on('pageerror', error => errors.push(error.message));
+try {
+  await page.goto('http://127.0.0.1:5173/');
+  await page.waitForFunction(() => window.__rv);
+  await page.evaluate(() => window.__rv.renderer.ready);
+  await page.locator('[data-mode="2p"]').click();
+  await page.locator('#play').click();
+  await page.waitForTimeout(400);
+  await page.keyboard.press('p');
+  await page.locator('#pause').evaluate(element => { element.style.visibility = 'hidden'; });
+  await page.locator('#game').screenshot({ path: 'output/horror-work/game-retina.png' });
+  const result = await page.evaluate(async () => {
+    const canvas = document.getElementById('game'), bounds = canvas.getBoundingClientRect();
+    const { drawHorrorBackground, loadHorrorArt } = await import('/src/render/horrorArt.ts');
+    await loadHorrorArt();
+    const { PencilGrain } = await import('/src/render/pencilGrain.ts');
+    const preview = document.createElement('canvas'); preview.width = 3840; preview.height = 2400;
+    const ctx = preview.getContext('2d'); ctx.scale(6, 6);
+    drawHorrorBackground(ctx, 640, 400, 385, 0);
+    new PencilGrain().draw(ctx, preview.width, preview.height, 0, preview.width / 1280);
+    const moon = [...ctx.getImageData(474 * 6, Math.round((385 * 0.19 - 20) * 6), 1, 1).data];
+    const tree = [...ctx.getImageData(40 * 6, Math.round(385 * 0.93 * 6), 1, 1).data];
+    return { dpr: devicePixelRatio, width: canvas.width, height: canvas.height, cssWidth: bounds.width, cssHeight: bounds.height, moon, tree, backgroundPreview: preview.toDataURL('image/png') };
+  });
+  assert.equal(result.dpr, 2);
+  assert(Math.abs(result.width - result.cssWidth * 2) <= 1);
+  assert(Math.abs(result.height - result.cssHeight * 2) <= 1);
+  assert.equal(errors.length, 0);
+  assert(result.moon[0] > 150 && result.moon[0] > result.moon[2]);
+  assert(result.tree[0] < 40);
+  await fs.writeFile('output/horror-work/procedural-background-3840.png', Buffer.from(result.backgroundPreview.split(',')[1], 'base64'));
+  delete result.backgroundPreview;
+  await fs.writeFile('output/horror-work/retina-background-validation.json', JSON.stringify({ ...result, errors, previewSize: [3840, 2400] }, null, 2) + '\n');
+  console.log(JSON.stringify({ ...result, errors }, null, 2));
+} finally { await browser.close(); }

@@ -1,0 +1,14 @@
+{
+  "generator": "Built-in ImageGen",
+  "source": "output/horror-work/sources/background-detailed.png",
+  "sourceWidth": 1586,
+  "sourceHeight": 992,
+  "productionAsset": "public/art/horror/background-detailed.webp",
+  "productionWidth": 2560,
+  "productionHeight": 1600,
+  "previousWidth": 1280,
+  "previousHeight": 800,
+  "paintedGroundBoundary": 851,
+  "scenery": "Procedural Canvas geometry: three forest layers, bare foreground trees, moon and lunar pencil marks",
+  "rasterSceneryLoaded": false
+}

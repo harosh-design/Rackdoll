@@ -1,0 +1,10 @@
+{
+  "generator": "Built-in ImageGen",
+  "target": "/Users/trckwrk/Documents/vibe/rackdoll3/output/horror-work/sources/background.png",
+  "prompt": "Use case: style-transfer. Asset: higher-resolution detailed colored-pencil sky and ground texture plate for an existing 2D horror-comic game.\nThe supplied image is the exact existing sky/ground EDIT TARGET. Keep its dusty blue/periwinkle and violet/plum palette, its broad open night sky, its flat 2D pencil style, and the perfectly horizontal ground boundary at 84% of image height. Improve the ACTUAL DRAWN DETAIL rather than simply enlarging the old texture: crisp overlapping colored-pencil strokes at several fine scales, irregular crosshatching, delicate long rubbed graphite marks, quiet uneven blue pigment density and hand-colored paper tooth. The night sky stays mostly calm and readable; add extremely restrained broad wisps of darker blue shading, no dramatic gradient or bright sky. Ground should have more individual violet and black pencil scratches, small irregular dry-soil stipple, layered horizontal scuffs and sparse fine creases, with a straight playable horizon and no objects protruding upward.\nRender a high-resolution 2560-by-1600 landscape 16:10 production plate with fine drawing detail suitable for a Retina / large game display. Preserve a large open low-contrast middle area behind players. The runtime will add a light procedural grain overlay, so do not add coarse noisy dots or repeating digital grain.\nAbsolutely NO trees, forest, vegetation, moon, stars, silhouettes, buildings, characters, props, ball, poles, frame, text, HUD, glow, photography or 3D. Trees, forest and moon will all be drawn separately by code. Only detailed pencil-colored sky and ground on an opaque background.",
+  "productionAsset": "public/art/horror/background-detailed.webp",
+  "productionSize": [
+    2560,
+    1600
+  ]
+}

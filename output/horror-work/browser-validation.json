@@ -1,0 +1,59 @@
+{
+  "obsoleteControls": 0,
+  "legacyGraphicsLoaded": false,
+  "pauseStable": true,
+  "reducedMotionStable": true,
+  "boil": {
+    "moon": {
+      "changed": 3189,
+      "total": 7650,
+      "meanDifference": 10.260479302832245
+    },
+    "trees": {
+      "changed": 7703,
+      "total": 38400,
+      "meanDifference": 2.791623263888889
+    },
+    "horizon": {
+      "changed": 6989,
+      "total": 20650,
+      "meanDifference": 1.5132364810330912
+    },
+    "sky": {
+      "changed": 0,
+      "total": 22400,
+      "meanDifference": 0
+    },
+    "floor": {
+      "changed": 0,
+      "total": 6160,
+      "meanDifference": 0
+    },
+    "deterministic": true
+  },
+  "pencil": {
+    "paper": {
+      "changed": 239503,
+      "total": 256000,
+      "meanDifference": 3.1059817708333335
+    },
+    "temporal": {
+      "changed": 177864,
+      "total": 256000,
+      "meanDifference": 0.7942708333333334
+    }
+  },
+  "backgroundAndGrainMs": 2.506666666766008,
+  "ribTransparency": 0.249921875,
+  "gameplay": {
+    "resumed": true,
+    "served": true
+  },
+  "scenarios": {
+    "detached": true,
+    "finite": true,
+    "renderMs": 2.9866666669646897,
+    "detachedParts": 3
+  },
+  "browserErrors": []
+}

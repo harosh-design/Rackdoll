@@ -1,0 +1,11 @@
+{
+  "source": "output/horror-work/sources/background.png",
+  "sourceWidth": 1586,
+  "sourceHeight": 992,
+  "productionAsset": "public/art/horror/background-moonlit.webp",
+  "productionWidth": 2560,
+  "productionHeight": 1600,
+  "paintedGroundBoundary": 852,
+  "scenery": "Code-drawn solid forest skyline, edge branches, moon and crosses",
+  "rasterSceneryLoaded": false
+}

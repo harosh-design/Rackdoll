@@ -1,8 +1,9 @@
 # Future indoor arena
 
-This is the **People** graphics style in the start menu, restored as the default.
-The alternate **Shaders** style is preserved separately; switching styles changes
-the scenery and player materials together and remembers the choice locally.
+Historical art record. The People and Shaders selectors have been removed;
+the current background and players use [pencil horror-comic art](HORROR-COMIC-ART.md).
+The service-equipment sprites described below remain in use for the current
+background/player-only update.
 
 The selected refined concept is implemented as a 2D game scene with pre-rendered
 art. The arena background, service robot bodies and gift couriers use the same

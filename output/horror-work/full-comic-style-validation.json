@@ -1,0 +1,27 @@
+{
+  "style": {
+    "title": "Impact, \"Arial Narrow\", sans-serif",
+    "panel": "rgb(232, 217, 180)",
+    "radius": "3px"
+  },
+  "screens": [
+    "menu",
+    "controls",
+    "help",
+    "pause",
+    "results",
+    "mobile"
+  ],
+  "obstacles": [
+    "classic",
+    "sharp",
+    "blower",
+    "rubber"
+  ],
+  "propCount": 9,
+  "oldArenaPropsLoaded": [],
+  "pauseStable": true,
+  "darkModeMatches": true,
+  "mobileFits": true,
+  "errors": []
+}

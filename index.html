@@ -5,8 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Ragdoll Volleyball</title>
     <meta name="description" content="A faithful rebuild of Ragdoll Volleyball (Sedoiga, 2009) on planck.js." />
-    <meta name="theme-color" content="#0a0f15" media="(prefers-color-scheme: dark)" />
-    <meta name="theme-color" content="#e8edf2" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#191522" />
     <style>
       :root {
         --bg: #e8edf2;
@@ -734,6 +733,7 @@
         .icon-btn kbd { display: none; }
       }
     </style>
+    <link rel="stylesheet" href="/src/styles/horror.css" />
   </head>
   <body data-screen="menu">
     <canvas id="ambient-backdrop" aria-hidden="true"></canvas>
@@ -748,7 +748,6 @@
           <path d="M3 10.8c3.2-1.6 6.6-1.6 9.5.3" />
         </symbol>
         <symbol id="i-pause" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.2" /><rect x="14" y="5" width="4" height="14" rx="1.2" /></symbol>
-        <symbol id="i-scene" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3" /><circle cx="16" cy="9" r="2" /><path d="M3 17l6-6 5 5 3-3 4 4" /></symbol>
         <symbol id="i-sound-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor" stroke="none" /><path d="M15.5 9a4 4 0 0 1 0 6" /><path d="M18.5 6.5a7.5 7.5 0 0 1 0 11" /></symbol>
         <symbol id="i-sound-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor" stroke="none" /><path d="M16 9.5l5 5M21 9.5l-5 5" /></symbol>
         <symbol id="i-fs-enter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M20 15v3.5a1.5 1.5 0 0 1-1.5 1.5H15M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15" /></symbol>
@@ -793,9 +792,6 @@
     <main class="stage" id="stage">
       <canvas id="game" tabindex="-1" aria-label="Ragdoll volleyball court"></canvas>
       <div class="hud-controls" id="hud-controls" role="toolbar" aria-label="Game controls">
-        <button class="hud-btn" id="btn-scene" type="button" aria-label="Switch location" title="Switch location">
-          <svg><use href="#i-scene" /></svg>
-        </button>
         <button class="hud-btn" id="btn-pause" type="button" aria-label="Pause" title="Pause (P)">
           <svg><use href="#i-pause" /></svg>
         </button>
@@ -815,8 +811,13 @@
         <header class="menu-head">
           <span class="logo" aria-hidden="true"><svg><use href="#i-ball" /></svg></span>
           <div class="titles">
+            <p class="menu-kicker">A little unhinged. A lot of volleyball.</p>
             <h1>Ragdoll Volleyball</h1>
-            <p class="sub">Two players. One court. Pick your style.</p>
+            <p class="sub">Three touches. First to 10. Try to stay in one piece.</p>
+          </div>
+          <div class="night-sticker" aria-hidden="true">
+            <img src="/art/horror/props/bat.webp" alt="" width="86" height="52">
+            <span>Keep it<br>together!</span>
           </div>
           <button class="icon-btn js-sound" type="button" aria-label="Music" aria-pressed="true" title="Music (M)">
             <svg class="ic-sound-on"><use href="#i-sound-on" /></svg>
@@ -824,52 +825,70 @@
           </button>
         </header>
 
+        <div class="menu-workspace">
+          <aside class="start-guide" aria-labelledby="quick-controls-title">
+            <div class="guide-heading">
+              <div>
+                <p class="menu-kicker">No warm-up required</p>
+                <h2 id="quick-controls-title">Know your moves</h2>
+              </div>
+              <img class="guide-fist" src="/art/horror/props/fist.webp" alt="" width="44" height="36" aria-hidden="true">
+            </div>
+            <div class="quick-players">
+              <article class="quick-player quick-p1" data-bind-card="1" aria-label="Player 1 keyboard controls">
+                <header class="quick-player-head">
+                  <span class="menu-portrait portrait-masked" aria-hidden="true"></span>
+                  <div><span class="quick-number">Player 1</span><h3>The Mask</h3></div>
+                  <span class="badge" hidden>CPU</span>
+                </header>
+                <dl class="quick-keys">
+                  <div><dt>Move</dt><dd><kbd data-quick-player="1" data-quick-action="left">←</kbd><kbd data-quick-player="1" data-quick-action="right">→</kbd></dd></div>
+                  <div><dt>Jump</dt><dd><kbd data-quick-player="1" data-quick-action="jump">↑</kbd></dd></div>
+                  <div><dt>Crouch</dt><dd><kbd data-quick-player="1" data-quick-action="down">↓</kbd></dd></div>
+                  <div><dt>Serve / flip</dt><dd><kbd data-quick-player="1" data-quick-action="serve">Space</kbd></dd></div>
+                </dl>
+              </article>
+              <article class="quick-player quick-p2" data-bind-card="2" aria-label="Player 2 keyboard controls">
+                <header class="quick-player-head">
+                  <span class="menu-portrait portrait-skeleton" aria-hidden="true"></span>
+                  <div><span class="quick-number">Player 2</span><h3>Bones</h3></div>
+                  <span class="badge">CPU</span>
+                </header>
+                <dl class="quick-keys">
+                  <div><dt>Move</dt><dd><kbd data-quick-player="2" data-quick-action="left">A</kbd><kbd data-quick-player="2" data-quick-action="right">D</kbd></dd></div>
+                  <div><dt>Jump</dt><dd><kbd data-quick-player="2" data-quick-action="jump">W</kbd></dd></div>
+                  <div><dt>Crouch</dt><dd><kbd data-quick-player="2" data-quick-action="down">S</kbd></dd></div>
+                  <div><dt>Serve / flip</dt><dd><kbd data-quick-player="2" data-quick-action="serve">R</kbd></dd></div>
+                </dl>
+              </article>
+            </div>
+            <p class="quick-tip"><img src="/art/horror/props/talisman.webp" alt="" width="30" height="36" aria-hidden="true"><span><b>Jump first. Then tap to serve.</b> During a rally, hold and release the same key to flip.</span></p>
+            <div class="guide-bottom"><button class="remap-shortcut" id="show-key-editor" type="button">Remap keys <span aria-hidden="true">↗</span></button><span><kbd>P</kbd> / <kbd>Esc</kbd> pause</span></div>
+          </aside>
+          <div class="menu-settings">
         <nav class="tabs" role="tablist" aria-label="Menu sections">
-          <button class="tab" role="tab" id="tab-play" aria-controls="panel-play" aria-selected="true" type="button">Play</button>
-          <button class="tab" role="tab" id="tab-controls" aria-controls="panel-controls" aria-selected="false" tabindex="-1" type="button">Controls</button>
+          <button class="tab" role="tab" id="tab-play" aria-controls="panel-play" aria-selected="true" type="button">Set the scene</button>
+          <button class="tab" role="tab" id="tab-controls" aria-controls="panel-controls" aria-selected="false" tabindex="-1" type="button">Edit keys</button>
           <button class="tab" role="tab" id="tab-help" aria-controls="panel-help" aria-selected="false" tabindex="-1" type="button">How to play</button>
         </nav>
 
         <div class="panels">
           <div class="panel panel-play" role="tabpanel" id="panel-play" aria-labelledby="tab-play">
             <div class="field">
-              <div class="field-head"><span class="label">Graphics</span></div>
-              <div class="mode-group graphics-group" role="group" aria-label="Graphics style" aria-describedby="visual-style-description">
-                <button class="mode" type="button" data-visual-style="people" aria-pressed="true">
-                  <span class="mode-title">People</span>
-                  <span class="mode-cap">Textured players</span>
-                </button>
-                <button class="mode" type="button" data-visual-style="shaders" aria-pressed="false">
-                  <span class="mode-title">Shaders</span>
-                  <span class="mode-cap">Glass &amp; chrome</span>
-                </button>
-              </div>
-              <p class="hint" id="visual-style-description">Textured people in your selected location.</p>
-            </div>
-            <div class="field">
-              <div class="field-head"><span class="label">Location</span></div>
-              <div class="mode-group" role="group" aria-label="Location" aria-describedby="arena-scene-description">
-                <button class="mode" type="button" data-arena-scene="indoor" aria-pressed="true"><span class="mode-title">Arena</span></button>
-                <button class="mode" type="button" data-arena-scene="beach" aria-pressed="false"><span class="mode-title">Beach</span></button>
-                <button class="mode" type="button" data-arena-scene="rooftop" aria-pressed="false"><span class="mode-title">Rooftop</span></button>
-              </div>
-              <p class="hint" id="arena-scene-description">Indoor arena, or flowing light with Shaders.</p>
-            </div>
-            <div class="field">
               <div class="field-head"><span class="label">Mode</span></div>
               <div class="mode-group" role="group" aria-label="Mode">
                 <button class="mode" type="button" data-mode="1p" aria-pressed="true">
-                  <svg><use href="#i-one" /></svg>
+                  <span class="mode-art menu-portrait portrait-masked" aria-hidden="true"></span>
                   <span class="mode-title">1 Player</span>
                   <span class="mode-cap">You vs the CPU</span>
                 </button>
                 <button class="mode" type="button" data-mode="2p" aria-pressed="false">
-                  <svg><use href="#i-two" /></svg>
+                  <span class="mode-art mode-duo" aria-hidden="true"><span class="menu-portrait portrait-masked"></span><span class="menu-portrait portrait-skeleton"></span></span>
                   <span class="mode-title">2 Players</span>
                   <span class="mode-cap">Same keyboard</span>
                 </button>
                 <button class="mode" type="button" data-mode="cpu" aria-pressed="false">
-                  <svg><use href="#i-bot" /></svg>
+                  <img class="mode-art mode-puppet" src="/art/horror/props/voodoo.webp" alt="" width="30" height="36">
                   <span class="mode-title">Bot vs Bot</span>
                   <span class="mode-cap">Sit back and watch</span>
                 </button>
@@ -919,7 +938,7 @@
             <button class="toggle-row" id="hazards" type="button" role="switch" aria-checked="true">
               <span class="toggle-text">
                 <span class="toggle-title">Hazards</span>
-                <span class="hint">Hit your opponent’s illuminated wall button to launch a trap at them.</span>
+                <span class="hint">Hit your opponent’s wall seal to release a trap.</span>
               </span>
               <span class="switch" aria-hidden="true"></span>
             </button>
@@ -962,18 +981,18 @@
               </section>
               <section>
                 <h3><span class="num">3</span>Hazards</h3>
-                <p>Both illuminated wall buttons share one shuffled queue, previewed at the top of the screen. Aim for your opponent’s button.</p>
+                <p>Both wall seals share one shuffled queue, previewed at the top of the screen. Aim for your opponent’s seal.</p>
                 <div class="chips">
-                  <div class="chip" style="--c: rgb(84, 184, 238)"><i></i><b>Magnet</b><span>Slow. Drags you and the ball toward it.</span></div>
-                  <div class="chip" style="--c: rgb(232, 170, 120)"><i></i><b>Boxer</b><span>Punches any part of you.</span></div>
-                  <div class="chip" style="--c: rgb(255, 150, 60)"><i></i><b>Porter</b><span>Fast. Rams you away from the ball.</span></div>
-                  <div class="chip" style="--c: rgb(190, 130, 250)"><i></i><b>Spring</b><span>Slams harder the longer its run.</span></div>
-                  <div class="chip" style="--c: rgb(120, 206, 72)"><i></i><b>Spa dispenser</b><span>Glues your limbs. Jump to tear free, or flip it off.</span></div>
+                  <div class="chip" style="--c: #9fc6ad"><i></i><b>Magnet</b><span>Slow. Drags you and the ball toward it.</span></div>
+                  <div class="chip" style="--c: #795086"><i></i><b>Voodoo boxer</b><span>Punches any part of you.</span></div>
+                  <div class="chip" style="--c: #c56a51"><i></i><b>Fire skull</b><span>Fast. Rams you away from the ball.</span></div>
+                  <div class="chip" style="--c: #dab05c"><i></i><b>Bone trap</b><span>Slams harder the longer its run.</span></div>
+                  <div class="chip" style="--c: #9fc6ad"><i></i><b>Ectoplasm</b><span>Glues your limbs. Jump to tear free, or flip it off.</span></div>
                 </div>
               </section>
               <section>
-                <h3><span class="num">4</span>Delivery drones</h3>
-                <p>Drones bring gift parcels from the edges, each showing its power. Hit a parcel with a ball you touched last for a <b>30-second</b> power.</p>
+                <h3><span class="num">4</span>Bat familiars</h3>
+                <p>Bats carry power talismans from the edges. Hit a talisman with a ball you touched last for a <b>30-second</b> power.</p>
                 <div class="chips">
                   <div class="chip solo" style="--c: #f2b705"><i></i><span><b>Giant</b> or <b>Tiny</b></span></div>
                   <div class="chip solo" style="--c: #f2b705"><i></i><span><b>Feather ball</b>: falls slowly over your half</span></div>
@@ -987,10 +1006,13 @@
           </div>
         </div>
 
+          </div>
+        </div>
         <footer class="menu-foot">
+          <div class="match-ticket"><img src="/art/horror/props/fire-skull.webp" alt="" width="45" height="34" aria-hidden="true"><span>One court.<br><b>No mercy.</b></span></div>
           <button class="btn btn-primary btn-xl" id="play" type="button">
             <svg width="16" height="16"><use href="#i-play" /></svg>
-            Play
+            Start match
             <kbd>Enter</kbd>
           </button>
         </footer>
@@ -1000,7 +1022,7 @@
     <section class="overlay" id="pause" aria-label="Paused">
       <div class="card">
         <p class="eyebrow">Game paused</p>
-        <h2>Take a breather</h2>
+        <h2>Intermission</h2>
         <p class="sub">Press <kbd>P</kbd> or <kbd>Esc</kbd> to pick up where you left off.</p>
         <div class="stack">
           <button class="btn btn-primary btn-lg" id="resume" type="button">

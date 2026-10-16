@@ -8,66 +8,30 @@ import { type ExecuterId } from '../sim/executerVariants';
 import type { GameWorld } from '../sim/world';
 import type { PrizeButton } from '../sim/prizeButton';
 import { POWER_LABELS } from '../sim/powerUps';
-import { drawDronePops, drawDrones } from './drones';
-import { drawArenaSprite } from './arenaArt';
+import { drawFamiliarPops, drawFamiliars } from './familiars';
+import { drawHorrorProp, HORROR_HAZARD_LABELS } from './horrorProps';
+import { COMIC, COMIC_TEXT, COMIC_TITLE, burstPath, comicPanel, hatch, inkRect } from './comicStyle';
 import { STAGE } from './stageLayout';
-import type { ArenaScene } from './arenaBackground';
 import { SOLE_Y } from './dollArt';
 import { closedPoses, type PoseSource } from './dollPose';
 import type { Interpolator, Pose } from './interp';
-import { ShaderScene } from './shaderScene';
 import { AmbientBackdrop } from './ambientBackdrop';
-import { drawResortBackground, loadResortArt } from './resortArt';
-import { drawHumanPlayers } from './humanPlayers';
+import { drawHorrorBackground, drawHorrorPlayers, loadHorrorArt } from './horrorArt';
+import { PencilGrain } from './pencilGrain';
 import { AIR_HEATER, RUBBER_NET, SHARP_SPIKE } from '../sim/centerObstacle';
 
-export type VisualStyle = 'people' | 'shaders';
 
 /**
  * Canvas renderer. A 640x400 stage frames the original world at scale 0.56.
  * STAGE centres the arena and leaves a shallow foreground beneath the court.
- * Both the textured people arena and flowing glass/chrome shader arena use
- * the same interpolated ragdoll poses; simulation geometry remains independent.
+ * The comic cutouts use the same interpolated ragdoll poses and unchanged
+ * simulation geometry. Paper grain is composited before the HUD.
  */
 
 const PAL = {
-  skyTop: '#6fb7e0',
-  skyBottom: '#cfeaf6',
-  sea: '#3f93bf',
-  seaFoam: '#8ccbe6',
-  sand: '#ecd49b',
-  sandDark: '#d6b877',
-  sandLine: '#c9a863',
-  wall: '#56616b',
-  wallEdge: '#3d464e',
-  netPole: '#2b3137',
-  netMesh: 'rgba(255,255,255,0.55)',
-  netTape: '#fbfbf7',
-  skin: '#f1c7a0',
-  skinShade: '#d8a57a',
-  hair: { 1: '#4a3222', 2: '#2d2320' },
-  jersey: { 1: '#84dcff', 2: '#e3cfb0' },
-  jerseyShade: { 1: '#1f4fa8', 2: '#a92d25' },
-  /** Material accent of the last player to touch the ball. */
-  ballTintRgb: { 0: [251, 251, 246], 1: [121, 218, 255], 2: [232, 211, 176] },
-  shorts: { 1: '#1d3a7d', 2: '#7b1f1a' },
-  shoe: '#f4f4f0',
-  ball: '#fbfbf6',
-  ballPanelA: '#f2b705',
-  ballPanelB: '#2f6fde',
-  executer: '#34353d',
-  executerSpike: '#a7adb5',
-  prize: '#ffcf33',
-  prizeEdge: '#c99a12',
-  prizeGlow: '255,207,51',
-  prizeLive: '#ff4d2e',
-  prizeLiveEdge: '#b3301a',
-  prizeLiveGlow: '255,77,46',
-  prizeCore: '#ffe2d9',
-  housing: '#262c31',
-  housingRim: 'rgba(255,255,255,0.12)',
-  /** The sky the resort photograph fades into above its top edge. */
-  resortSky: '#03091c',
+  jersey: { 1: COMIC.ochre, 2: COMIC.mint }, housing: COMIC.ink,
+  prizeLive: COMIC.rust, prizeLiveGlow: '197,106,81', prizeGlow: '218,176,92',
+  prizeCore: COMIC.paper,
 } as const;
 
 const partDef = (name: PartName) => PARTS.find((p) => p.name === name)!;
@@ -78,16 +42,15 @@ const SOLES_PX = FLOOR_TOP_PX + SOLE_Y - footHalfHeight;
 
 /**
  * HUD columns, stage px: the scores sit over the court, clear of the prize
- * buttons at the top of each wall (stage x ~25 and ~612), which glow ~30 px
- * around.
+ * seals at the top of each wall (stage x ~25 and ~612).
  */
 const HUD_LEFT_X = 48;
 const HUD_RIGHT_X = VIEW.stageW - HUD_LEFT_X;
 
 /**
  * The top bar, stage px, centred over the court. The page puts its own
- * controls (pause, sound, fullscreen) in the middle `controlsW`; the next
- * hazard is drawn to their left and the target score to their right.
+ * controls (pause, sound, fullscreen) in the middle `controlsW`, below the
+ * printed hazard and target-score caption.
  */
 export const HUD_BAR = {
   midX: (HUD_LEFT_X + HUD_RIGHT_X) / 2,
@@ -138,11 +101,10 @@ export class Renderer {
   private readonly ballTrails = new WeakMap<GameWorld, BallTrailPoint[]>();
   /** Device pixels per stage pixel. */
   private k = 1;
+  private grainPixelRatio = 1;
   private scenerySeconds = 0;
   private sceneryAt: number | null = null;
-  private readonly shaders = new ShaderScene();
-  private visualStyle: VisualStyle = 'people';
-  private arenaScene: ArenaScene = 'indoor';
+  private readonly grain = new PencilGrain();
   private readonly backdrop: AmbientBackdrop | null;
   readonly ready: Promise<void>;
 
@@ -151,17 +113,7 @@ export class Renderer {
     this.ctx = canvas.getContext('2d', { alpha: false })!;
     this.backdrop = backdrop ? new AmbientBackdrop(backdrop) : null;
     this.resize();
-    this.ready = loadResortArt();
-  }
-
-  /** Switch scenery and players together without touching the live simulation. */
-  setVisualStyle(style: VisualStyle): void {
-    this.visualStyle = style;
-  }
-
-  /** Changing the location preserves the current match and player materials. */
-  setArenaScene(scene: ArenaScene): void {
-    this.arenaScene = scene;
+    this.ready = loadHorrorArt();
   }
 
   /** Fit the 640x400 stage into the canvas's CSS box at device resolution. */
@@ -175,6 +127,7 @@ export class Renderer {
       this.canvas.height = h;
     }
     this.k = w / VIEW.stageW;
+    this.grainPixelRatio = w / Math.max(1, rect.width);
     this.backdrop?.resize(rect);
   }
 
@@ -199,127 +152,66 @@ export class Renderer {
   }
 
   // -------------------------------------------------------------------------
-  // Court: sky, scenery, sea, sand, walls, net. Everything that holds still,
+  // Court: pencil sky, isolated scenery, ground, walls and center obstacle,
   // drawn at the fixed arena scale each frame.
   // -------------------------------------------------------------------------
 
   private paintCourt(ctx: CanvasRenderingContext2D): void {
-    const floor = this.toStage(0, SOLES_PX).y / VIEW.stageH;
-    if (this.visualStyle === 'shaders' && this.arenaScene === 'indoor') {
-      this.backdrop?.draw(this.scenerySeconds, floor);
-      this.shaders.drawBackground(ctx, this.scenerySeconds, floor);
-    } else {
-      this.paintPeopleCourt(ctx);
-      return;
-    }
-    this.worldSpace(ctx);
-    const g = COURT.ground;
-    ctx.save();
-    ctx.shadowColor = '#84dcff'; ctx.shadowBlur = 8;
-    ctx.fillStyle = '#c4efff';
-    ctx.fillRect(g.x - g.hw, SOLES_PX, g.hw * 2, 1.3);
-    ctx.restore();
-    for (const w of [COURT.leftWall, COURT.rightWall]) {
-      const left = w === COURT.leftWall;
-      const inner = left ? w.x + w.hw : w.x - w.hw;
-      const x = left ? inner - 45 : inner;
-      const wall = ctx.createLinearGradient(x, 0, x + 45, 0);
-      wall.addColorStop(0, left ? '#1b2c3d' : '#8bb4c9');
-      wall.addColorStop(1, left ? '#8bb4c9' : '#1b2c3d');
-      ctx.fillStyle = wall; ctx.fillRect(left ? inner - 4000 : inner, -4000, 4000, 4500);
-      ctx.save(); ctx.shadowColor = '#81e0ff'; ctx.shadowBlur = 10;
-      ctx.fillStyle = '#cbf5ff'; ctx.fillRect(left ? inner - 2 : inner, -4000, 2, 4500);
-      ctx.restore();
-    }
-    for (const p of PRIZE_BUTTONS) {
-      const inward = p.side === 1 ? 1 : -1;
-      const wallFace = p.x - inward * (p.hw + 1);
-      const depth = PRIZE_ANIM.pressDepthPx + 3;
-      ctx.fillStyle = PAL.housing;
-      roundRect(ctx, inward === 1 ? wallFace - depth : wallFace, p.y - p.hh - 4, depth, p.hh * 2 + 8, 2);
-      ctx.fill();
-    }
-  }
-
-  private paintPeopleCourt(ctx: CanvasRenderingContext2D): void {
-    this.backdrop?.drawPeople();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = '#111a2b';
-    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    this.backdrop?.draw(this.scenerySeconds);
     this.stageSpace(ctx);
-    ctx.save();
-    drawResortBackground(ctx, VIEW.stageW, VIEW.stageH, this.scenerySeconds, undefined, this.arenaScene);
-    ctx.restore();
+    drawHorrorBackground(ctx, VIEW.stageW, VIEW.stageH, this.toStage(0, SOLES_PX).y, this.scenerySeconds);
     this.worldSpace(ctx);
     const ground = COURT.ground;
-    const floor = ctx.createLinearGradient(0, SOLES_PX, 0, SOLES_PX + 80);
-    const floorColors = this.arenaScene === 'beach' ? ['#666552', '#343d48']
-      : this.arenaScene === 'rooftop' ? ['#9b7464', '#3d3941'] : ['#283344', '#111827'];
-    floor.addColorStop(0, floorColors[0]); floor.addColorStop(1, floorColors[1]);
-    ctx.fillStyle = floor;
-    ctx.fillRect(ground.x - ground.hw, SOLES_PX, ground.hw * 2, 4000);
-    ctx.fillStyle = '#9fc8ca';
-    ctx.fillRect(ground.x - ground.hw, SOLES_PX, ground.hw * 2, 1.3);
+    ctx.fillStyle = '#cfb3cb';
+    ctx.fillRect(ground.x - ground.hw, SOLES_PX, ground.hw * 2, 1.2);
     for (const wall of [COURT.leftWall, COURT.rightWall]) {
       const left = wall === COURT.leftWall;
       const inner = left ? wall.x + wall.hw : wall.x - wall.hw;
-      const x = left ? inner - 45 : inner;
-      const fill = ctx.createLinearGradient(x, 0, x + 45, 0);
-      fill.addColorStop(0, left ? '#253344' : '#94b1bc');
-      fill.addColorStop(1, left ? '#94b1bc' : '#253344');
-      ctx.fillStyle = fill;
+      ctx.fillStyle = '#11101c';
       ctx.fillRect(left ? inner - 4000 : inner, -4000, 4000, 4500);
-      ctx.fillStyle = '#c6e8ec';
-      ctx.fillRect(left ? inner - 2 : inner, -4000, 2, 4500);
+      ctx.fillStyle = '#323453';
+      ctx.fillRect(left ? inner - 1.5 : inner, -4000, 1.5, 4500);
     }
     for (const button of PRIZE_BUTTONS) {
       const inward = button.side === 1 ? 1 : -1;
       const wallFace = button.x - inward * (button.hw + 1);
       const depth = PRIZE_ANIM.pressDepthPx + 3;
       ctx.fillStyle = PAL.housing;
-      roundRect(ctx, inward === 1 ? wallFace - depth : wallFace, button.y - button.hh - 4, depth, button.hh * 2 + 8, 2);
+      inkRect(ctx, inward === 1 ? wallFace - depth : wallFace, button.y - button.hh - 4, depth, button.hh * 2 + 8, 2);
       ctx.fill();
     }
   }
 
-  /** Draw the selected geometry in both graphics styles, including physical bending. */
+  /** Draw the selected physical geometry, including bending. */
   private drawCenterObstacle(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: PoseSource, alpha: number): void {
     const obstacle = gw.centerObstacle;
     const x = COURT.net.x, top = COURT.net.y - COURT.net.hh;
-    ctx.save();
-    ctx.fillStyle = this.visualStyle === 'shaders' ? '#c2e8ff' : '#d7e4e6';
+    ctx.save(); ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 1.6;
     if (obstacle.id === 'classic') {
-      ctx.fillRect(x - 1.2, top, 2.4, SOLES_PX - top);
+      ctx.fillStyle = COMIC.mint; inkRect(ctx, x - 2, top, 4, SOLES_PX - top, 1); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = COMIC.paper; ctx.fillRect(x - 1.1, top, 2.2, (SOLES_PX - top) * 0.47);
+      ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 0.7;
+      for (let y = top + 4; y < SOLES_PX; y += 12) { ctx.beginPath(); ctx.moveTo(x - 1.5, y); ctx.lineTo(x + 1, y - 2); ctx.stroke(); }
       this.drawNetSpike(ctx, x, top);
     } else if (obstacle.id === 'sharp') {
-      const metal = ctx.createLinearGradient(x - SHARP_SPIKE.halfWidthPx, 0, x + SHARP_SPIKE.halfWidthPx, 0);
-      metal.addColorStop(0, '#66808c'); metal.addColorStop(0.5, '#f5e6c9'); metal.addColorStop(1, '#758995');
-      ctx.fillStyle = metal;
       ctx.beginPath(); ctx.moveTo(x - SHARP_SPIKE.halfWidthPx, FLOOR_TOP_PX);
-      ctx.lineTo(x, SHARP_SPIKE.topPx); ctx.lineTo(x + SHARP_SPIKE.halfWidthPx, FLOOR_TOP_PX);
-      ctx.closePath(); ctx.fill();
-      ctx.strokeStyle = '#ffe0a9'; ctx.lineWidth = 0.8; ctx.stroke();
+      ctx.lineTo(x, SHARP_SPIKE.topPx); ctx.lineTo(x + SHARP_SPIKE.halfWidthPx, FLOOR_TOP_PX); ctx.closePath();
+      ctx.fillStyle = COMIC.paper; ctx.fill(); ctx.stroke();
+      ctx.save(); ctx.clip(); hatch(ctx, x - 6, top, 7, FLOOR_TOP_PX - top, 7); ctx.restore();
+      ctx.strokeStyle = COMIC.plum; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.moveTo(x, top + 10); ctx.lineTo(x + 1, FLOOR_TOP_PX); ctx.stroke();
     } else if (obstacle.id === 'blower') {
-      const radius = AIR_HEATER.rangePx + AIR_HEATER.halfWidthPx;
-      const air = ctx.createLinearGradient(x - radius, 0, x + radius, 0);
-      air.addColorStop(0, 'rgba(100,218,255,0)'); air.addColorStop(0.5, 'rgba(100,218,255,0.17)');
-      air.addColorStop(1, 'rgba(100,218,255,0)');
-      ctx.fillStyle = air;
-      roundRect(ctx, x - radius, top - radius, radius * 2, FLOOR_TOP_PX - top + radius * 2, radius);
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(164,238,255,0.6)'; ctx.lineWidth = 1.2;
+      ctx.strokeStyle = COMIC.mint; ctx.lineWidth = 1;
       for (const side of [-1, 1]) for (let i = 0; i < 7; i++) {
         const travel = ((this.scenerySeconds * 22 + i * 9) % AIR_HEATER.rangePx);
         const ax = x + side * (AIR_HEATER.halfWidthPx + travel), y = top + 10 + i * 20;
-        ctx.beginPath(); ctx.moveTo(ax - side * 5, y); ctx.lineTo(ax, y);
+        ctx.globalAlpha = 0.65 * (1 - travel / AIR_HEATER.rangePx);
+        ctx.beginPath(); ctx.moveTo(ax - side * 8, y + 2); ctx.quadraticCurveTo(ax - side * 4, y - 3, ax, y);
         ctx.lineTo(ax - side * 3, y - 2); ctx.moveTo(ax, y); ctx.lineTo(ax - side * 3, y + 2); ctx.stroke();
       }
-      ctx.fillStyle = '#ecb67e';
-      roundRect(ctx, x - AIR_HEATER.halfWidthPx, top, AIR_HEATER.halfWidthPx * 2, FLOOR_TOP_PX - top, 3);
-      ctx.fill(); ctx.strokeStyle = '#694d44'; ctx.lineWidth = 1;
-      for (let y = top + 10; y < FLOOR_TOP_PX - 4; y += 8) {
-        ctx.beginPath(); ctx.moveTo(x - 2, y); ctx.lineTo(x + 2, y); ctx.stroke();
-      }
+      ctx.globalAlpha = 1; ctx.fillStyle = COMIC.ochre; ctx.strokeStyle = COMIC.ink;
+      inkRect(ctx, x - AIR_HEATER.halfWidthPx, top, AIR_HEATER.halfWidthPx * 2, FLOOR_TOP_PX - top, 1); ctx.fill(); ctx.stroke();
+      ctx.lineWidth = 0.8;
+      for (let y = top + 7; y < FLOOR_TOP_PX - 4; y += 6) { ctx.beginPath(); ctx.moveTo(x - 2, y); ctx.lineTo(x + 2, y - 1); ctx.stroke(); }
     } else {
       const halfHeight = (RUBBER_NET.basePx - top) / RUBBER_NET.segments / 2;
       const points: Array<{ x: number; y: number }> = [{ x, y: RUBBER_NET.basePx }];
@@ -328,107 +220,70 @@ export class Renderer {
         points.push({ x: pose.x + Math.sin(pose.a) * halfHeight, y: pose.y - Math.cos(pose.a) * halfHeight });
       }
       ctx.lineJoin = ctx.lineCap = 'round';
-      for (const [width, color] of [[9, '#163c42'], [6, '#83dbc8']] as const) {
+      for (const [width, color] of [[9, COMIC.ink], [6, COMIC.plum], [1.2, COMIC.paper]] as const) {
         ctx.lineWidth = width; ctx.strokeStyle = color;
+        ctx.setLineDash(width < 2 ? [2, 4] : []);
         ctx.beginPath(); ctx.moveTo(points[0].x, points[0].y);
-        for (let i = 1; i < points.length - 1; i++) {
-          ctx.quadraticCurveTo(points[i].x, points[i].y, (points[i].x + points[i + 1].x) / 2, (points[i].y + points[i + 1].y) / 2);
-        }
+        for (let i = 1; i < points.length - 1; i++) ctx.quadraticCurveTo(points[i].x, points[i].y, (points[i].x + points[i + 1].x) / 2, (points[i].y + points[i + 1].y) / 2);
         const tip = points[points.length - 1]; ctx.lineTo(tip.x, tip.y); ctx.stroke();
       }
-      ctx.setLineDash([2, 5]); ctx.lineWidth = 2; ctx.strokeStyle = '#e6fff4'; ctx.stroke();
       ctx.setLineDash([]);
     }
-    ctx.fillStyle = '#536573';
-    roundRect(ctx, x - 9, FLOOR_TOP_PX, 18, SOLES_PX - FLOOR_TOP_PX + 3, 2); ctx.fill();
+    comicPanel(ctx, x - 9, FLOOR_TOP_PX, 18, SOLES_PX - FLOOR_TOP_PX + 3, COMIC.plum);
     ctx.restore();
   }
 
   private drawNetSpike(ctx: CanvasRenderingContext2D, x: number, top: number): void {
-    ctx.beginPath();
-    ctx.moveTo(x - NET_SPIKE.halfWidthPx, top);
-    ctx.lineTo(x, top - NET_SPIKE.heightPx);
-    ctx.lineTo(x + NET_SPIKE.halfWidthPx, top);
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = '#f9d49a'; ctx.lineWidth = 0.8;
-    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x - NET_SPIKE.halfWidthPx, top); ctx.lineTo(x, top - NET_SPIKE.heightPx);
+    ctx.lineTo(x + NET_SPIKE.halfWidthPx, top); ctx.closePath();
+    ctx.fillStyle = COMIC.paper; ctx.fill(); ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 1.2; ctx.stroke();
   }
-
-  // -------------------------------------------------------------------------
-  // Frame
-  // -------------------------------------------------------------------------
 
   draw(gw: GameWorld, frames: Interpolator, alpha: number, hud: HudState): void {
     const ctx = this.ctx;
     const sceneryAt = performance.now() / 1000;
     const sceneryDt = this.sceneryAt === null ? 0 : Math.min(0.1, Math.max(0, sceneryAt - this.sceneryAt));
-    if (this.sceneryAt !== null && !hud.paused) {
-      this.scenerySeconds += sceneryDt;
-    }
+    if (this.sceneryAt !== null && !hud.paused) this.scenerySeconds += sceneryDt;
     this.sceneryAt = sceneryAt;
-    // Every doll joint drawn closed, and a held ball on its hand (dollPose.ts).
     const interp = closedPoses(frames, alpha, [gw.p1, gw.p2], gw.ball.body);
     this.paintCourt(ctx);
-
     this.drawShadows(gw, interp, alpha);
-
     this.worldSpace(ctx);
     this.drawCenterObstacle(ctx, gw, interp, alpha);
-    // Animation clock in frames: the interpolated poses sit between the
-    // previous frame and the latest, so this does too.
     const now = gw.frame - 1 + alpha;
     this.drawPrizeButtons(ctx, gw, now);
     this.drawFootMotion(ctx, gw, interp, now);
-    if (this.visualStyle === 'shaders') {
-      this.shaders.drawPlayers(ctx, [gw.p1, gw.p2], interp, alpha, this.scenerySeconds);
-    } else {
-      drawHumanPlayers(ctx, [gw.p1, gw.p2], interp, alpha);
-    }
+    drawHorrorPlayers(ctx, [gw.p1, gw.p2], interp, alpha);
     this.drawPowerGlows(ctx, gw, interp, alpha);
-    drawDrones(ctx, gw, now, alpha);
+    drawFamiliars(ctx, gw, now, alpha);
     this.drawBall(ctx, gw, interp, alpha);
-    drawDronePops(ctx, gw, interp, alpha, now);
+    drawFamiliarPops(ctx, gw, interp, alpha, now);
     this.drawSwingEffects(ctx, gw, interp, alpha);
     this.drawOpponentHitEffects(ctx, gw, interp, alpha);
     this.drawStunEffects(ctx, gw, interp, alpha);
     this.drawSpecialEffects(ctx, gw, interp, alpha);
     for (const e of gw.executers) if (!e.dead) this.drawExecuter(ctx, e, interp, alpha);
     this.drawChargeMeters(ctx, gw, interp, alpha);
-
+    this.grain.draw(ctx, this.canvas.width, this.canvas.height, this.scenerySeconds, this.grainPixelRatio);
     this.stageSpace(ctx);
     this.drawOffscreenBall(ctx, gw, interp, alpha);
     this.drawOffscreenPlayers(ctx, gw, interp, alpha);
     this.drawHud(ctx, gw, hud, now);
   }
 
-  /** Soft sand contact shadows stay on the ground while the doll jumps or flips. */
   private drawShadows(gw: GameWorld, interp: PoseSource, alpha: number): void {
-    const ctx = this.ctx;
-    ctx.save();
-    this.worldSpace(ctx);
+    const ctx = this.ctx; ctx.save(); this.worldSpace(ctx);
     for (const p of [gw.p1, gw.p2]) {
       const hips = interp.pose(p.ass, alpha);
-      const left = interp.pose(p.activePart('FootLeft'), alpha);
-      const right = interp.pose(p.activePart('FootRight'), alpha);
+      const left = interp.pose(p.activePart('FootLeft'), alpha), right = interp.pose(p.activePart('FootRight'), alpha);
       const lift = Math.max(0, FLOOR_TOP_PX - Math.max(left.y, right.y) - footHalfHeight * p.sizeScale);
       const radius = (24 + lift * 0.025) * p.sizeScale;
-      const opacity = 0.3 / (1 + lift / 100);
-      ctx.save();
-      ctx.translate(hips.x, FLOOR_TOP_PX + (SOLE_Y - footHalfHeight) * p.sizeScale);
-      ctx.scale(1, 0.22);
-      const fade = ctx.createRadialGradient(0, 0, 0, 0, 0, radius);
-      fade.addColorStop(0, 'rgba(68,44,25,' + opacity + ')');
-      fade.addColorStop(0.4, 'rgba(68,44,25,' + opacity * 0.7 + ')');
-      fade.addColorStop(1, 'rgba(68,44,25,0)');
-      ctx.fillStyle = fade;
-      ctx.fillRect(-radius, -radius, radius * 2, radius * 2);
-      ctx.restore();
+      ctx.globalAlpha = 0.28 / (1 + lift / 100); ctx.fillStyle = COMIC.ink;
+      ctx.beginPath(); ctx.ellipse(hips.x, SOLES_PX, radius, 3 * p.sizeScale, -0.02, 0, Math.PI * 2); ctx.fill();
     }
     ctx.restore();
   }
 
-  /** Small sand puffs make steps, take-offs, and landings readable. */
   private drawFootMotion(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: PoseSource, now: number): void {
     let state = this.motion.get(gw);
     if (!state) {
@@ -478,7 +333,7 @@ export class Renderer {
     ctx.restore();
   }
 
-  /** A ring on a powered head, and the ability's name rising for 1.5 s on pickup. */
+  /** An ink halo and a rising lettered callout identify active powers. */
   private drawPowerGlows(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: PoseSource, alpha: number): void {
     const now = gw.frame - 1 + alpha;
     for (const p of [gw.p1, gw.p2]) {
@@ -486,19 +341,18 @@ export class Renderer {
       if (!power) continue;
       const head = interp.pose(p.head, alpha);
       ctx.save();
-      ctx.strokeStyle = 'rgba(255,216,67,0.8)';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(head.x, head.y, 18 * p.sizeScale + 2, 0, Math.PI * 2);
+      ctx.strokeStyle = COMIC.ochre;
+      ctx.lineWidth = 1.2;
+      burstPath(ctx, head.x, head.y, 18 * p.sizeScale + 2, 8);
       ctx.stroke();
       const age = now - power.startedAt;
       if (age >= 0 && age < 1.5 * FPS) {
         const fade = Math.min(1, 2 - age / (0.75 * FPS));
-        ctx.font = 'bold 16px system-ui, sans-serif';
+        ctx.font = 'bold 16px ' + COMIC_TEXT;
         ctx.textAlign = 'center';
         ctx.lineWidth = 4;
-        ctx.strokeStyle = `rgba(255,255,255,${0.85 * fade})`;
-        ctx.fillStyle = `rgba(120,55,0,${fade})`;
+        ctx.strokeStyle = `rgba(17,16,26,${0.9 * fade})`;
+        ctx.fillStyle = `rgba(235,220,181,${fade})`;
         const y = head.y - 30 * p.sizeScale - age * 0.8;
         ctx.strokeText(`${POWER_LABELS[power.kind]}!`, head.x, y);
         ctx.fillText(`${POWER_LABELS[power.kind]}!`, head.x, y);
@@ -508,7 +362,7 @@ export class Renderer {
   }
 
   /**
-   * A red bar, and a glow where the feet will sweep through, show the
+   * A rust-red bar and a ragged mark where the feet sweep show the
    * windup. A faint line shows when the nearby ball is in attraction range.
    */
   private drawChargeMeters(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: PoseSource, alpha: number): void {
@@ -525,14 +379,13 @@ export class Renderer {
           ctx.beginPath();
           ctx.moveTo(finger.x, finger.y);
           ctx.lineTo(ball.x, ball.y);
-          ctx.strokeStyle = `rgba(255,77,46,${0.15 + 0.35 * info.power * (1 - distance / CHARGE.attractRadiusPx)})`;
+          ctx.strokeStyle = `rgba(197,106,81,${0.15 + 0.35 * info.power * (1 - distance / CHARGE.attractRadiusPx)})`;
           ctx.lineWidth = 1.5;
           ctx.stroke();
         }
       }
-      ctx.beginPath();
-      ctx.arc(finger.x, finger.y, 9 + 9 * info.power, 0, Math.PI * 2);
-      ctx.strokeStyle = `rgba(255,77,46,${0.35 + 0.5 * info.power})`;
+      burstPath(ctx, finger.x, finger.y, 9 + 9 * info.power, 8);
+      ctx.strokeStyle = `rgba(197,106,81,${0.35 + 0.5 * info.power})`;
       ctx.lineWidth = 2 + 2 * info.power;
       ctx.stroke();
       const w = 32;
@@ -540,14 +393,14 @@ export class Renderer {
       const x = pose.x - w / 2;
       const y = pose.y - 26;
       ctx.fillStyle = 'rgba(15,25,35,0.55)';
-      roundRect(ctx, x, y, w, h, 2.5);
+      inkRect(ctx, x, y, w, h, 2.5);
       ctx.fill();
       ctx.fillStyle = PAL.prizeLive;
-      roundRect(ctx, x, y, Math.max(w * clamp01(info.power), 2), h, 2.5);
+      inkRect(ctx, x, y, Math.max(w * clamp01(info.power), 2), h, 2.5);
       ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+      ctx.strokeStyle = COMIC.ink;
       ctx.lineWidth = 0.8;
-      roundRect(ctx, x, y, w, h, 2.5);
+      inkRect(ctx, x, y, w, h, 2.5);
       ctx.stroke();
     }
   }
@@ -610,8 +463,8 @@ export class Renderer {
       if (p.stunFrames <= 0) continue;
       const head = interp.pose(p.head, alpha);
       ctx.save();
-      ctx.fillStyle = '#ffe36d';
-      ctx.strokeStyle = '#a06a14';
+      ctx.fillStyle = COMIC.ochre;
+      ctx.strokeStyle = COMIC.ink;
       ctx.lineWidth = 0.9;
       for (let star = 0; star < 3; star++) {
         const angle = now * 0.16 + star * Math.PI * 2 / 3;
@@ -632,10 +485,10 @@ export class Renderer {
       }
       const y = head.y - 40 * p.sizeScale;
       ctx.fillStyle = 'rgba(25,30,45,0.55)';
-      roundRect(ctx, head.x - 16, y, 32, 3, 1.5);
+      inkRect(ctx, head.x - 16, y, 32, 3, 1.5);
       ctx.fill();
-      ctx.fillStyle = '#ffe36d';
-      roundRect(ctx, head.x - 16, y, 32 * p.stunFrames / STUN.frames, 3, 1.5);
+      ctx.fillStyle = COMIC.ochre;
+      inkRect(ctx, head.x - 16, y, 32 * p.stunFrames / STUN.frames, 3, 1.5);
       ctx.fill();
       ctx.restore();
     }
@@ -651,8 +504,7 @@ export class Renderer {
       const pose = interp.pose(p.tors, alpha);
       const fade = 1 - age / 10;
       ctx.save();
-      ctx.beginPath();
-      ctx.arc(pose.x, pose.y, 18 + effect.power * 8 + age * 2.5, 0, Math.PI * 2);
+      burstPath(ctx, pose.x, pose.y, 18 + effect.power * 8 + age * 2.5);
       ctx.strokeStyle = `rgba(255,245,190,${0.8 * fade})`;
       ctx.lineWidth = 3;
       ctx.stroke();
@@ -670,14 +522,15 @@ export class Renderer {
       if (perfectAge >= 0 && perfectAge < 12) {
         const fade = 1 - perfectAge / 12;
         ctx.save();
-        ctx.strokeStyle = `rgba(255,210,40,${fade})`;
+        ctx.strokeStyle = `rgba(218,176,92,${fade})`;
         ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.arc(ball.x, ball.y, 22 + perfectAge * 2, 0, Math.PI * 2);
+        burstPath(ctx, ball.x, ball.y, 22 + perfectAge * 2);
         ctx.stroke();
-        ctx.fillStyle = `rgba(120,55,0,${fade})`;
-        ctx.font = 'bold 16px system-ui, sans-serif';
+        ctx.fillStyle = `rgba(235,220,181,${fade})`;
+        ctx.strokeStyle = `rgba(17,16,26,${fade})`; ctx.lineWidth = 3;
+        ctx.font = '20px ' + COMIC_TITLE;
         ctx.textAlign = 'center';
+        ctx.strokeText('KICK!', ball.x, ball.y - 30 - perfectAge);
         ctx.fillText('KICK!', ball.x, ball.y - 30 - perfectAge);
         ctx.restore();
       }
@@ -689,12 +542,13 @@ export class Renderer {
       ctx.save();
       ctx.strokeStyle = `rgba(255,245,190,${fade})`;
       ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.arc(ball.x, ball.y, 24 + age * 3, 0, Math.PI * 2);
+      burstPath(ctx, ball.x, ball.y, 24 + age * 3);
       ctx.stroke();
-      ctx.fillStyle = `rgba(30,35,55,${fade})`;
-      ctx.font = 'bold 18px system-ui, sans-serif';
+      ctx.fillStyle = `rgba(235,220,181,${fade})`;
+      ctx.strokeStyle = `rgba(17,16,26,${fade})`; ctx.lineWidth = 3;
+      ctx.font = '22px ' + COMIC_TITLE;
       ctx.textAlign = 'center';
+      ctx.strokeText('CLASH!', ball.x, ball.y - 38 - age);
       ctx.fillText('CLASH!', ball.x, ball.y - 38 - age);
       ctx.restore();
     }
@@ -729,132 +583,53 @@ export class Renderer {
   /** A tapered comet wake follows the actual flight, including curved shots and bounces. */
   private drawBallTrail(ctx: CanvasRenderingContext2D, gw: GameWorld, pose: Pose, now: number, speed: number, r: number): void {
     let points = this.ballTrails.get(gw);
-    if (!points) {
-      points = [];
-      this.ballTrails.set(gw, points);
-    }
+    if (!points) { points = []; this.ballTrails.set(gw, points); }
     const last = points[points.length - 1];
-    // A held ball or a round reset must never draw a streak across the court.
-    if (gw.ball.held || gw.ball.ballOfPlayer !== 0) {
-      points.length = 0;
-      return;
-    }
-    if (last && (now < last.frame || Math.hypot(pose.x - last.x, pose.y - last.y) > 180)) {
-      points.length = 0;
-    }
+    if (gw.ball.held || gw.ball.ballOfPlayer !== 0) { points.length = 0; return; }
+    if (last && (now < last.frame || Math.hypot(pose.x - last.x, pose.y - last.y) > 180)) points.length = 0;
     while (points.length && now - points[0].frame >= BALL_TRAIL_FRAMES) points.shift();
-    const strength = clamp01((speed - 1) / 12);
-    const newest = points[points.length - 1];
-    // Render calls at the same simulation time (including pause) leave history intact.
+    const strength = clamp01((speed - 1) / 12), newest = points[points.length - 1];
     if (!newest || now > newest.frame) points.push({ x: pose.x, y: pose.y, frame: now, strength });
     if (points.length > 64) points.splice(0, points.length - 64);
-
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    // Broad blue bloom, a cyan body, and a narrow warm-white core.
-    for (const layer of [
-      { width: r * 2.6, rgb: '80,175,255', opacity: 0.08 },
-      { width: r * 1.2, rgb: '130,225,255', opacity: 0.24 },
-      { width: r * 0.32, rgb: '255,246,214', opacity: 0.8 },
-    ]) {
-      for (let i = 1; i < points.length; i++) {
-        const a = points[i - 1], b = points[i];
-        const life = clamp01(1 - (now - (a.frame + b.frame) / 2) / BALL_TRAIL_FRAMES);
-        const energy = (a.strength + b.strength) / 2;
-        ctx.lineWidth = Math.max(0.3, layer.width * life * (0.4 + 0.6 * energy));
-        ctx.strokeStyle = `rgba(${layer.rgb},${layer.opacity * life * life * energy})`;
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.x, b.y);
-        ctx.stroke();
-      }
-    }
-
-    // Deterministic embers drift gently away from the wake as they fade.
-    for (let i = 1; i < points.length; i++) {
-      const p = points[i], previous = points[i - 1];
-      if (Math.floor(p.frame * 2) === Math.floor(previous.frame * 2)) continue;
-      const age = (now - p.frame) / BALL_TRAIL_FRAMES;
-      const life = 1 - age;
-      const phase = Math.floor(p.frame * 2) * 2.399;
-      const x = p.x + Math.sin(phase) * age * 24;
-      const y = p.y + Math.cos(phase) * age * 24;
-      ctx.fillStyle = `rgba(255,230,165,${life * life * p.strength * 0.7})`;
-      ctx.beginPath();
-      ctx.arc(x, y, 0.5 + life * 1.4, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    if (strength > 0) {
-      const glow = ctx.createRadialGradient(pose.x, pose.y, r * 0.6, pose.x, pose.y, r * 2.6);
-      glow.addColorStop(0, `rgba(180,235,255,${strength * 0.4})`);
-      glow.addColorStop(0.45, `rgba(100,200,255,${strength * 0.16})`);
-      glow.addColorStop(1, 'rgba(80,175,255,0)');
-      ctx.fillStyle = glow;
-      ctx.beginPath();
-      ctx.arc(pose.x, pose.y, r * 2.6, 0, Math.PI * 2);
-      ctx.fill();
+    ctx.save(); ctx.lineCap = 'butt';
+    for (const offset of [-0.75, 0, 0.75]) for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1], b = points[i];
+      const life = clamp01(1 - (now - (a.frame + b.frame) / 2) / BALL_TRAIL_FRAMES);
+      const energy = (a.strength + b.strength) / 2;
+      const dx = b.x - a.x, dy = b.y - a.y, length = Math.hypot(dx, dy) || 1;
+      const ox = -dy / length * r * offset, oy = dx / length * r * offset;
+      ctx.globalAlpha = life * life * energy * (offset === 0 ? 0.8 : 0.45);
+      ctx.lineWidth = offset === 0 ? 2 : 0.9;
+      ctx.strokeStyle = offset === 0 ? COMIC.paper : COMIC.ink;
+      ctx.beginPath(); ctx.moveTo(a.x + ox, a.y + oy); ctx.lineTo(b.x + ox, b.y + oy); ctx.stroke();
     }
     ctx.restore();
   }
 
-  /** The jersey colour of whoever touched the ball last, blending in as it changes. */
   private currentBallTint(gw: GameWorld, now: number): { rgb: string; alpha: number } | null {
-    const t = gw.ballTint;
-    if (!t.player) return null;
+    const t = gw.ballTint; if (!t.player) return null;
     const k = clamp01((now - t.frame) / BALL_TINT.fadeInFrames);
-    const colors = this.visualStyle === 'shaders' ? PAL.ballTintRgb
-      : { 0: [251, 251, 246], 1: [47, 111, 222], 2: [226, 69, 59] };
-    const from = colors[t.previous];
-    const to = colors[t.player];
+    const colors = { 0: [235, 220, 181], 1: [218, 176, 92], 2: [159, 198, 173] };
+    const from = colors[t.previous], to = colors[t.player];
     const rgb = to.map((c, i) => Math.round(from[i] + (c - from[i]) * k)).join(',');
-    // From the white ball the colour washes in; between players it shifts hue.
-    const alpha = BALL_TINT.alpha * (t.previous ? 1 : k);
-    return { rgb, alpha };
+    return { rgb, alpha: BALL_TINT.alpha * (t.previous ? 1 : k) };
   }
 
   private ballArt(ctx: CanvasRenderingContext2D, pose: Pose, tint?: { rgb: string; alpha: number } | null): void {
-    const r = BALL.radiusPx;
-    ctx.save();
-    ctx.translate(pose.x, pose.y);
-    ctx.rotate(pose.a);
-    ctx.fillStyle = PAL.ball;
-    ctx.beginPath();
-    ctx.arc(0, 0, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.save();
-    ctx.clip();
-    ctx.lineWidth = 3.2;
-    ctx.strokeStyle = PAL.ballPanelA;
-    ctx.beginPath();
-    ctx.arc(-r * 0.9, -r * 0.2, r * 1.05, -0.9, 0.9);
-    ctx.stroke();
-    ctx.strokeStyle = PAL.ballPanelB;
-    ctx.beginPath();
-    ctx.arc(r * 0.95, r * 0.35, r * 1.1, Math.PI - 0.8, Math.PI + 0.8);
-    ctx.stroke();
-    ctx.strokeStyle = 'rgba(0,0,0,0.18)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(0, r * 1.3, r * 1.2, -Math.PI * 0.8, -Math.PI * 0.2);
-    ctx.stroke();
-     // The jersey colour of whoever touched it last.
-     if (tint && tint.alpha > 0) {
-       const wash = ctx.createRadialGradient(0, -r * 0.15, r * 0.2, 0, 0, r);
-       wash.addColorStop(0, `rgba(${tint.rgb},${tint.alpha})`);
-       wash.addColorStop(1, `rgba(${tint.rgb},${tint.alpha * 0.4})`);
-       ctx.fillStyle = wash;
-       ctx.beginPath();
-       ctx.arc(0, 0, r, 0, Math.PI * 2);
-       ctx.fill();
-      }
+    const r = BALL.radiusPx; ctx.save(); ctx.translate(pose.x, pose.y); ctx.rotate(pose.a);
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fillStyle = COMIC.paper; ctx.fill();
+    ctx.save(); ctx.clip();
+    for (let i = 0; i < 6; i++) {
+      ctx.save(); ctx.rotate(i * Math.PI / 3);
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.bezierCurveTo(r * 0.6, -r * 0.55, r * 0.85, -r * 0.5, r, 0);
+      ctx.arc(0, 0, r, 0, Math.PI / 3); ctx.quadraticCurveTo(r * 0.1, r * 0.7, 0, 0);
+      ctx.fillStyle = i % 2 ? COMIC.paper : COMIC.mint; ctx.fill();
+      ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 0.65; ctx.stroke(); ctx.restore();
+    }
+    if (tint && tint.alpha > 0) { ctx.globalAlpha *= tint.alpha * 0.65; ctx.fillStyle = 'rgb(' + tint.rgb + ')'; ctx.fillRect(-r, -r, r * 2, r * 2); }
     ctx.restore();
-    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(0, 0, r - 0.5, 0, Math.PI * 2);
-    ctx.stroke();
+    ctx.save(); ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.clip(); hatch(ctx, -r, r * 0.28, r * 2, r, 3.5); ctx.restore();
+    ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 1.3; ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke();
     ctx.restore();
   }
 
@@ -915,132 +690,50 @@ export class Renderer {
    * poles while its pull is on, faster and brighter the stronger it is.
    */
   private drawMagnetArt(ctx: CanvasRenderingContext2D, facing: number, field: number, latched: boolean, t: number): void {
-    ctx.save();
-    ctx.rotate(facing);
-    if (field > 0) {
-      ctx.lineCap = 'round';
-      for (let i = 0; i < 3; i++) {
-        const p = (t * (0.03 + 0.04 * field) + i / 3) % 1; // 0 far → 1 near
-        const radius = 22 + (1 - p) * (24 + 40 * field);
-        ctx.strokeStyle = `rgba(84,184,238,${(0.15 + 0.55 * field) * Math.sin(p * Math.PI)})`;
-        ctx.lineWidth = 1.5 + 1.5 * field;
-        ctx.beginPath();
-        ctx.arc(0, 0, radius, -0.75, 0.75);
-        ctx.stroke();
-      }
+    ctx.save(); ctx.rotate(facing);
+    if (field > 0) for (let i = 0; i < 3; i++) {
+      const p = (t * (0.03 + 0.04 * field) + i / 3) % 1;
+      const radius = 22 + (1 - p) * (24 + 40 * field);
+      ctx.globalAlpha = (0.2 + 0.6 * field) * Math.sin(p * Math.PI);
+      ctx.strokeStyle = COMIC.mint; ctx.lineWidth = 1.3; ctx.setLineDash([5, 3]);
+      ctx.beginPath(); ctx.arc(0, 0, radius, -0.75, 0.75); ctx.stroke();
     }
-    if (latched) {
-      const glow = ctx.createRadialGradient(14, 0, 1, 14, 0, 22);
-      glow.addColorStop(0, `rgba(160,220,255,${0.45 + 0.2 * Math.sin(t * 0.5)})`);
-      glow.addColorStop(1, 'rgba(160,220,255,0)');
-      ctx.fillStyle = glow;
-      ctx.fillRect(-8, -22, 44, 44);
-    }
-    if (drawArenaSprite(ctx, 'magnet', -2, 0, 56, 56)) {
-      ctx.restore();
-      return;
-    }
-    // The U opens toward +x: the bend at the back, the poles in front.
-    ctx.strokeStyle = '#3c4552';
-    ctx.lineWidth = 11;
-    ctx.lineCap = 'butt';
-    ctx.beginPath();
-    ctx.moveTo(12, -11);
-    ctx.lineTo(-5, -11);
-    ctx.arc(-5, 0, 11, -Math.PI / 2, Math.PI / 2, true);
-    ctx.lineTo(12, 11);
-    ctx.stroke();
-    ctx.fillStyle = '#e94c47';
-    ctx.fillRect(6, -16.5, 9, 11);
-    ctx.fillStyle = '#48a9e9';
-    ctx.fillRect(6, 5.5, 9, 11);
-    ctx.fillStyle = '#cdd5dc';
-    ctx.fillRect(-9, -14, 5, 5);
-    ctx.fillRect(-9, 9, 5, 5);
-    ctx.restore();
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
+    if (latched) { burstPath(ctx, 14, 0, 22 + Math.sin(t * 0.5) * 2, 8); ctx.strokeStyle = COMIC.ochre; ctx.lineWidth = 1; ctx.stroke(); }
+    drawHorrorProp(ctx, 'magnet', -2, 0, 52, 52); ctx.restore();
   }
 
-  /**
-   * The express porter leans with its dash and trails restrained service streaks.
-   */
-  private drawCometArt(
-    ctx: CanvasRenderingContext2D, spin: number, heading: number, speed: number, dashing: boolean, t: number,
-  ): void {
-    ctx.save();
-    ctx.scale(Math.cos(heading) >= 0 ? -1 : 1, 1);
-    ctx.rotate(Math.sin(spin) * 0.07);
-    if (speed > 2) {
-      for (let i = 0; i < 3; i++) {
-        const shift = (t * 2 + i * 7) % 12;
-        ctx.strokeStyle = dashing ? 'rgba(255,183,105,0.5)' : 'rgba(169,200,215,0.3)';
-        ctx.lineWidth = 1.2;
-        ctx.beginPath(); ctx.moveTo(27 + shift, -7 + i * 7);
-        ctx.lineTo(36 + shift + Math.min(speed, 15), -7 + i * 7); ctx.stroke();
-      }
+  private drawCometArt(ctx: CanvasRenderingContext2D, spin: number, heading: number, speed: number, dashing: boolean, t: number): void {
+    ctx.save(); ctx.rotate(heading); ctx.rotate(Math.sin(spin) * 0.05);
+    if (speed > 2) for (let i = 0; i < 3; i++) {
+      const shift = (t * 2 + i * 7) % 12; ctx.strokeStyle = dashing ? COMIC.ochre : COMIC.paper; ctx.lineWidth = 1.1;
+      ctx.beginPath(); ctx.moveTo(-25 - shift, -7 + i * 7); ctx.lineTo(-34 - shift - Math.min(speed, 15), -5 + i * 7); ctx.stroke();
     }
-    if (!drawArenaSprite(ctx, 'porter', 0, 0, 64, 53)) {
-      ctx.fillStyle = '#e4ded0'; roundRect(ctx, -23, -15, 46, 29, 7); ctx.fill();
-      ctx.fillStyle = '#e18b4d'; ctx.fillRect(3, -11, 16, 14);
-    }
-    ctx.restore();
+    drawHorrorProp(ctx, 'fire-skull', 0, 0, 61, 48); ctx.restore();
   }
 
-  /**
-   * Rigid fitness-assistant caps surround a flexible steel coil. Only the coil
-   * stretches during charge, compresses on impact, and wobbles in recovery.
-   */
   private drawSpringArt(ctx: CanvasRenderingContext2D, facing: number, stretch: number): void {
-    const half = 15 * stretch;
-    ctx.save(); ctx.rotate(facing + Math.PI / 2);
-    // Rigid caps stay rigid while only the exposed steel coil changes length.
-    const coil = ctx.createLinearGradient(-12, 0, 12, 0);
-    coil.addColorStop(0, '#596676'); coil.addColorStop(0.3, '#e6e8e1');
-    coil.addColorStop(0.55, '#788798'); coil.addColorStop(0.8, '#d6cab3'); coil.addColorStop(1, '#435363');
-    ctx.strokeStyle = coil; ctx.lineWidth = 3.2; ctx.lineCap = 'round';
-    ctx.beginPath();
-    for (let i = 0; i <= 70; i++) {
-      const p = i / 70, x = Math.sin(p * Math.PI * 10) * 11;
-      const y = -half + 5 + p * (half * 2 - 10);
-      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    const half = 15 * stretch; ctx.save(); ctx.rotate(facing + Math.PI / 2);
+    for (const [width, color] of [[4, COMIC.ink], [2, COMIC.plum]] as const) {
+      ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineJoin = 'round'; ctx.beginPath();
+      for (let i = 0; i <= 50; i++) {
+        const p = i / 50, x = Math.sin(p * Math.PI * 10) * 10, y = -half + 5 + p * (half * 2 - 10);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
     }
-    ctx.stroke();
-    if (!drawArenaSprite(ctx, 'spring-base', 0, half + 4, 38, 19)) {
-      ctx.fillStyle = '#ded9ce'; roundRect(ctx, -17, half - 2, 34, 12, 4); ctx.fill();
-    }
-    if (!drawArenaSprite(ctx, 'spring-cap', 0, -half, 37, 19)) {
-      ctx.fillStyle = '#df8050'; roundRect(ctx, -16, -half - 7, 32, 13, 5); ctx.fill();
-    }
-    ctx.restore();
+    drawHorrorProp(ctx, 'jaw-base', 0, half + 4, 39, 19);
+    drawHorrorProp(ctx, 'jaw-cap', 0, -half, 39, 19); ctx.restore();
   }
 
-  /**
-   * A spa-service dispenser pours animated adhesive treatment. Its rigid shell
-   * remains readable while the transparent liquid and bonds show the hold.
-   */
-  private drawSlimeArt(
-    ctx: CanvasRenderingContext2D, heading: number, speed: number, splat: number | null, gaze: number, t: number,
-  ): void {
-    const stuck = splat !== null;
-    ctx.save();
-    ctx.scale(Math.cos(gaze) >= 0 ? 1 : -1, 1);
+  private drawSlimeArt(ctx: CanvasRenderingContext2D, heading: number, speed: number, splat: number | null, gaze: number, t: number): void {
+    const stuck = splat !== null; ctx.save(); ctx.scale(Math.cos(gaze) >= 0 ? 1 : -1, 1);
     ctx.rotate(stuck ? Math.sin(splat) * 0.06 : Math.sin(heading) * speed * 0.12);
-    const liquid = ctx.createRadialGradient(8, 14, 1, 7, 18, 24);
-    liquid.addColorStop(0, 'rgba(138,238,230,0.72)'); liquid.addColorStop(1, 'rgba(48,156,173,0.05)');
-    ctx.fillStyle = liquid; ctx.beginPath();
-    ctx.ellipse(7, 18, stuck ? 26 : 17, 6 + Math.sin(t * 0.24), 0, 0, Math.PI * 2); ctx.fill();
-    if (!drawArenaSprite(ctx, 'spa', 0, -1, 54, 44)) {
-      ctx.fillStyle = '#e3ded4'; roundRect(ctx, -17, -16, 34, 32, 8); ctx.fill();
-    }
-    ctx.strokeStyle = 'rgba(101,230,225,0.8)'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(21, 6); ctx.quadraticCurveTo(24, 14, 16, 19); ctx.stroke();
-    ctx.restore();
+    ctx.fillStyle = COMIC.mint; ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.ellipse(6, 17, stuck ? 24 : 15, 3 + Math.sin(t * 0.24) * 0.5, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    drawHorrorProp(ctx, 'ectoplasm', 0, -1, 48, 46); ctx.restore();
   }
 
-  /**
-   * The slime's glue, under its body: a goo bridge to each part it holds,
-   * thinning as it is pulled out, a coat of goo on that part, a thin strand
-   * to the part it is reeling in, and a strand that tore recoiling apart.
-   */
   private drawSlimeGlue(ctx: CanvasRenderingContext2D, e: Executer, interp: PoseSource, alpha: number, t: number): void {
     const at = (b: Body, local: Vec2Value) => {
       const p = interp.pose(b, alpha);
@@ -1123,44 +816,18 @@ export class Renderer {
   }
 
   private drawBoxerArt(ctx: CanvasRenderingContext2D, facing: number, aim: number, reach: number, active: number): void {
-    const r = EXECUTER.radiusPx;
-    ctx.save();
-    ctx.scale(facing, 1);
-
-    // One longer arm jabs while the other guards.
-    ctx.save();
-    ctx.rotate(aim);
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
+    ctx.save(); ctx.scale(facing, 1); ctx.save(); ctx.rotate(aim); ctx.lineCap = 'round';
     for (let i = 0; i < 2; i++) {
-      const y = i === 0 ? -9 : 9;
-      const extension = i === active ? reach * BOXER.armExtensionPx : 0;
-      ctx.strokeStyle = '#bda37b';
-      ctx.lineWidth = 7;
-      ctx.beginPath();
-      ctx.moveTo(10, y);
-      ctx.lineTo(21, y + (i === 0 ? -3 : 3));
-      ctx.lineTo(BOXER.armRestPx - 1 + extension, y - (i === 0 ? -2 : 2));
-      ctx.stroke();
-      const glove = ctx.createRadialGradient(BOXER.armRestPx + extension - 2, y - 4, 1, BOXER.armRestPx + extension, y, 7);
-      glove.addColorStop(0, '#ffc1a2'); glove.addColorStop(0.35, '#e77a52'); glove.addColorStop(1, '#8b3429');
-      ctx.fillStyle = glove;
-      ctx.beginPath();
-      ctx.arc(BOXER.armRestPx + extension, y - (i === 0 ? -2 : 2), 5.5, 0, Math.PI * 2);
-      ctx.fill();
+      const y = i === 0 ? -9 : 9, extension = i === active ? reach * BOXER.armExtensionPx : 0;
+      for (const [width, color] of [[6, COMIC.ink], [3.5, COMIC.paper]] as const) {
+        ctx.strokeStyle = color; ctx.lineWidth = width; ctx.beginPath(); ctx.moveTo(8, y);
+        ctx.lineTo(21, y + (i === 0 ? -3 : 3)); ctx.lineTo(BOXER.armRestPx - 1 + extension, y - (i === 0 ? -2 : 2)); ctx.stroke();
+      }
+      drawHorrorProp(ctx, 'fist', BOXER.armRestPx + extension, y - (i === 0 ? -2 : 2), 15, 13);
     }
-    ctx.restore();
-
-    if (!drawArenaSprite(ctx, 'boxer', 0, 0, r * 2.6, r * 2.4)) {
-      const shell = ctx.createLinearGradient(0, -r, 0, r);
-      shell.addColorStop(0, '#f2eee4'); shell.addColorStop(1, '#737e88');
-      ctx.fillStyle = shell; roundRect(ctx, -r, -r, r * 2, r * 2, 8); ctx.fill();
-      ctx.fillStyle = '#ffc478'; ctx.fillRect(-5, -4, 12, 3);
-    }
-    ctx.restore();
+    ctx.restore(); drawHorrorProp(ctx, 'voodoo', 0, 0, 36, 46); ctx.restore();
   }
 
-  /** One hazard as a still icon, `size` px across, for the HUD queue. */
   private drawExecuterIcon(ctx: CanvasRenderingContext2D, id: ExecuterId, size: number): void {
     const k = size / (EXECUTER.radiusPx * 2.6);
     ctx.save();
@@ -1186,59 +853,20 @@ export class Renderer {
    */
   private drawPrizeButtons(ctx: CanvasRenderingContext2D, gw: GameWorld, now: number): void {
     for (const b of gw.ground.prizeButtons) {
-      const d = b.def;
-      const live = !b.armed;
-      const depth = buttonDepth(b, now);
-      const x = d.x - d.hw - b.inward * depth;
-      const y = d.y - d.hh;
-      const w = d.hw * 2;
-      const h = d.hh * 2;
-
-      // Glow: steady when armed, pulsing while its executer lives.
-      const pulse = live ? 0.28 + 0.2 * Math.sin(now * 0.28) : 0.3;
-      const glow = ctx.createRadialGradient(x + w / 2, y + h / 2, 2, x + w / 2, y + h / 2, h * 0.75);
-      const resort = true;
-      const sideGlow = b.def.side === 1 ? '51,202,215' : '255,152,127';
-      const rgb = live ? PAL.prizeLiveGlow : resort ? sideGlow : PAL.prizeGlow;
-      glow.addColorStop(0, `rgba(${rgb},${pulse})`);
-      glow.addColorStop(1, `rgba(${rgb},0)`);
-      ctx.fillStyle = glow;
-      ctx.fillRect(x + w / 2 - h * 0.75, y + h / 2 - h * 0.75, h * 1.5, h * 1.5);
-
-      // Face.
-      ctx.fillStyle = live ? PAL.prizeLive : resort ? b.def.side === 1 ? '#33cad7' : '#ff987f' : PAL.prize;
-      roundRect(ctx, x, y, w, h, 2.5);
-      ctx.fill();
-      ctx.strokeStyle = live ? PAL.prizeLiveEdge : resort ? '#d2e6ed' : PAL.prizeEdge;
-      ctx.lineWidth = 1;
-      ctx.stroke();
-
-      // Life column: drains with the longest-lived of its executers.
-      const life = Math.max(0, ...b.executers.filter((e) => !e.dead).map((e) => e.lifeFraction));
-      if (live && life > 0) {
-        const lh = (h - 6) * life;
-        ctx.fillStyle = PAL.prizeCore;
-        roundRect(ctx, x + w / 2 - 1, y + h - 3 - lh, 2, lh, 1);
-        ctx.fill();
-      }
-
-      // Flash: bright on every press (each one launches), softer on re-arm.
+      const d = b.def, live = !b.armed, depth = buttonDepth(b, now);
+      const x = d.x - d.hw - b.inward * depth, y = d.y - d.hh, w = d.hw * 2, h = d.hh * 2;
+      ctx.save(); ctx.fillStyle = live ? COMIC.rust : d.side === 1 ? COMIC.ochre : COMIC.mint;
+      inkRect(ctx, x, y, w, h, 1); ctx.fill(); ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.save(); ctx.clip(); hatch(ctx, x, y, w, h, 8); ctx.restore();
+      const life = Math.max(0, ...b.executers.filter(e => !e.dead).map(e => e.lifeFraction));
+      if (live && life > 0) { ctx.fillStyle = COMIC.paper; ctx.fillRect(x + w / 2 - 0.6, y + h - 3 - (h - 6) * life, 1.2, (h - 6) * life); }
       const flash = Math.max(flashCurve(now - b.pressedAt, 6, 1), flashCurve(now - b.releasedAt, 6, 0.5));
-      if (flash > 0) {
-        ctx.fillStyle = `rgba(255,255,255,${flash})`;
-        roundRect(ctx, x, y, w, h, 2.5);
-        ctx.fill();
-      }
-
-      // Shockwave out of the face on the press; a small ring when it re-arms.
-      const cx = d.x + b.inward * d.hw;
-      const cy = d.y;
-      ring(ctx, cx, cy, now - b.pressedAt, 14, 8, 95, 4.5, PAL.prizeLiveGlow);
-      ring(ctx, cx, cy, now - b.releasedAt, 10, 6, 45, 2.5, PAL.prizeGlow);
+      if (flash > 0) { ctx.globalAlpha = flash; ctx.fillStyle = COMIC.paper; inkRect(ctx, x, y, w, h, 1); ctx.fill(); ctx.globalAlpha = 1; }
+      ring(ctx, d.x + b.inward * d.hw, d.y, now - b.pressedAt, 14, 8, 95, 2.5, PAL.prizeLiveGlow);
+      ring(ctx, d.x + b.inward * d.hw, d.y, now - b.releasedAt, 10, 6, 45, 1.5, PAL.prizeGlow); ctx.restore();
     }
   }
 
-  /** A player thrown or jumping far above the frame: mark where. */
   private drawOffscreenPlayers(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: PoseSource, alpha: number): void {
     for (const p of [gw.p1, gw.p2]) {
       const pose = interp.pose(p.head, alpha);
@@ -1251,49 +879,36 @@ export class Renderer {
       ctx.lineTo(sx + 7, 14);
       ctx.closePath();
       ctx.fill();
-      ctx.font = '800 8px system-ui, sans-serif';
+      ctx.font = '800 8px ' + COMIC_TEXT;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
       ctx.fillText(`P${p.id} ${(-sy / VIEW.scale / 30).toFixed(1)} m`, sx, 16);
     }
   }
 
-  /** A clipped service ticket; HTML icon controls occupy the quiet row below. */
+  /** A printed queue caption; HTML icon controls occupy the quiet row below. */
   private drawTopBar(ctx: CanvasRenderingContext2D, gw: GameWorld, now: number): number {
-    const x = HUD_BAR.midX, y = 8, w = 158, h = 18;
-    ctx.save();
-    ctx.fillStyle = 'rgba(8,20,32,0.65)';
-    ctx.strokeStyle = 'rgba(153,189,204,0.38)'; ctx.lineWidth = 0.6;
-    ctx.beginPath(); ctx.moveTo(x - w / 2 + 5, y); ctx.lineTo(x + w / 2 - 5, y);
-    ctx.lineTo(x + w / 2, y + 5); ctx.lineTo(x + w / 2, y + h - 4);
-    ctx.lineTo(x + w / 2 - 4, y + h); ctx.lineTo(x - w / 2, y + h);
-    ctx.lineTo(x - w / 2, y + 5); ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.strokeStyle = 'rgba(228,187,118,0.65)'; ctx.beginPath();
-    ctx.moveTo(x + w / 2 - 5, y); ctx.lineTo(x + w / 2, y + 5); ctx.stroke();
-    ctx.strokeStyle = 'rgba(188,209,216,0.35)'; ctx.setLineDash([1, 2]);
-    ctx.beginPath(); ctx.moveTo(x + 32, y + 3); ctx.lineTo(x + 32, y + h - 3); ctx.stroke(); ctx.setLineDash([]);
-    ctx.font = '600 6.5px system-ui'; ctx.fillStyle = '#ced8dc'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('TO ' + OPTIONS.gameSet, x + 54, y + h / 2);
+    const x = HUD_BAR.midX, y = 8, w = 176, h = 18;
+    ctx.save(); comicPanel(ctx, x - w / 2, y, w, h);
+    ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 0.65; ctx.setLineDash([1.5, 2]);
+    ctx.beginPath(); ctx.moveTo(x + 40, y + 3); ctx.lineTo(x + 40, y + h - 3); ctx.stroke(); ctx.setLineDash([]);
+    ctx.font = 'bold 7px ' + COMIC_TEXT; ctx.fillStyle = COMIC.ink; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('TO ' + OPTIONS.gameSet, x + 64, y + h / 2);
     if (gw.hazards) this.drawNextHazard(ctx, gw, x - w / 2 + 8, y + h / 2, now);
-    else { ctx.textAlign = 'left'; ctx.fillText('SERVICE OFF', x - w / 2 + 10, y + h / 2); }
-    ctx.restore();
-    return HUD_BAR.y + HUD_BAR.h;
+    else { ctx.textAlign = 'left'; ctx.fillText('TRAPS OFF', x - w / 2 + 10, y + h / 2); }
+    ctx.restore(); return HUD_BAR.y + HUD_BAR.h;
   }
 
   private drawNextHazard(ctx: CanvasRenderingContext2D, gw: GameWorld, x: number, y: number, now: number): void {
-    const [next] = gw.executerQueue.peek(1);
-    if (!next) return;
+    const [next] = gw.executerQueue.peek(1); if (!next) return;
     const since = now - gw.executerLaunchEffect.frame;
     const p = since >= 0 && since < 10 ? easeOutCubic(since / 10) : 1;
-    ctx.save(); ctx.translate(x + 6, y); ctx.globalAlpha = 0.65 + 0.35 * p;
-    ctx.scale(0.85 + 0.15 * p, 0.85 + 0.15 * p);
-    this.drawExecuterIcon(ctx, next.id, 12); ctx.restore();
-    const label = next.id === 'comet' ? 'PORTER' : next.id === 'slime' ? 'SPA' : next.label;
-    ctx.fillStyle = '#d3dfe2'; ctx.font = '600 6.5px system-ui'; ctx.textAlign = 'left';
-    ctx.fillText('NEXT: ' + label, x + 17, y);
+    ctx.save(); ctx.translate(x + 6, y); ctx.globalAlpha = 0.65 + 0.35 * p; ctx.scale(0.85 + 0.15 * p, 0.85 + 0.15 * p);
+    this.drawExecuterIcon(ctx, next.id, 14); ctx.restore();
+    ctx.fillStyle = COMIC.ink; ctx.font = 'bold 7px ' + COMIC_TEXT; ctx.textAlign = 'left';
+    ctx.fillText('NEXT: ' + HORROR_HAZARD_LABELS[next.id], x + 18, y);
   }
 
-  /** The ball often flies above the frame; point at it from the top edge. */
   private drawOffscreenBall(ctx: CanvasRenderingContext2D, gw: GameWorld, interp: PoseSource, alpha: number): void {
     const pose = interp.pose(gw.ball.body, alpha);
     const { x: sx, y: sy } = this.toStage(pose.x, pose.y);
@@ -1308,7 +923,7 @@ export class Renderer {
     ctx.lineTo(sx + 6, 13);
     ctx.closePath();
     ctx.fill();
-    ctx.font = '600 8px system-ui, sans-serif';
+    ctx.font = '600 8px ' + COMIC_TEXT;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     ctx.fillText(`${heightM} m`, sx, 15);
@@ -1321,22 +936,17 @@ export class Renderer {
       const player = id === 1 ? gw.p1 : gw.p2;
       const x = id === 1 ? HUD_LEFT_X : HUD_RIGHT_X;
       const dir = id === 1 ? 1 : -1;
-      const ink = id === 1 ? '#a2e4ff' : '#e5ddd0';
+      const ink = id === 1 ? COMIC.ochre : COMIC.mint;
       ctx.textAlign = id === 1 ? 'left' : 'right'; ctx.textBaseline = 'top';
-      // A small architectural bracket replaces the generic scoreboard card.
-      const shade = ctx.createLinearGradient(x - dir * 10, 0, x + dir * 52, 0);
-      shade.addColorStop(0, 'rgba(5,14,23,0.66)'); shade.addColorStop(1, 'rgba(5,14,23,0)');
-      ctx.fillStyle = shade; ctx.fillRect(Math.min(x - dir * 10, x + dir * 52), 8, 62, 54);
-      ctx.strokeStyle = 'rgba(225,187,127,0.5)'; ctx.lineWidth = 0.65;
-      ctx.beginPath(); ctx.moveTo(x - dir * 8, 10); ctx.lineTo(x - dir * 12, 14);
-      ctx.lineTo(x - dir * 12, 50); ctx.lineTo(x - dir * 8, 54); ctx.stroke();
+      comicPanel(ctx, id === 1 ? x - 12 : x - 57, 8, 69, 54, COMIC.night);
+      ctx.fillStyle = ink; ctx.fillRect(id === 1 ? x - 8 : x + 6, 13, 2, 43);
       const level = gw.levelOf(id);
       const label = gw.isCpu(id) ? 'CPU · ' + level : hud.singlePlayer ? 'YOU' : 'P' + id;
-      ctx.font = '600 7px system-ui'; ctx.fillStyle = '#cdd8dd'; ctx.fillText(label, x, 13);
-      ctx.font = '600 24px system-ui'; ctx.fillStyle = ink; ctx.fillText(String(g.score[id]), x, 24);
+      ctx.font = '600 7px ' + COMIC_TEXT; ctx.fillStyle = COMIC.paper; ctx.fillText(label, x, 13);
+      ctx.font = '28px ' + COMIC_TITLE; ctx.fillStyle = ink; ctx.fillText(String(g.score[id]), x, 24);
       for (let i = 0; i < MAX_TOUCHES; i++) {
         const on = i < Math.min(player.contact, MAX_TOUCHES);
-        ctx.fillStyle = on ? player.contact >= MAX_TOUCHES ? '#ed805e' : ink : 'rgba(148,170,188,0.3)';
+        ctx.fillStyle = on ? player.contact >= MAX_TOUCHES ? COMIC.rust : ink : 'rgba(235,220,181,0.25)';
         ctx.beginPath(); ctx.arc(x + dir * (3 + i * 8), 54, 2.1, 0, Math.PI * 2); ctx.fill();
       }
       const status = (label: string, fraction: number, color: string, y: number) => {
@@ -1345,19 +955,19 @@ export class Renderer {
         ctx.beginPath(); ctx.arc(cx, y + 5, 5.5, -Math.PI / 2, Math.PI * 1.5); ctx.stroke();
         ctx.strokeStyle = color; ctx.beginPath();
         ctx.arc(cx, y + 5, 5.5, -Math.PI / 2, -Math.PI / 2 + clamp01(fraction) * Math.PI * 2); ctx.stroke();
-        ctx.fillStyle = '#becdd6'; ctx.font = '600 6px system-ui'; ctx.fillText(label, x + dir * 16, y + 1);
+        ctx.fillStyle = COMIC.paper; ctx.font = '600 6px ' + COMIC_TEXT; ctx.fillText(label, x + dir * 16, y + 1);
       };
       let y = 65;
       if (player.injured) {
-        ctx.fillStyle = '#ed805e'; ctx.font = '600 6px system-ui';
+        ctx.fillStyle = COMIC.rust; ctx.font = '600 6px ' + COMIC_TEXT;
         ctx.fillText('INJURED · ' + player.detachedBodies.length + ' PARTS LOST', x, y);
         y += 14;
       }
       const live = gw.executers.filter(e => !e.dead && e.target.id === id);
       if (live.length) {
         const remaining = Math.max(...live.map(e => e.secondsLeft));
-        const label = live.length > 1 ? live.length + ' HAZARDS' : live[0].variant.id === 'comet' ? 'PORTER' : live[0].variant.id === 'slime' ? 'SPA' : live[0].variant.label;
-        status(label + ' · ' + remaining + 's', Math.max(...live.map(e => e.lifeFraction)), '#d8b07b', y); y += 14;
+        const label = live.length > 1 ? live.length + ' HAZARDS' : HORROR_HAZARD_LABELS[live[0].variant.id];
+        status(label + ' · ' + remaining + 's', Math.max(...live.map(e => e.lifeFraction)), COMIC.ochre, y); y += 14;
       }
       const power = gw.powerUps.active[id];
       if (power) {
@@ -1365,13 +975,13 @@ export class Renderer {
         status(POWER_LABELS[power.kind] + ' · ' + Math.ceil(remaining / FPS) + 's', remaining / (power.expiresAt - power.startedAt), ink, y); y += 14;
       }
       const cooldown = gw.swingCooldownFramesLeft(id);
-      if (cooldown > 0) status('FLIP · ' + Math.ceil(cooldown / FPS) + 's', 0, '#9fb5c5', y);
+      if (cooldown > 0) status('FLIP · ' + Math.ceil(cooldown / FPS) + 's', 0, COMIC.muted, y);
     }
     const top = this.drawTopBar(ctx, gw, now);
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     if (g.phase === 'play' && gw.ball.ballOfPlayer !== 0) {
       const secs = g.serveSecondsLeft;
-      ctx.fillStyle = secs <= 2 ? '#f4a078' : '#bdcdd6'; ctx.font = '600 8px system-ui';
+      ctx.fillStyle = secs <= 2 ? COMIC.ochre : COMIC.paper; ctx.font = '600 8px ' + COMIC_TEXT;
       const holder = gw.ball.ballOfPlayer;
       const who = hud.singlePlayer ? holder === 1 ? 'YOUR SERVE' : 'CPU SERVE' : 'P' + holder + ' SERVE';
       ctx.fillText(who + ' · ' + secs, HUD_BAR.midX, top + 6);
@@ -1381,55 +991,34 @@ export class Renderer {
   }
 
   /**
-   * A pill across the court in the scorer's jersey: the headline, and under
+   * A printed panel across the court: the headline, and under
    * it the reason after a " · " if there is one.
    */
   private drawBanner(ctx: CanvasRenderingContext2D, text: string, tone: 0 | 1 | 2, x: number, y: number): void {
     const [title, detail] = text.split(' · ');
-    const titleFont = '700 15px system-ui, sans-serif';
-    const detailFont = '800 8px system-ui, sans-serif';
-    ctx.save();
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.font = titleFont;
+    ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = '19px ' + COMIC_TITLE;
     let w = ctx.measureText(title).width;
-    if (detail) {
-      ctx.font = detailFont;
-      w = Math.max(w, ctx.measureText(detail).width);
-    }
-    w += 40;
-    const h = detail ? 37 : 26;
-    ctx.shadowColor = 'rgba(15,25,35,0.28)';
-    ctx.shadowBlur = 14 * this.k;
-    ctx.shadowOffsetY = 3 * this.k;
-    ctx.fillStyle = 'rgba(8,20,32,0.85)';
-    roundRect(ctx, x - w / 2, y - h / 2, w, h, h / 2);
-    ctx.fill();
-    ctx.shadowColor = 'transparent';
-    ctx.strokeStyle = tone === 1 ? 'rgba(145,220,226,0.5)' : tone === 2 ? 'rgba(236,161,147,0.5)' : 'rgba(189,205,214,0.4)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    ctx.fillStyle = '#fff';
-    ctx.font = titleFont;
-    ctx.fillText(title, x, detail ? y - 6 : y + 1);
-    if (detail) {
-      ctx.font = detailFont;
-      ctx.fillStyle = 'rgba(255,255,255,0.82)';
-      ctx.fillText(detail, x, y + 13);
-    }
+    if (detail) { ctx.font = 'bold 8px ' + COMIC_TEXT; w = Math.max(w, ctx.measureText(detail).width); }
+    w += 36; const h = detail ? 39 : 28;
+    comicPanel(ctx, x - w / 2, y - h / 2, w, h);
+    ctx.fillStyle = tone === 1 ? COMIC.ochre : tone === 2 ? COMIC.mint : COMIC.plum;
+    ctx.fillRect(x - w / 2 + 4, y - h / 2 + 4, 2, h - 8);
+    ctx.fillStyle = COMIC.ink; ctx.font = '19px ' + COMIC_TITLE; ctx.fillText(title, x, detail ? y - 5 : y + 1);
+    if (detail) { ctx.font = 'bold 8px ' + COMIC_TEXT; ctx.fillText(detail, x, y + 12); }
     ctx.restore();
   }
+
 }
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
 /** Each hazard's impact ring colour. */
 const IMPACT_RGB: Record<ExecuterId, string> = {
-  magnet: '84,184,238', boxer: '255,214,170', comet: '255,150,60', spring: '214,160,255', slime: '140,226,92',
+  magnet: '159,198,173', boxer: '218,176,92', comet: '197,106,81', spring: '121,80,134', slime: '159,198,173',
 };
 
 /** The slime's goo. */
-const SLIME_RGB = '63,199,197';
+const SLIME_RGB = '159,198,173';
 
 /**
  * The spring's drawn length, 1 at rest: drawn out with speed as it charges,
@@ -1477,20 +1066,10 @@ function ring(
   ctx.strokeStyle = `rgba(${rgb},${0.75 * (1 - p)})`;
   ctx.lineWidth = width * (1 - p) + 0.8;
   ctx.beginPath();
-  ctx.arc(x, y, r0 + (r1 - r0) * easeOutCubic(p), 0, Math.PI * 2);
+  burstPath(ctx, x, y, r0 + (r1 - r0) * easeOutCubic(p));
   ctx.stroke();
 }
 
-function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
-  const rr = Math.max(0, Math.min(r, w / 2, h / 2));
-  ctx.beginPath();
-  ctx.moveTo(x + rr, y);
-  ctx.arcTo(x + w, y, x + w, y + h, rr);
-  ctx.arcTo(x + w, y + h, x, y + h, rr);
-  ctx.arcTo(x, y + h, x, y, rr);
-  ctx.arcTo(x, y, x + w, y, rr);
-  ctx.closePath();
-}
 
 export const worldToStage = (xPx: number, yPx: number) => ({
   x: xPx * VIEW.scale + STAGE.offsetX,

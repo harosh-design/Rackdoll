@@ -7,14 +7,20 @@ which were read out of the original's own AS3 bytecode.
 All project code and documentation must be written in English. See
 [`AGENTS.md`](AGENTS.md) for the project language policy.
 
-The current narrative direction is documented in
-[`docs/LAST-CHANCE-RESORT-LORE.md`](docs/LAST-CHANCE-RESORT-LORE.md).
-See [`docs/RESORT-VISUAL-CONCEPTS.md`](docs/RESORT-VISUAL-CONCEPTS.md) for
-the earlier visual concepts and background animation plan.
-The start menu offers two graphics styles: the previous
-[indoor arena with textured people](docs/FUTURE-ARENA-ART.md) (the default), and
-the [flowing shader arena](docs/SHADER-ARENA-ART.md) with glass and chrome players.
-The selected style is remembered locally and applies to both players and scenery.
+The game now uses a single [pencil horror-comic art direction](docs/HORROR-COMIC-ART.md):
+a masked player in an ochre coat, a skeleton in plum shorts, and a sparse
+moonlit court with small distant crosses. The moon and black silhouettes use
+subtle line-boil animation; coarse cached procedural paper grain overlays the
+artwork at a fixed 16% intensity. The previous People, Shaders, and location selectors
+have been removed. Old saved selections no longer affect rendering.
+
+The earlier resort story and visual studies remain in `docs/` as historical
+references. The comic direction also covers hazards, power-carrying bats,
+the ink-panel volleyball, motion marks, obstacles, scoreboards, menus, pause
+and results. Those visual changes preserve the existing physics and rules.
+The start menu sits over a blurred view of the court. Both players' current
+controls stay visible beside match setup, with character portraits and small
+comic stickers. The guide updates immediately when keys are remapped.
 
 ```bash
 npm install
@@ -99,11 +105,12 @@ remaining body; serving uses another attached hand or the surviving body if both
 arms are gone. Lost parts cannot strike or count as ball touches. Injuries heal
 before every new round. Shield protects against cutting and impalement.
 
-In the main menu, click any key in the **Controls** panel to reassign that
-action for either player. Press Esc to cancel, or **Reset keys** to restore the
-original layout. Assignments are saved in this browser. P and M remain the
-pause and sound shortcuts; a key already assigned to another action cannot be
-assigned again.
+The main menu shows both players' controls immediately. Choose **Remap keys**
+or **Edit keys**, then click a key to reassign that action for either player.
+Press Esc to cancel, or **Reset to defaults** to restore the original layout.
+Assignments are saved in this browser and reflected in the start-screen guide.
+P and Esc remain pause shortcuts; a key already assigned to another action
+cannot be assigned again.
 
 **Serve in the air.** The held ball hangs at your feet. Tap Space (or R for
 player 2) to serve with a fixed underhand flick. Jump first to clear the net.
@@ -144,10 +151,15 @@ entry and slider arrow keys do not control the players.
 **Save preset** stores the current combination under a name in this browser;
 saving the same name updates it. Select a preset and click **Load preset** to
 apply it. **Delete** removes the selected custom preset. **Reset physics**
-restores the original values. The last applied settings are also remembered
+restores the default game values: gravity **11.6 m/s²**, ball mass **0.125 kg**,
+air density **0**, player movement **1.30×**, jump strength **1.00×**, and ball
+bounce **1.08×**. **Original physics** remains available as a separate preset.
+The last applied settings are also remembered
 on reload. **Export JSON** downloads the current settings; **Import JSON**
 validates, saves and applies an exported preset. If browser storage is blocked,
 tuning works for the session and JSON export provides a way to keep presets.
+Existing saved copies of the old default upgrade to the new default; custom
+tuning and named presets are preserved.
 
 Air density defaults to zero to preserve the existing simulation. It maps to
 linear damping at `0.2 × density` per second, an arcade approximation applied
@@ -158,8 +170,8 @@ to each world independently and do not modify the reference constants.
 
 ## Powers
 
-Powers come from drone-delivered parcels; gifts no longer appear on the floor after goals.
-Hitting a parcel with the ball grants its ability for 30 seconds: 1.5× body size,
+Powers come from talismans carried by bats.
+Hitting a talisman with the ball grants its ability for 30 seconds: 1.5× body size,
 ⅔ body size, feather ball (a free ball
 over your half falls at 40% gravity), 1.5× jump, faster movement, a nearby-ball
 magnet, or protection against knockback from the opponent and the hazards. The player then returns to normal. The HUD shows the ability and its
@@ -178,22 +190,22 @@ moves with the size: otherwise a ⅔-size doll dangles ~17 px above the floor an
 so its head peaks as high as a full-size jump. Crouch, arm wind-up and the
 grounded checks scale with the doll as well.
 
-## Drone deliveries
+## Bat familiars
 
-Delivery drones fly in from either screen edge every 12–20 seconds, with at most
-two active. They carry one of seven abilities. Hit the parcel with a ball you
+Bat familiars fly in from either screen edge every 12–20 seconds, with at most
+two active. They carry one of seven abilities. Hit the talisman with a ball you
 last touched to collect its 30-second power. A new pickup replaces the current
 ability. The ball continues its flight. During goal replays the delivery slows
 with the simulation.
 
-Parcel glyphs identify the power: plus for Giant, minus for Tiny, a wave for
+Talisman glyphs identify the power: plus for Giant, minus for Tiny, a wave for
 Feather ball, an up arrow for High jump, chevrons for Speed, an arch for Magnet,
-and a diamond for Shield. The short label beneath each parcel names the effect.
+and a diamond for Shield. The short label beneath each talisman names the effect.
 Giant and Tiny deliveries retain their different sizes and flight styles.
 
 The collectible hit sweep and trajectories still use the legacy `Bees`
-simulation API. The renderer now draws courier hulls, animated propellers and
-a separate parcel centred on that hit region. This preserves deterministic
+simulation API. The renderer draws inked bats with hinged wings and
+a separate power seal centered on that hit region. This preserves deterministic
 pickup behavior and the existing physics tests.
 
 ## Fidelity notes
@@ -262,8 +274,8 @@ changes that on purpose:
   half.
 - **Five hazards, shuffled.** Both buttons share one queue: magnet, boxer,
   comet, spring and slime, each run of five in a fresh random order, never the
-  same one twice in a row. The next four are previewed at the top of the screen, in
-  the order they will come out, and slide along as each launches. A new match
+  same one twice in a row. The next hazard is previewed at the top of the screen
+  and updates as each launches. A new match
   shuffles a fresh order. A flipping player's legs can knock any of them
   away and briefly interrupt its attack.
 - **Magnet.** The slowest hunter (~1.4 m/s), with a strong field out to
@@ -273,22 +285,22 @@ changes that on purpose:
   It bends a free ball's flight too: sideways harder than gravity, but upward
   never more than half of it, so it can't hold a ball up. On contact it
   latches and holds still until its player drags themselves 34 px clear.
-- **Boxer.** Hovers a fist's length from one part of its player and jabs:
+- **Voodoo boxer.** Hovers a fist's length from one part of its player and jabs:
   head, torso, hips, an arm, a hand, a leg or a foot, whichever it can reach
   from its side, picking a new one after every blow. Each blow shoves the
   whole doll a little and jolts the part it lands on, so a leg is swept or an
   arm knocked aside.
-- **Comet.** The fastest hunter. It circles to a run-up point 150 px to the
+- **Fire skull (`comet`).** The fastest hunter. It circles to a run-up point 150 px to the
   side of its player nearest the ball (over their head, if it has to cross),
   then dashes through them at 16 m/s and knocks them away from the ball. It
   glances off, brakes, and lines up again — about one ram a second.
-- **Spring.** It settles level with its player's chest, then charges,
+- **Bone trap (`spring`).** It settles level with its player's chest, then charges,
   building speed the whole way in (8 m/s², up to 11 m/s). Impact strength is
   65% the speed it reached and 35% the distance it ran; the push grows
   steeper than linearly with it, so a bump from a standing start stays a bump
   and a long run throws the player hard. It rebounds off them at a speed set
   by its own, flies free, brakes gradually and settles, then charges again.
-- **Slime.** A glob of glue that flies at one of its player's hands, thighs
+- **Ectoplasm (`slime`).** A glob of glue that flies at one of its player's hands, thighs
   or shins (4.5 m/s, bobbing) and sticks to whatever part it reaches first,
   weighing it down. Stuck, it reels the nearest end of another limb in on a
   strand and glues it into itself, two at most: a hand ends up stuck to a

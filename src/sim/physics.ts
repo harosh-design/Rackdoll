@@ -19,6 +19,16 @@ export const DEFAULT_PHYSICS: Readonly<PhysicsSettings> = Object.freeze({
   ballRestitution: BALL.restitution,
 });
 
+/** Default game tuning; reference simulations retain DEFAULT_PHYSICS. */
+export const DEFAULT_GAME_PHYSICS: Readonly<PhysicsSettings> = Object.freeze({
+  gravity: 11.6,
+  ballMass: 0.125,
+  airDensity: 0,
+  movementSpeed: 1.3,
+  jumpStrength: 1,
+  ballRestitution: 1.08,
+});
+
 export const PHYSICS_FIELDS = [
   { key: 'gravity', label: 'Gravity', min: 0, max: 30, step: 0.1, digits: 1, unit: 'm/s²', hint: 'Downward acceleration for all bodies.' },
   { key: 'ballMass', label: 'Ball mass', min: 0.02, max: 1, step: 0.005, digits: 3, unit: 'kg', hint: 'Mass and rotational inertia; heavier balls need more impulse.' },

@@ -1,14 +1,10 @@
 # Flowing shader arena
 
-Choose **Shaders** under **Graphics** in the start menu to use this variant.
-**People** restores textured human players and is
-the default for a fresh installation. The choice is stored locally, previews
-immediately in the menu, and persists through restarts and return to the menu.
+Historical implementation record. This variant and its selector are no longer
+used by the game. See [the current pencil horror-comic art](HORROR-COMIC-ART.md).
 
-The separate **Location** selector and HUD landscape icon choose Arena, Beach,
-or Rooftop. Arena retains the procedural background described below; outdoor
-locations use environment plates with the same glass and chrome players. See
-[switchable locations](ARENA-LOCATIONS.md).
+The former Location selector and HUD landscape icon have also been removed.
+The earlier location behavior is recorded in [switchable locations](ARENA-LOCATIONS.md).
 
 The court uses a procedural WebGL background and continuous glass and chrome
 player materials in `src/render/shaderScene.ts`. Visual references are

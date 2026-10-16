@@ -8,8 +8,7 @@ import {
 } from './input/bindings';
 import { bindKeyboard } from './input/keyboard';
 import { Interpolator } from './render/interp';
-import { HUD_BAR, Renderer, type VisualStyle } from './render/renderer';
-import { ARENA_SCENES, SCENE_LABELS, type ArenaScene } from './render/arenaBackground';
+import { HUD_BAR, Renderer } from './render/renderer';
 import { BEE_FLIGHT } from './sim/bees';
 import { BALL, BODYTYPE, FPS, ITERATIONS, OPTIONS } from './sim/constants';
 import type { ControlAction } from './sim/control';
@@ -50,35 +49,16 @@ const music = new Music();
 const MUSIC_ENABLED = false;
 
 type Mode = '1p' | '2p' | 'cpu';
-const VISUAL_STYLE_KEY = 'rackdoll-visual-style';
-const ARENA_SCENE_KEY = 'rackdoll-arena-scene';
 const CENTER_OBSTACLE_KEY = 'rackdoll-center-obstacle';
 function loadCenterObstacle() {
   try { return normalizeCenterObstacle(localStorage.getItem(CENTER_OBSTACLE_KEY)); }
   catch { return normalizeCenterObstacle(null); }
-}
-function loadArenaScene(): ArenaScene {
-  try {
-    const saved = localStorage.getItem(ARENA_SCENE_KEY);
-    return ARENA_SCENES.find(scene => scene === saved) ?? 'indoor';
-  } catch {
-    return 'indoor';
-  }
-}
-function loadVisualStyle(): VisualStyle {
-  try {
-    return localStorage.getItem(VISUAL_STYLE_KEY) === 'shaders' ? 'shaders' : 'people';
-  } catch {
-    return 'people';
-  }
 }
 let physicsStorage: PresetStorage | undefined;
 try { physicsStorage = localStorage; } catch { /* Tuning still works in memory. */ }
 const physicsLibrary = loadPhysicsLibrary(physicsStorage);
 const settings = {
   mode: '1p' as Mode,
-  visualStyle: loadVisualStyle(),
-  arenaScene: loadArenaScene(),
   centerObstacle: loadCenterObstacle(),
   level: OPTIONS.currentLevel as number,
   /** Bot vs bot: the left CPU's level. */
@@ -277,6 +257,8 @@ function setScreen(s: Screen): void {
     renderBindings();
   } else {
     selectTab($('tab-play'));
+    $('menu').querySelector<HTMLElement>('.menu-workspace')!.scrollTop = 0;
+    $('menu').querySelector<HTMLElement>('.panels')!.scrollTop = 0;
   }
   screen = s;
   document.body.dataset.screen = s;
@@ -348,6 +330,14 @@ function isCpuSide(player: PlayerId): boolean {
 }
 
 function renderBindings(): void {
+  document.querySelectorAll<HTMLElement>('[data-quick-player]').forEach(key => {
+    const player = Number(key.dataset.quickPlayer) as PlayerId;
+    const action = key.dataset.quickAction as ControlAction;
+    const label = keyLabel(settings.bindings[player][action]);
+    key.textContent = label;
+    key.title = `Player ${player}, ${actionNames[action]}: ${label}`;
+    key.setAttribute('aria-label', key.title);
+  });
   document.querySelectorAll<HTMLButtonElement>('[data-binding-player]').forEach((button) => {
     const player = Number(button.dataset.bindingPlayer) as PlayerId;
     const action = button.dataset.bindingAction as ControlAction;
@@ -491,43 +481,6 @@ function wireMenu(): void {
       });
     }
   };
-  const applyVisualStyle = (style: VisualStyle) => {
-    settings.visualStyle = style;
-    renderer.setVisualStyle(style);
-    document.body.dataset.visualStyle = style;
-    document.querySelectorAll<HTMLButtonElement>('[data-visual-style]').forEach(button => {
-      button.setAttribute('aria-pressed', String(button.dataset.visualStyle === style));
-    });
-    $('visual-style-description').textContent = style === 'people'
-      ? 'Textured people in your selected location.'
-      : 'Glass and chrome players. Arena uses flowing light; outdoor locations use scenery.';
-  };
-  const applyArenaScene = (scene: ArenaScene) => {
-    settings.arenaScene = scene;
-    renderer.setArenaScene(scene);
-    document.body.dataset.arenaScene = scene;
-    document.querySelectorAll<HTMLButtonElement>('[data-arena-scene]').forEach(button => {
-      button.setAttribute('aria-pressed', String(button.dataset.arenaScene === scene));
-    });
-    const next = ARENA_SCENES[(ARENA_SCENES.indexOf(scene) + 1) % ARENA_SCENES.length];
-    $('btn-scene').title = `Location: ${SCENE_LABELS[scene]}. Switch to ${SCENE_LABELS[next]}`;
-    $('btn-scene').setAttribute('aria-label', `Location: ${SCENE_LABELS[scene]}. Switch to ${SCENE_LABELS[next]}`);
-    $('arena-scene-description').textContent = scene === 'beach' ? 'Moonlit beach with palms and ocean views.'
-      : scene === 'rooftop' ? 'Rooftop garden overlooking the bay at sunset.' : 'Indoor arena, or flowing light with Shaders.';
-    try { localStorage.setItem(ARENA_SCENE_KEY, scene); } catch { /* Selection still works for this session. */ }
-  };
-  applyVisualStyle(settings.visualStyle);
-  applyArenaScene(settings.arenaScene);
-  group('arena-scene', value => applyArenaScene(ARENA_SCENES.find(scene => scene === value) ?? 'indoor'));
-  group('visual-style', (value) => {
-    const style: VisualStyle = value === 'shaders' ? 'shaders' : 'people';
-    applyVisualStyle(style);
-    try {
-      localStorage.setItem(VISUAL_STYLE_KEY, style);
-    } catch {
-      // The selected graphics still work when browser storage is unavailable.
-    }
-  });
   group('mode', (v) => {
     settings.mode = v as Mode;
     $('level-field').hidden = v === '2p';
@@ -563,6 +516,8 @@ function wireMenu(): void {
     });
   });
 
+  $('show-key-editor').addEventListener('click', () => selectTab($('tab-controls'), true));
+
   $('play').addEventListener('click', startMatch);
   $('resume').addEventListener('click', () => setScreen('playing'));
   $('restart').addEventListener('click', startMatch);
@@ -584,11 +539,6 @@ function wireMenu(): void {
   bar.style.setProperty('--w', String(HUD_BAR.controlsW));
   bar.style.setProperty('--h', String(HUD_BAR.h));
   $('btn-pause').addEventListener('click', togglePause);
-  $('btn-scene').addEventListener('click', () => {
-    applyArenaScene(ARENA_SCENES[(ARENA_SCENES.indexOf(settings.arenaScene) + 1) % ARENA_SCENES.length]);
-    showToast(SCENE_LABELS[settings.arenaScene], 'i-scene');
-    if (screen === 'playing') focusGame();
-  });
   document.querySelectorAll<HTMLButtonElement>('.js-sound').forEach((b) => {
     b.addEventListener('click', () => {
       toggleMute();

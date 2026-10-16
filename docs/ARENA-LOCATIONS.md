@@ -1,16 +1,18 @@
 # Switchable locations
 
-Choose **Arena**, **Beach**, or **Rooftop** under **Location** in the main menu.
-The landscape icon in the match HUD cycles through the same three locations.
-Switching changes only scenery and floor colors, preserving the live match,
+Historical implementation record. The location selector and HUD landscape icon
+have been removed in favor of [one pencil horror-comic scene](HORROR-COMIC-ART.md).
+
+The former Arena/Beach/Rooftop selection changed only scenery and floor colors,
+preserving the live match,
 score, controls, hazards, and physics. The location is saved under
 `rackdoll-arena-scene` in local storage; unavailable storage falls back to a
 session-only choice. Arena is the default.
 
-Locations and player graphics are independent. People uses textured players;
-Shaders uses glass and chrome players in every location. Arena retains the
-original indoor image with People and the procedural flowing light with Shaders.
-Beach and Rooftop use their environment plates with either player style.
+In that implementation, locations and player graphics were independent.
+People used textured players; Shaders used glass and chrome players in every
+location. Arena used either an indoor image or procedural flowing light.
+Beach and Rooftop used their environment plates with either player style.
 
 ## Assets
 

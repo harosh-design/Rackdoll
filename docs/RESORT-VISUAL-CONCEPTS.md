@@ -1,7 +1,7 @@
 # Last Chance Resort: visual concepts
 
-The current game uses the [refined future indoor arena](FUTURE-ARENA-ART.md).
-The beach directions below are retained as earlier concept studies.
+The current game uses [pencil horror-comic art](HORROR-COMIC-ART.md).
+The indoor arena and beach directions are retained as earlier concept studies.
 
 These two alternatives use the same lore and a readable side-view arena.
 The original Moonlit Lagoon concept has been selected and adapted into the

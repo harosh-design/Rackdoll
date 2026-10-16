@@ -1,0 +1,119 @@
+{
+  "magnet": {
+    "source": "output/horror-work/sources/props-atlas.png",
+    "crop": [
+      12,
+      63,
+      393,
+      383
+    ],
+    "width": 367,
+    "height": 372,
+    "transparentFraction": 0.36714423837567023,
+    "asset": "public/art/horror/props/magnet.webp"
+  },
+  "voodoo": {
+    "source": "output/horror-work/sources/props-atlas.png",
+    "crop": [
+      426,
+      22,
+      371,
+      455
+    ],
+    "width": 303,
+    "height": 430,
+    "transparentFraction": 0.32302555836979047,
+    "asset": "public/art/horror/props/voodoo.webp"
+  },
+  "fire-skull": {
+    "source": "output/horror-work/sources/props-atlas.png",
+    "crop": [
+      819,
+      92,
+      421,
+      338
+    ],
+    "width": 384,
+    "height": 293,
+    "transparentFraction": 0.4033703071672355,
+    "asset": "public/art/horror/props/fire-skull.webp"
+  },
+  "jaw-base": {
+    "source": "output/horror-work/sources/props-atlas.png",
+    "crop": [
+      24,
+      570,
+      385,
+      199
+    ],
+    "width": 370,
+    "height": 167,
+    "transparentFraction": 0.3489885094675514,
+    "asset": "public/art/horror/props/jaw-base.webp"
+  },
+  "jaw-cap": {
+    "source": "output/horror-work/sources/props-atlas.png",
+    "crop": [
+      420,
+      532,
+      406,
+      238
+    ],
+    "width": 389,
+    "height": 177,
+    "transparentFraction": 0.35657124598782913,
+    "asset": "public/art/horror/props/jaw-cap.webp"
+  },
+  "ectoplasm": {
+    "source": "output/horror-work/sources/props-atlas.png",
+    "crop": [
+      848,
+      460,
+      386,
+      381
+    ],
+    "width": 344,
+    "height": 356,
+    "transparentFraction": 0.5015188136921871,
+    "asset": "public/art/horror/props/ectoplasm.webp"
+  },
+  "bat": {
+    "source": "output/horror-work/sources/props-atlas.png",
+    "crop": [
+      12,
+      834,
+      504,
+      319
+    ],
+    "width": 488,
+    "height": 288,
+    "transparentFraction": 0.49861253415300544,
+    "asset": "public/art/horror/props/bat.webp"
+  },
+  "talisman": {
+    "source": "output/horror-work/sources/props-atlas.png",
+    "crop": [
+      515,
+      795,
+      333,
+      406
+    ],
+    "width": 333,
+    "height": 383,
+    "transparentFraction": 0.3811461592140443,
+    "asset": "public/art/horror/props/talisman.webp"
+  },
+  "fist": {
+    "source": "output/horror-work/sources/props-atlas.png",
+    "crop": [
+      869,
+      856,
+      343,
+      302
+    ],
+    "width": 313,
+    "height": 247,
+    "transparentFraction": 0.2704272354516175,
+    "asset": "public/art/horror/props/fist.webp"
+  }
+}

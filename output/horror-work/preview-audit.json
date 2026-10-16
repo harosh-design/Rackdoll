@@ -1,0 +1,39 @@
+{
+  "settings": {
+    "mode": "2p",
+    "centerObstacle": "classic",
+    "level": 1,
+    "p1Level": 6,
+    "hazards": true,
+    "bindings": {
+      "1": {
+        "left": "ArrowLeft",
+        "right": "ArrowRight",
+        "jump": "ArrowUp",
+        "down": "ArrowDown",
+        "serve": "Space"
+      },
+      "2": {
+        "left": "KeyA",
+        "right": "KeyD",
+        "jump": "KeyW",
+        "down": "KeyS",
+        "serve": "KeyR"
+      }
+    }
+  },
+  "resources": [
+    "http://127.0.0.1:5173/art/horror/background-detailed.webp",
+    "http://127.0.0.1:5173/art/horror/skeleton.webp",
+    "http://127.0.0.1:5173/art/horror/masked.webp",
+    "http://127.0.0.1:5173/art/arena/courier.webp",
+    "http://127.0.0.1:5173/art/arena/parcel.webp",
+    "http://127.0.0.1:5173/art/arena/magnet.webp",
+    "http://127.0.0.1:5173/art/arena/boxer.webp",
+    "http://127.0.0.1:5173/art/arena/porter.webp",
+    "http://127.0.0.1:5173/art/arena/spring-base.webp",
+    "http://127.0.0.1:5173/art/arena/spring-cap.webp",
+    "http://127.0.0.1:5173/art/arena/spa.webp"
+  ],
+  "errors": []
+}

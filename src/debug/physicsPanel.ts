@@ -1,4 +1,4 @@
-import { DEFAULT_PHYSICS, normalizePhysics, PHYSICS_FIELDS, type PhysicsSettings } from '../sim/physics';
+import { DEFAULT_GAME_PHYSICS, DEFAULT_PHYSICS, normalizePhysics, PHYSICS_FIELDS, type PhysicsSettings } from '../sim/physics';
 import {
   exportPreset, parsePreset, presetName, savePhysicsLibrary,
   type PhysicsLibrary, type PresetStorage,
@@ -19,6 +19,10 @@ export function wirePhysicsPanel(
   const remove = document.getElementById('physics-delete') as HTMLButtonElement;
   const file = document.getElementById('physics-import-file') as HTMLInputElement;
   const controls = new Map<keyof PhysicsSettings, { slider: HTMLInputElement; number: HTMLInputElement }>();
+  const builtInPresets = new Map([
+    ['default', { name: 'Default physics', settings: DEFAULT_GAME_PHYSICS }],
+    ['original', { name: 'Original physics', settings: DEFAULT_PHYSICS }],
+  ]);
   const say = (text: string) => { status.textContent = text; };
   const persist = () => savePhysicsLibrary(library, storage);
   const storageMessage = () => ' Browser storage is unavailable; changes last for this session. Export JSON to keep them.';
@@ -39,11 +43,11 @@ export function wirePhysicsPanel(
     say(message + (persist() ? '' : storageMessage()));
   };
   const refreshPresets = (selected = select.value) => {
-    select.replaceChildren(new Option('Original physics', 'original'));
+    select.replaceChildren(...Array.from(builtInPresets, ([id, preset]) => new Option(preset.name, id)));
     library.presets.forEach((preset, i) => select.add(new Option(preset.name, String(i))));
     select.value = selected;
-    if (select.selectedIndex < 0) select.value = 'original';
-    remove.disabled = select.value === 'original';
+    if (select.selectedIndex < 0) select.value = 'default';
+    remove.disabled = builtInPresets.has(select.value);
   };
 
   for (const field of PHYSICS_FIELDS) {
@@ -113,17 +117,17 @@ export function wirePhysicsPanel(
     event.stopPropagation();
   });
   select.addEventListener('change', () => {
-    remove.disabled = select.value === 'original';
-    name.value = select.value === 'original' ? '' : library.presets[Number(select.value)].name;
+    remove.disabled = builtInPresets.has(select.value);
+    name.value = builtInPresets.has(select.value) ? '' : library.presets[Number(select.value)].name;
   });
   document.getElementById('physics-load')!.addEventListener('click', () => {
-    const preset = select.value === 'original'
-      ? { name: 'Original physics', settings: DEFAULT_PHYSICS }
-      : library.presets[Number(select.value)];
+    const preset = builtInPresets.get(select.value) ?? library.presets[Number(select.value)];
     update({ ...preset.settings }, `Loaded “${preset.name}”.`);
   });
   document.getElementById('physics-reset')!.addEventListener('click', () => {
-    update({ ...DEFAULT_PHYSICS }, 'Original physics restored.');
+    refreshPresets('default');
+    name.value = '';
+    update({ ...DEFAULT_GAME_PHYSICS }, 'Default physics restored.');
   });
   const savePreset = (preset: { name: string; settings: PhysicsSettings }) => {
     let index = library.presets.findIndex(p => p.name === preset.name);
@@ -142,9 +146,9 @@ export function wirePhysicsPanel(
     } catch (error) { say((error as Error).message); }
   });
   remove.addEventListener('click', () => {
-    if (select.value === 'original') return;
+    if (builtInPresets.has(select.value)) return;
     const [preset] = library.presets.splice(Number(select.value), 1);
-    refreshPresets('original');
+    refreshPresets('default');
     name.value = '';
     say(`Deleted “${preset.name}”. Current physics is unchanged.` + (persist() ? '' : storageMessage()));
   });

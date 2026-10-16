@@ -1,0 +1,40 @@
+{
+  "generator": "Built-in ImageGen",
+  "reference": "/Users/trckwrk/Documents/vibe/rackdoll3/output/concepts/horror-comic-minimal-v3/01-moonlit-court-masked-vs-skeleton.png",
+  "assets": [
+    {
+      "id": "background",
+      "transparent": false,
+      "references": [
+        "/Users/trckwrk/Documents/vibe/rackdoll3/output/concepts/horror-comic-minimal-v3/01-moonlit-court-masked-vs-skeleton.png"
+      ],
+      "prompt": "Use case: precise-object-edit. Asset: clean opaque production background plate for a 2D side-view game, landscape 16:10. The input is the exact approved horror-comic art direction.\nKeep only the broad dusty periwinkle blue night sky and purple pencil-drawn ground, preserving the palette and flat colored-pencil / rough ink style. REMOVE the two characters, ball, central pole, side posts, moon, ALL black trees and the entire distant black horizon silhouette. These removed scenery objects will be separately composited and animated. Restore quiet blue sky behind everything. Sky fills the upper 84% of the picture; the purple ground starts on an absolutely horizontal line at 84% and fills the remaining 16% to the bottom. Ground is a handful of loose dark horizontal pencil strokes and quiet violet planes, no raised platform. Very sparse hand-drawn pencil strokes, subtle paper texture only; runtime will add procedural grain, so do not bake dense speckle or halftone. No gradient lighting, glow, 3D shading, clouds, objects, people, buildings, forest, stars, typography, border, UI. A single clean full-frame flat background with mostly open sky."
+    },
+    {
+      "id": "scenery",
+      "transparent": true,
+      "references": [
+        "/Users/trckwrk/Documents/vibe/rackdoll3/output/concepts/horror-comic-minimal-v3/01-moonlit-court-masked-vs-skeleton.png"
+      ],
+      "prompt": "Use case: background-extraction. Asset: TRANSPARENT registered scenery overlay for a 2D game, landscape 16:10, same composition as the input.\nExtract / redraw ONLY the cream moon near x74% y17%, the black bare-tree outlines entering from the left and right edges, and the distant low black bush/horizon silhouettes between y70% and y84%. Preserve their simple angular hand-inked colored-pencil style and roughly their input positions. Make the ENTIRE sky and ground genuinely transparent, including spaces between all branches and above the horizon. The horizon ends on a straight baseline at 84% of image height; everything below that baseline is transparent. Keep the moon as one clearly bounded cream circular shape with a few black scribbled crater patches. Crisp rough black branch silhouettes, no blue around the edges or baked paper outside opaque art.\nRemove BOTH characters, the volleyball, all three poles, every purple ground stroke, all shadows of gameplay objects. No text, no box panels, no decorative background, no extra scenery. These isolated objects will receive subtle cached line-boil animation in the game; keep paper grain restrained. Genuine alpha transparency, not checkerboard artwork."
+    },
+    {
+      "id": "masked",
+      "transparent": true,
+      "references": [
+        "/Users/trckwrk/Documents/vibe/rackdoll3/output/horror-work/masked-guide.png",
+        "/Users/trckwrk/Documents/vibe/rackdoll3/output/concepts/horror-comic-minimal-v3/01-moonlit-court-masked-vs-skeleton.png"
+      ],
+      "prompt": "Use case: style-transfer. Production asset: exact 4-by-4 ragdoll body-part atlas, square image with TRUE transparent background.\nImage 1 is the required cell layout and registration guide: preserve the center, scale and orientation of EACH part in each cell. Image 2 is the approved character appearance reference. Repaint the guide as the LEFT masked character: ochre brimmed fedora, indigo full face mask with irregular black ink patches, ochre worn short trench coat / lapels over a dark violet vest, purple trousers, violet gloves and black boots. Chunky black ink outlines, angular pencil hatching, flat spot colors, hand-drawn vintage horror comic. Keep readable outfit details at small sprite size. NO realistic skin.\nExact cell order reading left to right: row 1 = masked head WITH hat, coat torso WITH lapels, violet hips WITH ochre coat tails, left UPPER arm in an ochre sleeve. Row 2 = right UPPER arm sleeve, left FOREARM sleeve ending in glove cuff, right FOREARM sleeve, left open gloved PALM. Row 3 = right open gloved PALM, left purple THIGH, right purple THIGH, left LOWER leg with black boot. Row 4 = right LOWER leg with black boot in cell 1, remaining THREE CELLS EMPTY transparent.\nDo not join body parts into a whole character. Arms/forearms point horizontally exactly like the guide; legs point down; palms keep guide orientation. Preserve shoulder and elbow connection ends. Head includes hat fully INSIDE its expanded guide cell; no crop. Torso and hip tails align with guide bounds. Flat ink cutouts with a few pencil strokes, no dense baked noise; grain will be procedural. Do not draw gridlines, labels, borders, cell numbers, background or extra pieces. Maintain all 13 isolated sprites and the exact 4x4 grid on genuine transparent alpha."
+    },
+    {
+      "id": "skeleton",
+      "transparent": true,
+      "references": [
+        "/Users/trckwrk/Documents/vibe/rackdoll3/output/horror-work/skeleton-guide.png",
+        "/Users/trckwrk/Documents/vibe/rackdoll3/output/concepts/horror-comic-minimal-v3/01-moonlit-court-masked-vs-skeleton.png"
+      ],
+      "prompt": "Use case: style-transfer. Production asset: exact 4-by-4 ragdoll skeleton body-part atlas, square image on TRUE transparent background.\nImage 1 is the precise cell / registration guide; keep centers, size, orientation and joint endpoints of all pieces. Image 2 is the appearance reference: the RIGHT bare skeleton with aged cream bones, black ink contours, hollow eye sockets and violet-plum shorts. FULLY redraw all guide flesh shapes as recognizably skeletal anatomy, NOT a fleshy person in a skeleton-print costume.\nExact cell order reading left to right: row 1 = skull facing slightly LEFT, rib cage torso and narrow spine, plum shorts hips, left UPPER arm humerus. Row 2 = right UPPER arm humerus, left FOREARM radius/ulna pair, right FOREARM radius/ulna pair, left skeletal PALM with five bony fingers. Row 3 = right skeletal PALM, left femur / THIGH with a short plum shorts hem at top, right femur / THIGH with matching hem, left LOWER leg tibia/fibula and articulated bony FOOT. Row 4 = right LOWER leg and bony FOOT in cell 1; final THREE CELLS EMPTY transparent.\nImportant: leave genuine transparent gaps BETWEEN the ribs and between paired forearm / lower leg bones; keep only a thin spine and ribs, not a solid white or black torso backing. Keep joint knuckles at the guide shoulder/elbow/knee ends so rig pieces meet. Skull within original guide bounds, leg bones slender inside guide shape, naked bony toes without boots. Arms are horizontal and lower legs vertical exactly like the guide. No full skeleton figure, no assembled pose, no gridlines, labels, extra bones or duplicated pieces.\nUse flat cream/plum fills, thick rough black ink contours and sparse colored-pencil scratches. No 3D rendering, no smooth gradients, no photorealism, no blood, no large baked grain: procedural grain will overlay in-game. Exactly 13 isolated registered sprites in the 4x4 grid on genuine alpha transparency."
+    }
+  ]
+}

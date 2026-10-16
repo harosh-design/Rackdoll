@@ -2,7 +2,7 @@ import { Vec2 } from 'planck';
 import { describe, expect, it } from 'vitest';
 import { forecastBall } from '../src/sim/ai';
 import { BALL, TIME_STEP, toM } from '../src/sim/constants';
-import { DEFAULT_PHYSICS, normalizePhysics } from '../src/sim/physics';
+import { DEFAULT_GAME_PHYSICS, DEFAULT_PHYSICS, normalizePhysics } from '../src/sim/physics';
 import { GameWorld } from '../src/sim/world';
 import {
   exportPreset, loadPhysicsLibrary, parsePreset, savePhysicsLibrary,
@@ -112,6 +112,34 @@ describe('Live physics tuning', () => {
 
 describe('Physics presets', () => {
   const preset = { name: 'Low gravity', settings: { ...DEFAULT_PHYSICS, gravity: 4, airDensity: 1.2 } };
+  it('starts new games with the default game tuning', () => {
+    const settings = loadPhysicsLibrary().current;
+    expect(settings).toEqual({ gravity: 11.6, ballMass: 0.125, airDensity: 0, movementSpeed: 1.3, jumpStrength: 1, ballRestitution: 1.08 });
+    const gw = world(settings);
+    expect(gw.world.getGravity().y).toBe(11.6);
+    expect(gw.ball.body.getMass()).toBeCloseTo(0.125);
+    expect(gw.ball.body.getFixtureList()!.getRestitution()).toBe(1.08);
+    for (const player of [gw.p1, gw.p2]) {
+      expect(player.movementSpeed).toBe(1.3);
+      expect(player.jumpStrength).toBe(1);
+      expect(player.head.getLinearDamping()).toBe(0);
+    }
+  });
+  it('upgrades the former saved default without changing named presets or custom tuning', () => {
+    const storage = (current: typeof DEFAULT_PHYSICS) => ({
+      getItem: () => JSON.stringify({ version: 1, current, presets: [preset] }),
+      setItem: () => {},
+    });
+    expect(loadPhysicsLibrary(storage(DEFAULT_PHYSICS))).toEqual({ current: DEFAULT_GAME_PHYSICS, presets: [preset] });
+    expect(loadPhysicsLibrary(storage(preset.settings))).toEqual({ current: preset.settings, presets: [preset] });
+  });
+  it('preserves an explicit choice of original physics after the default upgrade', () => {
+    let saved: string | null = null;
+    const storage = { getItem: () => saved, setItem: (_key: string, value: string) => { saved = value; } };
+    const library = { current: { ...DEFAULT_PHYSICS }, presets: [preset] };
+    expect(savePhysicsLibrary(library, storage)).toBe(true);
+    expect(loadPhysicsLibrary(storage)).toEqual(library);
+  });
   it('round-trips portable JSON and local storage including the active settings', () => {
     expect(parsePreset(exportPreset(preset))).toEqual(preset);
     const data = new Map<string, string>();
@@ -129,8 +157,8 @@ describe('Physics presets', () => {
   });
   it('recovers valid presets from damaged storage and handles unavailable storage', () => {
     const storage = { getItem: () => JSON.stringify({ version: 1, current: null, presets: [null, preset] }), setItem: () => { throw new Error('Storage blocked'); } };
-    expect(loadPhysicsLibrary(storage)).toEqual({ current: DEFAULT_PHYSICS, presets: [preset] });
+    expect(loadPhysicsLibrary(storage)).toEqual({ current: DEFAULT_GAME_PHYSICS, presets: [preset] });
     expect(savePhysicsLibrary({ current: { ...DEFAULT_PHYSICS }, presets: [] }, storage)).toBe(false);
-    expect(loadPhysicsLibrary()).toEqual({ current: DEFAULT_PHYSICS, presets: [] });
+    expect(loadPhysicsLibrary()).toEqual({ current: DEFAULT_GAME_PHYSICS, presets: [] });
   });
 });

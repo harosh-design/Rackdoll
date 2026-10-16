@@ -1,6 +1,7 @@
-import { DEFAULT_PHYSICS, normalizePhysics, PHYSICS_FIELDS, type PhysicsSettings } from '../sim/physics';
+import { DEFAULT_GAME_PHYSICS, DEFAULT_PHYSICS, normalizePhysics, PHYSICS_FIELDS, type PhysicsSettings } from '../sim/physics';
 
 export const PHYSICS_STORAGE_KEY = 'rackdoll-physics-v1';
+const PHYSICS_DEFAULTS_VERSION = 2;
 export interface PhysicsPreset { name: string; settings: PhysicsSettings }
 export interface PhysicsLibrary { current: PhysicsSettings; presets: PhysicsPreset[] }
 export type PresetStorage = Pick<Storage, 'getItem' | 'setItem'>;
@@ -35,7 +36,7 @@ export function exportPreset(preset: PhysicsPreset): string {
 
 /** Recover valid saved presets individually if one entry was corrupted. */
 export function loadPhysicsLibrary(storage?: PresetStorage): PhysicsLibrary {
-  const fallback = { current: { ...DEFAULT_PHYSICS }, presets: [] };
+  const fallback = { current: { ...DEFAULT_GAME_PHYSICS }, presets: [] };
   try {
     const raw = storage?.getItem(PHYSICS_STORAGE_KEY);
     if (!raw) return fallback;
@@ -50,8 +51,14 @@ export function loadPhysicsLibrary(storage?: PresetStorage): PhysicsLibrary {
         } catch { /* Ignore only the damaged entry. */ }
       }
     }
-    let current = { ...DEFAULT_PHYSICS };
-    try { current = readSettings(value.current); } catch { /* Keep original physics. */ }
+    let current = { ...DEFAULT_GAME_PHYSICS };
+    try {
+      current = readSettings(value.current);
+      // Upgrade the former default while preserving custom tuning and named presets.
+      if (value.defaultsVersion === undefined && PHYSICS_FIELDS.every(({ key }) => current[key] === DEFAULT_PHYSICS[key])) {
+        current = { ...DEFAULT_GAME_PHYSICS };
+      }
+    } catch { /* Keep default game physics. */ }
     return { current, presets };
   } catch {
     return fallback;
@@ -61,7 +68,7 @@ export function loadPhysicsLibrary(storage?: PresetStorage): PhysicsLibrary {
 export function savePhysicsLibrary(library: PhysicsLibrary, storage?: PresetStorage): boolean {
   try {
     if (!storage) return false;
-    storage.setItem(PHYSICS_STORAGE_KEY, JSON.stringify({ version: 1, ...library }));
+    storage.setItem(PHYSICS_STORAGE_KEY, JSON.stringify({ version: 1, defaultsVersion: PHYSICS_DEFAULTS_VERSION, ...library }));
     return true;
   } catch {
     return false;

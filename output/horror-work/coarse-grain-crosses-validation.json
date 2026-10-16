@@ -1,0 +1,41 @@
+{
+  "grainBefore": [
+    {
+      "dpr": 1,
+      "deviation": 10.487149537865283,
+      "adjacentDifference": 12.07689426369863,
+      "roughness": 1.1515897832955806
+    },
+    {
+      "dpr": 2,
+      "deviation": 5.270818158353729,
+      "adjacentDifference": 5.989649584148728,
+      "roughness": 1.1363794773788054
+    }
+  ],
+  "grainAfter": [
+    {
+      "dpr": 1,
+      "deviation": 7.385794408240484,
+      "adjacentDifference": 3.307554121819961,
+      "roughness": 0.4478264542714125
+    },
+    {
+      "dpr": 2,
+      "deviation": 6.849725230057078,
+      "adjacentDifference": 2.8192270058708413,
+      "roughness": 0.4115824958203979
+    }
+  ],
+  "background": {
+    "changedPixels": 2313,
+    "changesOutsideCrossBand": 0,
+    "bounds": {
+      "minX": 199,
+      "maxX": 1111,
+      "minY": 696,
+      "maxY": 760
+    }
+  },
+  "errors": []
+}

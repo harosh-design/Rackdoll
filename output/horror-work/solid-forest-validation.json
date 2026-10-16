@@ -1,0 +1,69 @@
+{
+  "obsoleteControls": 0,
+  "legacyGraphicsLoaded": false,
+  "rasterSceneryLoaded": false,
+  "plateSize": {
+    "width": 2560,
+    "height": 1600
+  },
+  "pauseStable": true,
+  "reducedMotionStable": true,
+  "boil": {
+    "moon": {
+      "changed": 300,
+      "total": 7650,
+      "meanDifference": 0.0771677559912854
+    },
+    "trees": {
+      "changed": 1832,
+      "total": 38400,
+      "meanDifference": 0.08480902777777778
+    },
+    "horizon": {
+      "changed": 99,
+      "total": 20650,
+      "meanDifference": 0.016303470540758678
+    },
+    "sky": {
+      "changed": 0,
+      "total": 22400,
+      "meanDifference": 0
+    },
+    "floor": {
+      "changed": 0,
+      "total": 6160,
+      "meanDifference": 0
+    },
+    "moonInterior": {
+      "changed": 0,
+      "total": 1122,
+      "meanDifference": 0
+    },
+    "deterministic": true
+  },
+  "pencil": {
+    "paper": {
+      "changed": 228366,
+      "total": 256000,
+      "meanDifference": 2.2756236979166666
+    },
+    "temporal": {
+      "changed": 237869,
+      "total": 256000,
+      "meanDifference": 3.0824010416666665
+    }
+  },
+  "backgroundAndGrainMs": 4.6433333337306975,
+  "ribTransparency": 0.249921875,
+  "gameplay": {
+    "resumed": true,
+    "served": true
+  },
+  "scenarios": {
+    "detached": true,
+    "finite": true,
+    "renderMs": 4.803333333134651,
+    "detachedParts": 3
+  },
+  "browserErrors": []
+}

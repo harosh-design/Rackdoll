@@ -1,5 +1,8 @@
 # Last Chance Resort
 
+Historical narrative direction. The current game art uses a moonlit horror-comic
+court without hotel scenery; see [the current art direction](HORROR-COMIC-ART.md).
+
 ## Premise
 
 Last Chance Resort promises the perfect holiday: a tropical beach, attentive

@@ -1,0 +1,426 @@
+{
+  "background": {
+    "source": "output/horror-work/sources/background.png",
+    "width": 1586,
+    "height": 992,
+    "transparentFraction": 0,
+    "paintedBoundary": 852,
+    "asset": "public/art/horror/background.webp"
+  },
+  "scenery": {
+    "source": "output/horror-work/sources/scenery.png",
+    "width": 1585,
+    "height": 992,
+    "transparentFraction": 0.8520263050778467,
+    "opaqueBaseline": 853,
+    "asset": "public/art/horror/scenery.webp"
+  },
+  "masked": {
+    "source": "output/horror-work/sources/masked.png",
+    "width": 1254,
+    "height": 1254,
+    "transparentFraction": 0.750330680260169,
+    "cells": [
+      {
+        "index": 0,
+        "source": {
+          "left": 48,
+          "top": 19,
+          "width": 237,
+          "height": 274
+        },
+        "registered": {
+          "x": 26,
+          "y": 32,
+          "w": 204,
+          "h": 187
+        }
+      },
+      {
+        "index": 1,
+        "source": {
+          "left": 343,
+          "top": 31,
+          "width": 268,
+          "height": 279
+        },
+        "registered": {
+          "x": 72,
+          "y": 26,
+          "w": 112,
+          "h": 204
+        }
+      },
+      {
+        "index": 2,
+        "source": {
+          "left": 631,
+          "top": 55,
+          "width": 293,
+          "height": 238
+        },
+        "registered": {
+          "x": 10,
+          "y": 31,
+          "w": 232,
+          "h": 194
+        }
+      },
+      {
+        "index": 3,
+        "source": {
+          "left": 949,
+          "top": 96,
+          "width": 269,
+          "height": 129
+        },
+        "registered": {
+          "x": 26,
+          "y": 92,
+          "w": 204,
+          "h": 72
+        }
+      },
+      {
+        "index": 4,
+        "source": {
+          "left": 28,
+          "top": 384,
+          "width": 274,
+          "height": 135
+        },
+        "registered": {
+          "x": 26,
+          "y": 92,
+          "w": 204,
+          "h": 72
+        }
+      },
+      {
+        "index": 5,
+        "source": {
+          "left": 341,
+          "top": 402,
+          "width": 276,
+          "height": 224
+        },
+        "registered": {
+          "x": 26,
+          "y": 96,
+          "w": 204,
+          "h": 64
+        }
+      },
+      {
+        "index": 6,
+        "source": {
+          "left": 645,
+          "top": 402,
+          "width": 273,
+          "height": 224
+        },
+        "registered": {
+          "x": 26,
+          "y": 96,
+          "w": 204,
+          "h": 64
+        }
+      },
+      {
+        "index": 7,
+        "source": {
+          "left": 958,
+          "top": 351,
+          "width": 270,
+          "height": 275
+        },
+        "registered": {
+          "x": 26,
+          "y": 42,
+          "w": 204,
+          "h": 172
+        }
+      },
+      {
+        "index": 8,
+        "source": {
+          "left": 32,
+          "top": 651,
+          "width": 272,
+          "height": 288
+        },
+        "registered": {
+          "x": 26,
+          "y": 42,
+          "w": 204,
+          "h": 172
+        }
+      },
+      {
+        "index": 9,
+        "source": {
+          "left": 413,
+          "top": 626,
+          "width": 130,
+          "height": 274
+        },
+        "registered": {
+          "x": 90,
+          "y": 26,
+          "w": 76,
+          "h": 204
+        }
+      },
+      {
+        "index": 10,
+        "source": {
+          "left": 711,
+          "top": 626,
+          "width": 134,
+          "height": 274
+        },
+        "registered": {
+          "x": 90,
+          "y": 26,
+          "w": 76,
+          "h": 204
+        }
+      },
+      {
+        "index": 11,
+        "source": {
+          "left": 1047,
+          "top": 626,
+          "width": 100,
+          "height": 274
+        },
+        "registered": {
+          "x": 101,
+          "y": 26,
+          "w": 54,
+          "h": 204
+        }
+      },
+      {
+        "index": 12,
+        "source": {
+          "left": 100,
+          "top": 939,
+          "width": 127,
+          "height": 277
+        },
+        "registered": {
+          "x": 101,
+          "y": 26,
+          "w": 54,
+          "h": 204
+        }
+      }
+    ],
+    "asset": "public/art/horror/masked.webp"
+  },
+  "skeleton": {
+    "source": "output/horror-work/sources/skeleton.png",
+    "width": 1254,
+    "height": 1254,
+    "transparentFraction": 0.8203827496826741,
+    "cells": [
+      {
+        "index": 0,
+        "source": {
+          "left": 49,
+          "top": 51,
+          "width": 206,
+          "height": 206
+        },
+        "registered": {
+          "x": 28,
+          "y": 26,
+          "w": 200,
+          "h": 204
+        }
+      },
+      {
+        "index": 1,
+        "source": {
+          "left": 367,
+          "top": 27,
+          "width": 210,
+          "height": 264
+        },
+        "registered": {
+          "x": 72,
+          "y": 26,
+          "w": 112,
+          "h": 204
+        }
+      },
+      {
+        "index": 2,
+        "source": {
+          "left": 644,
+          "top": 70,
+          "width": 270,
+          "height": 177
+        },
+        "registered": {
+          "x": 26,
+          "y": 62,
+          "w": 204,
+          "h": 132
+        }
+      },
+      {
+        "index": 3,
+        "source": {
+          "left": 966,
+          "top": 108,
+          "width": 256,
+          "height": 91
+        },
+        "registered": {
+          "x": 26,
+          "y": 92,
+          "w": 204,
+          "h": 72
+        }
+      },
+      {
+        "index": 4,
+        "source": {
+          "left": 33,
+          "top": 413,
+          "width": 257,
+          "height": 91
+        },
+        "registered": {
+          "x": 26,
+          "y": 92,
+          "w": 204,
+          "h": 72
+        }
+      },
+      {
+        "index": 5,
+        "source": {
+          "left": 335,
+          "top": 419,
+          "width": 268,
+          "height": 94
+        },
+        "registered": {
+          "x": 26,
+          "y": 96,
+          "w": 204,
+          "h": 64
+        }
+      },
+      {
+        "index": 6,
+        "source": {
+          "left": 651,
+          "top": 420,
+          "width": 269,
+          "height": 95
+        },
+        "registered": {
+          "x": 26,
+          "y": 96,
+          "w": 204,
+          "h": 64
+        }
+      },
+      {
+        "index": 7,
+        "source": {
+          "left": 953,
+          "top": 355,
+          "width": 269,
+          "height": 222
+        },
+        "registered": {
+          "x": 26,
+          "y": 42,
+          "w": 204,
+          "h": 172
+        }
+      },
+      {
+        "index": 8,
+        "source": {
+          "left": 36,
+          "top": 659,
+          "width": 275,
+          "height": 226
+        },
+        "registered": {
+          "x": 26,
+          "y": 42,
+          "w": 204,
+          "h": 172
+        }
+      },
+      {
+        "index": 9,
+        "source": {
+          "left": 406,
+          "top": 633,
+          "width": 131,
+          "height": 272
+        },
+        "registered": {
+          "x": 90,
+          "y": 26,
+          "w": 76,
+          "h": 204
+        }
+      },
+      {
+        "index": 10,
+        "source": {
+          "left": 720,
+          "top": 629,
+          "width": 122,
+          "height": 276
+        },
+        "registered": {
+          "x": 90,
+          "y": 26,
+          "w": 76,
+          "h": 204
+        }
+      },
+      {
+        "index": 11,
+        "source": {
+          "left": 992,
+          "top": 635,
+          "width": 156,
+          "height": 279
+        },
+        "registered": {
+          "x": 101,
+          "y": 26,
+          "w": 54,
+          "h": 204
+        }
+      },
+      {
+        "index": 12,
+        "source": {
+          "left": 104,
+          "top": 949,
+          "width": 157,
+          "height": 283
+        },
+        "registered": {
+          "x": 101,
+          "y": 26,
+          "w": 54,
+          "h": 204
+        }
+      }
+    ],
+    "asset": "public/art/horror/skeleton.webp"
+  }
+}

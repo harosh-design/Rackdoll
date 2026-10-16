@@ -1,0 +1,38 @@
+{
+  "startStyle": {
+    "backdrop": "blur(14px) saturate(0.7)",
+    "panel": "rgba(27, 20, 39, 0.64)",
+    "menuImages": true,
+    "quickCards": 2,
+    "grain": 0.16,
+    "workspaceOverflow": false
+  },
+  "controlsVisibleOnStart": true,
+  "controlsVisibleOnReturn": true,
+  "liveBindingPreview": true,
+  "bindingPersistence": true,
+  "resetSyncs": true,
+  "modeBadges": true,
+  "remapShortcut": true,
+  "blurRemovedDuringPlay": true,
+  "viewports": [
+    {
+      "width": 390,
+      "height": 844
+    },
+    {
+      "width": 360,
+      "height": 640
+    },
+    {
+      "width": 768,
+      "height": 1024
+    }
+  ],
+  "laptop": [
+    1280,
+    720
+  ],
+  "darkModeMatches": true,
+  "errors": []
+}
