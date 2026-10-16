@@ -19,6 +19,7 @@ describe('net blade collision', () => {
     gw.step();
     expect(player.isAttached('FingerLeft')).toBe(true);
     expect(player.injured).toBe(false);
+    expect(gw.centerObstacle.bloodstains).toHaveLength(0);
   });
 
   it.each([1, 2] as const)('cuts player %s only when deeply impaled without ending the rally', id => {
@@ -28,6 +29,8 @@ describe('net blade collision', () => {
     gw.step();
     expect(player.isAttached('FingerLeft')).toBe(false);
     expect(player.injured).toBe(true);
+    expect(gw.centerObstacle.bloodstains).toHaveLength(1);
+    expect(player.impaled).toBe(false);
     expect(gw.game.phase).toBe('play');
     expect(gw.game.score).toEqual({ 1: 0, 2: 0 });
   });

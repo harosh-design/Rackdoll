@@ -616,7 +616,7 @@ function simFrame(): void {
   if (gw.executers.length > executers) sfx.executer();
   for (const [e, { hits, snaps }] of hazardHits) {
     if (e.hits > hits && e.lastImpact) {
-      if (e.variant.id === 'slime') sfx.splat();
+      if (e.variant.id === 'slime' || e.variant.id === 'chameleon') sfx.splat();
       else sfx.bump(0.4 + 1.4 * e.lastImpact.power);
     }
     if (e.snaps > snaps) sfx.splat(true);

@@ -21,6 +21,8 @@ export const AIR_HEATER = { halfWidthPx: 3, rangePx: ORIGINAL_PLAYER_HEIGHT_PX *
 export const SHARP_SPIKE = { halfWidthPx: 6, topPx: NET_TOP_PX - NET_SPIKE.heightPx } as const;
 export const RUBBER_NET = { halfWidthPx: 3, basePx: FLOOR_TOP_PX - 4, segments: 6, maxBaseAngle: 1.22, maxBendAngle: 0.35 } as const;
 
+export interface SpikeBloodstain { height: number; scale: number; age: number }
+
 /** A centre obstacle owns both its collision geometry and its round-local state. */
 export class CenterObstacle {
   readonly id: CenterObstacleId;
@@ -29,6 +31,8 @@ export class CenterObstacle {
   readonly blade: NetSpike;
   /** Actual constraints, one per caught part; the remaining skeleton stays attached. */
   readonly pins = new Map<Body, RevoluteJoint>();
+  readonly bloodstains: SpikeBloodstain[] = [];
+  private readonly impaledPlayers = new Set<Player>();
   private readonly springs: RevoluteJoint[] = [];
   private readonly restPositions = new Map<Body, Vec2>();
 
@@ -85,6 +89,7 @@ export class CenterObstacle {
 
   beforeStep(players: readonly Player[], active = true): void {
     this.blade.capture(players);
+    for (const stain of this.bloodstains) stain.age = Math.min(180, stain.age + 1);
     for (const joint of this.springs) joint.setMotorSpeed(Math.max(-2, Math.min(2, -2 * joint.getJointAngle())));
     if (this.id !== 'blower' || !active) return;
     const range = toM(AIR_HEATER.rangePx);
@@ -112,8 +117,10 @@ export class CenterObstacle {
     for (const player of players) {
       let severed = false;
       for (const hit of this.blade.impacts(player, this.id === 'classic')) {
-        if (this.id === 'classic') severed = player.sever(hit.part) || severed;
-        else {
+        if (this.id === 'classic') {
+          if (!player.sever(hit.part)) continue;
+          severed = true;
+        } else {
           const body = player.part(hit.part);
           if (this.pins.has(body)) continue;
           this.pins.set(body, this.world.createJoint(new RevoluteJoint({
@@ -121,7 +128,12 @@ export class CenterObstacle {
             localAnchorA: this.net.getLocalPoint(Vec2(toM(NET_X_PX), toM(hit.height))),
             localAnchorB: hit.localAnchor, collideConnected: false,
           }))!);
+          player.stretchAt(hit.part);
+          this.impaledPlayers.add(player);
         }
+        // Record an actual cut or a new pin once, rather than every contact frame.
+        if (this.bloodstains.length === 24) this.bloodstains.shift();
+        this.bloodstains.push({ height: hit.height, scale: player.partScale(hit.part), age: 0 });
       }
       if (severed) cut.push(player);
     }
@@ -132,6 +144,9 @@ export class CenterObstacle {
     this.blade.capture([]);
     for (const joint of this.pins.values()) this.world.destroyJoint(joint);
     this.pins.clear();
+    for (const player of this.impaledPlayers) player.releaseImpalement();
+    this.impaledPlayers.clear();
+    this.bloodstains.length = 0;
     for (const body of this.bodies) {
       body.setTransform(this.restPositions.get(body)!, 0);
       body.setLinearVelocity(Vec2(0, 0));

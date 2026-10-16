@@ -5,6 +5,7 @@ import type { PoseSource } from './dollPose';
 import { HorrorBackground } from './horrorBackground';
 import layouts from './horrorAtlas.json';
 import { loadHorrorProps } from './horrorProps';
+import { drawLigaments } from './ligamentArt';
 
 const players: Partial<Record<1 | 2, HTMLImageElement>> = {};
 let background: HorrorBackground | undefined;
@@ -43,6 +44,7 @@ export function drawHorrorBackground(ctx: CanvasRenderingContext2D, width: numbe
 /** Cutouts follow existing joint pivots, size powers and detached-part poses. */
 export function drawHorrorPlayers(ctx: CanvasRenderingContext2D, dolls: readonly Player[], poses: PoseSource, alpha: number): void {
   for (const player of dolls) {
+    drawLigaments(ctx, player, poses, alpha);
     for (const name of DRAW_ORDER) {
       const pose = poses.pose(player.part(name), alpha);
       ctx.save();

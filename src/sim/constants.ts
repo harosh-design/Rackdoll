@@ -711,6 +711,27 @@ export const SLIME = {
   brakeForce: 60,
 } as const;
 
+/** A wall crawler with a short, interruptible tongue tug instead of a body attack. */
+export const CHAMELEON = {
+  crawlSpeedPx: 20,
+  emergeFrames: 24,
+  emergeDistancePx: 14,
+  tongueReachPx: 420,
+  /** Pause between attempts, with a visible wind-up and a short pull. */
+  cooldownFrames: 72,
+  extendFrames: 6,
+  pullFrames: 12,
+  retractFrames: 8,
+  /** Acceleration while attached, m/s². The player is pulled sideways as a whole. */
+  playerPull: 2.6,
+  ballPull: 6,
+  ballLiftMax: 0.45,
+  /** A fleeing target can break the tongue before or during the tug. */
+  catchRadiusPx: 28,
+  breakMarginPx: 45,
+  releasePx: 32,
+} as const;
+
 /**
  * Solver iterations for a step with an executer at a doll. The original's 10
  * everywhere else. Measured: with this, a doll rammed by an executer tears no

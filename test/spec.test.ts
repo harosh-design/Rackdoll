@@ -825,11 +825,12 @@ describe('hazards (reworked §13)', () => {
     return sum / n;
   };
 
-  it('draws the five hazards in a shuffled order that both buttons share, and shows what comes next', () => {
-    expect(EXECUTER_VARIANTS.map((v) => v.id).sort()).toEqual(['boxer', 'comet', 'magnet', 'slime', 'spring']);
+  it('draws all six hazards in a shuffled order that both buttons share, and shows what comes next', () => {
+    expect(EXECUTER_VARIANTS.map((v) => v.id).sort()).toEqual(['boxer', 'chameleon', 'comet', 'magnet', 'slime', 'spring']);
     const gw = hazardWorld();
     const seen: string[] = [];
-    for (let i = 0; i < 15; i++) {
+    const count = EXECUTER_VARIANTS.length;
+    for (let i = 0; i < count * 3; i++) {
       const side = i % 2 === 0 ? 1 : 2;
       const button = gw.ground.prizeButtons.find((b) => b.side === side)!;
       const upcoming = gw.executerQueue.peek(4).map((v) => v.id);
@@ -847,9 +848,9 @@ describe('hazards (reworked §13)', () => {
       run(gw, 20);
       expect(button.armed).toBe(true);
     }
-    expect(gw.executerLaunches).toBe(15);
-    // Each run of five has every hazard once; none comes twice in a row.
-    for (let i = 0; i < seen.length; i += 5) expect(new Set(seen.slice(i, i + 5)).size).toBe(5);
+    expect(gw.executerLaunches).toBe(count * 3);
+    // Each run has every hazard once; none comes twice in a row.
+    for (let i = 0; i < seen.length; i += count) expect(new Set(seen.slice(i, i + count)).size).toBe(count);
     for (let i = 1; i < seen.length; i++) expect(seen[i]).not.toBe(seen[i - 1]);
     // And the order really is shuffled: other seeds, other orders.
     const orders = new Set([1, 2, 3, 4, 5, 6].map((seed) =>

@@ -1,5 +1,5 @@
 import {
-  Box, Circle, PrismaticJoint, RevoluteJoint, Vec2, WheelJoint,
+  Box, Circle, DistanceJoint, PrismaticJoint, RevoluteJoint, RopeJoint, Vec2, WheelJoint,
   type Body, type RevoluteJoint as RevoluteJointT, type Vec2Value, type World,
 } from 'planck';
 import {
@@ -16,6 +16,13 @@ export type PlayerId = 1 | 2;
 const TURN = Math.PI * 2;
 
 const PART_DEFS = new Map(PARTS.map((p) => [p.name, p]));
+
+interface Ligament {
+  def: JointDef;
+  spring: DistanceJoint;
+  limit: RopeJoint;
+  referenceAngle: number;
+}
 
 /** Head centre to sole at full size, px: the Head part's dy 2 to the Foot's 90 + 11. */
 const HEAD_TO_SOLE_PX = 99;
@@ -59,6 +66,9 @@ export class Player {
   /** Swapped for a wheel joint while the doll flips, so it is not readonly. */
   railV: PrismaticJoint;
   readonly revolutes: RevoluteJointT[] = [];
+  /** Elastic replacements for the hinges next to an impaled body part. */
+  readonly ligaments: Ligament[] = [];
+  private readonly impaledParts = new Set<PartName>();
 
   /** Consecutive touches this rally. > 3 gives the point away (§11.3). */
   contact = 0;
@@ -228,14 +238,56 @@ export class Player {
   get tors(): Body { return this.activePart('Tors'); }
   get ass(): Body { return this.activePart('Ass'); }
   get injured(): boolean { return this.detachedBodies.length > 0; }
+  get impaled(): boolean { return this.impaledParts.size > 0; }
+  get skeletonJoints(): (RevoluteJointT | DistanceJoint)[] {
+    return [...this.revolutes, ...this.ligaments.map(link => link.spring)];
+  }
 
   isAttached(name: PartName): boolean { return this.bodies.includes(this.part(name)); }
   activePart(name: PartName): Body { return this.isAttached(name) ? this.part(name) : this.head; }
   partScale(name: PartName): number { return ud(this.part(name)).detachedScale ?? this.sizeScale; }
 
+  /** The caught part stays pinned while its neighbours pull on bounded springs. */
+  stretchAt(name: PartName): void {
+    if (!this.isAttached(name)) return;
+    this.impaledParts.add(name);
+    const body = this.part(name);
+    for (let i = this.revolutes.length - 1; i >= 0; i--) {
+      const joint = this.revolutes[i];
+      if (joint.getBodyA() !== body && joint.getBodyB() !== body) continue;
+      const def = JOINTS.find(j => this.part(j.a) === joint.getBodyA() && this.part(j.b) === joint.getBodyB())!;
+      const anchors = {
+        bodyA: joint.getBodyA(), bodyB: joint.getBodyB(),
+        localAnchorA: joint.getLocalAnchorA().clone(), localAnchorB: joint.getLocalAnchorB().clone(),
+        collideConnected: false,
+      };
+      const referenceAngle = joint.getReferenceAngle();
+      this.world.destroyJoint(joint);
+      this.revolutes.splice(i, 1);
+      this.ligaments.push({
+        def, referenceAngle,
+        spring: this.world.createJoint(new DistanceJoint({
+          ...anchors, length: toM(0.5 * this.sizeScale), frequencyHz: 1.8, dampingRatio: 0.7,
+        }))!,
+        limit: this.world.createJoint(new RopeJoint({ ...anchors, maxLength: toM(48 * this.sizeScale) }))!,
+      });
+    }
+  }
+
+  /** Restore the ordinary hinges before a round reset moves the doll. */
+  releaseImpalement(): void {
+    for (const link of this.ligaments) {
+      this.world.destroyJoint(link.spring); this.world.destroyJoint(link.limit);
+      this.revolutes.push(this.makeJoint(link.def, this.sizeScale, link.referenceAngle));
+    }
+    this.ligaments.length = 0;
+    this.impaledParts.clear();
+  }
+
   /** Cut the hit part's branch away from the surviving rail-mounted body. */
   sever(name: PartName): boolean {
     if (this.power === 'shield' || !this.isAttached(name) || this.bodies.length === 1) return false;
+    this.releaseImpalement();
     const hit = this.part(name);
     if (hit === this.head) {
       // Transfer the rail before removing its current host, including mid-flip.
@@ -295,6 +347,7 @@ export class Player {
 
   /** Rebuild the complete skeleton before the next round or match. */
   restoreBody(): void {
+    this.releaseImpalement();
     if (!this.injured) return;
     this.endFlip();
     this.world.destroyJoint(this.railV);
@@ -394,6 +447,8 @@ export class Player {
     const pivot = Vec2(this.head.getWorldCenter().x, (left.y + right.y) / 2 + toM(11 * this.sizeScale));
     const transform = (p: Vec2Value) => Vec2(pivot.x + (p.x - pivot.x) * ratio, pivot.y + (p.y - pivot.y) * ratio);
     const surviving = JOINTS.filter(def => this.isAttached(def.a) && this.isAttached(def.b));
+    const caught = [...this.impaledParts];
+    this.releaseImpalement();
     const referenceAngles = surviving.map(def => this.revolutes.find(j => j.getBodyA() === this.part(def.a) && j.getBodyB() === this.part(def.b))!.getReferenceAngle());
     for (const joint of this.revolutes) this.world.destroyJoint(joint);
     this.revolutes.length = 0;
@@ -426,6 +481,7 @@ export class Player {
       }
     }
     this.sizeScale = scale;
+    for (const name of caught) this.stretchAt(name);
     // Mid-flip the rail is a wheel joint; endFlip() rebuilds it at this size.
     if (!this.flipState) this.railV.setLimits(railLowerFor(scale), RAIL_V_LIMITS.upper);
     if (this.ballJoint) {

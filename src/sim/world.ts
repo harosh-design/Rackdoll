@@ -359,7 +359,7 @@ export class GameWorld {
       this.updateAiCounter(id);
     }
 
-    // 6. Hazards. The magnet bends the ball only while it is free and in play.
+    // 6. Hazards only attract a ball while it is free and in play.
     const freeBall = this.game.phase === 'play' && !this.ball.held && this.ball.ballOfPlayer === 0
       ? this.ball.body : null;
     for (const e of this.executers) e.update(dt, freeBall);
@@ -643,7 +643,7 @@ export class GameWorld {
       // A stuck slime is a sensor riding on the doll: no contact to solve.
       // Measured: 20 iterations on a doll that is merely standing creeps it
       // sideways ~10 px a second.
-      if (e.dead || !e.solid || e.phase === 'stuck') continue;
+      if (e.dead || !e.solid || e.phase === 'stuck' || e.variant.id === 'chameleon') continue;
       const c = e.body.getWorldCenter();
       for (const p of [this.p1, this.p2]) {
         for (const b of p.bodies) {

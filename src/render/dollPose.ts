@@ -34,6 +34,12 @@ function hang(at: { x: number; y: number }, local: Vec2Value, angle: number): Po
  * rest barely moves. The simulation never sees any of this.
  */
 export function closeJoints(p: Player, source: PoseSource, alpha: number, out: Map<Body, Pose>): void {
+  // Keep pinned parts on the spear and expose the solver's real joint gaps.
+  // Closing this skeleton would hide the stretch and pull the art off its pin.
+  if (p.impaled) {
+    for (const body of p.bodies) out.set(body, source.pose(body, alpha));
+    return;
+  }
   const raw = new Map<Body, Pose>();
   for (const b of p.bodies) raw.set(b, source.pose(b, alpha));
   const placed = new Map<Body, Pose>([[p.tors, raw.get(p.tors)!]]);

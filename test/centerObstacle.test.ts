@@ -50,8 +50,10 @@ describe('sharp spike', () => {
     hand.setTransform(Vec2(toM(NET_X_PX), toM(NET_TOP_PX - 6)), 0);
     gw.step();
     expect(gw.centerObstacle.pins.has(hand)).toBe(true);
+    expect(player.impaled).toBe(true);
+    expect(gw.centerObstacle.bloodstains).toHaveLength(1);
     expect(player.injured).toBe(false);
-    expect(player.revolutes).toHaveLength(12);
+    expect(player.skeletonJoints).toHaveLength(12);
     expect(gw.game.phase).toBe('play');
     run(gw, 25);
     expect(gw.centerObstacle.pins.has(hand)).toBe(true);
@@ -60,6 +62,10 @@ describe('sharp spike', () => {
     gw.game.win1 = id === 1;
     gw.game.newRound();
     expect(gw.centerObstacle.pins.size).toBe(0);
+    expect(player.impaled).toBe(false);
+    expect(player.revolutes).toHaveLength(12);
+    expect(player.ligaments).toHaveLength(0);
+    expect(gw.centerObstacle.bloodstains).toHaveLength(0);
     expect(player.holdingJoint).not.toBeNull();
     run(gw, 20);
     expect(player.injured).toBe(false);
@@ -75,6 +81,8 @@ describe('sharp spike', () => {
     expect(gw.centerObstacle.pins.has(hand)).toBe(true);
     gw.game.resetMatch();
     expect(gw.centerObstacle.pins.size).toBe(0);
+    expect(gw.p1.impaled).toBe(false);
+    expect(gw.centerObstacle.bloodstains).toHaveLength(0);
   });
 
   it('ignores shields and harmless contacts below the point', () => {
@@ -87,6 +95,19 @@ describe('sharp spike', () => {
     hand.setTransform(Vec2(toM(NET_X_PX), toM(NET_TOP_PX + 25)), 0);
     gw.centerObstacle.beforeStep([gw.p1]); gw.centerObstacle.afterStep([gw.p1]);
     expect(gw.centerObstacle.pins.size).toBe(0);
+    expect(gw.p1.impaled).toBe(false);
+    expect(gw.centerObstacle.bloodstains).toHaveLength(0);
+  });
+
+  it('ages blood without adding another stain for the same pinned part', () => {
+    const gw = world({ centerObstacle: 'sharp' });
+    gw.p1.part('FingerLeft').setTransform(Vec2(toM(NET_X_PX), toM(NET_TOP_PX - 6)), 0);
+    for (let frame = 0; frame < 30; frame++) {
+      gw.centerObstacle.beforeStep([gw.p1]); gw.centerObstacle.afterStep([gw.p1]);
+    }
+    expect(gw.centerObstacle.pins.size).toBe(1);
+    expect(gw.centerObstacle.bloodstains).toHaveLength(1);
+    expect(gw.centerObstacle.bloodstains[0].age).toBe(29);
   });
 });
 

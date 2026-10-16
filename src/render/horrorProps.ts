@@ -2,6 +2,7 @@ import type { ExecuterId } from '../sim/executerVariants';
 
 export const HORROR_HAZARD_LABELS: Record<ExecuterId, string> = {
   magnet: 'MAGNET', boxer: 'VOODOO', comet: 'FIRE SKULL', spring: 'BONE TRAP', slime: 'ECTOPLASM',
+  chameleon: 'CHAMELEON',
 };
 export type HorrorProp = 'magnet' | 'voodoo' | 'fire-skull' | 'jaw-base' | 'jaw-cap' | 'ectoplasm' | 'bat' | 'talisman' | 'fist';
 const names: readonly HorrorProp[] = ['magnet', 'voodoo', 'fire-skull', 'jaw-base', 'jaw-cap', 'ectoplasm', 'bat', 'talisman', 'fist'];

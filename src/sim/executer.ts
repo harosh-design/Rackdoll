@@ -1,7 +1,7 @@
 import { Circle, Vec2, type Body, type Fixture, type Vec2Value, type World } from 'planck';
 import {
-  BODYTYPE, BOXER, clamp01, COLLISION, COMET, COURT, EXECUTER, FLOOR_TOP_PX, GRAVITY, LEFT_WALL_INNER_PX, MAGNET,
-  NET_X_PX, OPTIONS, PARTS, RIGHT_WALL_INNER_PX, SLIME, SPRING, SWING, TIMERS, toM, toPx, type PartName,
+  BODYTYPE, BOXER, CHAMELEON, clamp01, COLLISION, COMET, COURT, EXECUTER, FLOOR_TOP_PX, FPS, GRAVITY, LEFT_WALL_INNER_PX, MAGNET,
+  NET_X_PX, OPTIONS, PARTS, RIGHT_WALL_INNER_PX, SLIME, SPRING, SWING, TIME_STEP, TIMERS, toM, toPx, type PartName,
 } from './constants';
 import { FrameTimer, type TimerSet } from './timer';
 import type { Player, PlayerId } from './player';
@@ -40,9 +40,11 @@ export interface ExecuterOptions {
  * - comet: `stalk` to a run-up point, `dash` through its player, `recover`;
  * - spring: `charge`, `rebound` off its player, `recover`, and again;
  * - slime: `fly` at a limb, `stuck` to the part it reached, `recover`, and again.
+ * - chameleon: `crawl` down the wall, `tongue-extend`, `tongue-pull`, `tongue-retract`.
  */
 export type ExecuterPhase =
-  'hunt' | 'latched' | 'chase' | 'stalk' | 'dash' | 'charge' | 'rebound' | 'recover' | 'fly' | 'stuck';
+  'hunt' | 'latched' | 'chase' | 'stalk' | 'dash' | 'charge' | 'rebound' | 'recover' | 'fly' | 'stuck' |
+  'crawl' | 'tongue-extend' | 'tongue-pull' | 'tongue-retract';
 
 /** A blow that landed, for the renderer's flash and the sound. */
 export interface ExecuterImpact {
@@ -77,6 +79,7 @@ export interface SlimeSnap {
 const FIRST_PHASE: Record<ExecuterVariant['id'], ExecuterPhase> = {
   // The spring settles level with its player before its first run.
   magnet: 'hunt', boxer: 'chase', comet: 'stalk', spring: 'recover', slime: 'fly',
+  chameleon: 'crawl',
 };
 
 /** What the magnet's field draws out toward it, on top of the whole-doll pull. */
@@ -110,14 +113,15 @@ const unit = (x: number, y: number): Vec2 => {
 };
 
 /**
- * §13 Executer, reworked into five hazards that share one body and one set of
+ * §13 Executer, reworked into hazards that share one body and one set of
  * safety rules but attack in their own ways:
  *
- * - fired out of the button it came from, straight at its target;
+ * - flying hazards fire out of their button, straight at their target;
  * - a sensor until it is clear of everything, so it can't spawn inside the
  *   ball that just pressed the button;
  * - then steered by a bounded force rather than having its velocity
  *   overwritten, so a player in the way stops it instead of being crushed;
+ * - the wall crawler stays a kinematic sensor and only pulls with its tongue;
  * - no gravity: it hovers, as the velocity overwrite made the original's do;
  * - every blow it deals goes through Player.knock(): a shove shared between
  *   the rail-mounted head and the hips, which moves the doll without tearing
@@ -131,7 +135,7 @@ export class Executer {
   dead = false;
   /** Frames since launch. */
   age = 0;
-  /** False while it is still emerging from its button as a sensor. */
+  /** False while emerging. The wall crawler remains a sensor after it is ready. */
   solid = false;
   phase: ExecuterPhase;
   /** Frames spent in the current phase. */
@@ -167,6 +171,9 @@ export class Executer {
   /** Slime: strands that tore, and the last one. */
   snaps = 0;
   lastSnap: SlimeSnap | null = null;
+  /** Chameleon: the current tongue target and its last aimed point, in metres. */
+  tongueTarget: Body | null = null;
+  tongueAim = Vec2(0, 0);
 
   private readonly fixture: Fixture;
   private readonly timer: FrameTimer;
@@ -186,6 +193,9 @@ export class Executer {
   private reelAge = 0;
   /** Slime: parts that tore free, and the age until which it can't glue them again. */
   private readonly regrab = new Map<Body, number>();
+  private readonly wallX: number;
+  private readonly crawlSpeed: number;
+  private tongueCooldown = CHAMELEON.cooldownFrames;
 
   constructor(o: ExecuterOptions) {
     this.world = o.world;
@@ -206,9 +216,13 @@ export class Executer {
       bullet: EXECUTER.bullet,
       ...o.tuning,
     };
+    this.wallX = o.origin.x;
+    // Leave enough wall for the entire lifetime, including a longer custom life.
+    this.crawlSpeed = toM(Math.min(CHAMELEON.crawlSpeedPx,
+      Math.max(0, FLOOR_TOP_PX - EXECUTER.radiusPx - toPx(o.origin.y)) / (this.lifeSeconds * FPS * TIME_STEP) * 0.95));
 
     this.body = o.world.createBody({
-      type: 'dynamic',
+      type: o.variant.id === 'chameleon' ? 'kinematic' : 'dynamic',
       position: Vec2(o.origin.x, o.origin.y),
       angularDamping: 0,
       linearDamping: 0,
@@ -240,6 +254,11 @@ export class Executer {
     const d = unit(aim.x - c.x, aim.y - c.y);
     this.facingAngle = this.previousFacingAngle = Math.atan2(d.y, d.x);
     this.body.setLinearVelocity(Vec2(d.x * this.tuning.launchSpeed, d.y * this.tuning.launchSpeed));
+    if (o.variant.id === 'chameleon') {
+      const inward = this.side === 1 ? 1 : -1;
+      this.body.setTransform(Vec2(this.wallX - inward * toM(CHAMELEON.emergeDistancePx), o.origin.y), 0);
+      this.crawlDownWall();
+    }
     this.lastVelocity = this.body.getLinearVelocity().clone();
 
     this.timer = o.timers.add(
@@ -330,6 +349,12 @@ export class Executer {
     if (this.dead) return;
     this.age += 1;
     this.phaseAge += 1;
+    if (this.variant.id === 'chameleon') {
+      this.solid = this.age >= CHAMELEON.emergeFrames;
+      if (this.knockbackFrames > 0) this.knockbackFrames -= 1;
+      this.updateChameleon(dt, ball);
+      return;
+    }
     if (this.variant.id === 'comet') this.facePlayer(dt);
 
     if (!this.solid) {
@@ -352,6 +377,98 @@ export class Executer {
       }
     }
     this.lastVelocity = this.body.getLinearVelocity().clone();
+  }
+
+  // -------------------------------------------------------------------------
+  // Chameleon
+  // -------------------------------------------------------------------------
+
+  /** A kinematic sensor follows the wall without crushing or blocking a doll. */
+  private crawlDownWall(): void {
+    const p = this.body.getPosition();
+    const inward = this.side === 1 ? 1 : -1;
+    const emergeLeft = Math.max(0, CHAMELEON.emergeFrames - this.age);
+    const x = this.wallX - inward * toM(CHAMELEON.emergeDistancePx) * emergeLeft / CHAMELEON.emergeFrames;
+    this.body.setTransform(Vec2(x, p.y), 0);
+    this.body.setLinearVelocity(Vec2(emergeLeft > 0
+      ? inward * toM(CHAMELEON.emergeDistancePx) / (CHAMELEON.emergeFrames * TIME_STEP) : 0, this.crawlSpeed));
+  }
+
+  private tongueCanReach(body: Body): boolean {
+    const p = body.getWorldCenter();
+    const onHalf = this.side === 1 ? p.x < toM(NET_X_PX) : p.x > toM(NET_X_PX);
+    return onHalf && Vec2.distance(this.body.getWorldCenter(), p) <= toM(CHAMELEON.tongueReachPx);
+  }
+
+  private releaseTongue(): void {
+    if (this.tongueTarget && this.phase === 'tongue-pull') this.tongueAim = this.tongueTarget.getWorldCenter().clone();
+    this.tongueTarget = null;
+    this.setPhase('tongue-retract');
+  }
+
+  /** Attacks never interrupt the descent, and only a free, in-play ball is eligible. */
+  private updateChameleon(dt: number, ball: Body | null): void {
+    this.crawlDownWall();
+    if (!this.solid || this.knockbackFrames > 0) return;
+    const playerPart = this.target.activePart('Tors');
+    if (this.phase === 'crawl') {
+      if (--this.tongueCooldown > 0) return;
+      const choices = [this.target.power === 'shield' ? null : playerPart, ball]
+        .filter((b): b is Body => b !== null && this.tongueCanReach(b));
+      choices.sort((a, b) => Vec2.distance(this.body.getWorldCenter(), a.getWorldCenter()) -
+        Vec2.distance(this.body.getWorldCenter(), b.getWorldCenter()));
+      this.tongueCooldown = CHAMELEON.cooldownFrames;
+      this.tongueTarget = choices[0] ?? null;
+      if (this.tongueTarget) {
+        this.tongueAim = this.tongueTarget.getWorldCenter().clone();
+        this.setPhase('tongue-extend');
+      }
+      return;
+    }
+    if (this.phase === 'tongue-retract') {
+      if (this.phaseAge >= CHAMELEON.retractFrames) this.setPhase('crawl');
+      return;
+    }
+    const caught = this.tongueTarget;
+    const isPlayer = caught === playerPart;
+    if (!caught || (!isPlayer && caught !== ball) || (isPlayer && this.target.power === 'shield')) {
+      this.releaseTongue();
+      return;
+    }
+    const p = caught.getWorldCenter();
+    const c = this.body.getWorldCenter();
+    const distance = Vec2.distance(c, p);
+    const onHalf = this.side === 1 ? p.x < toM(NET_X_PX) : p.x > toM(NET_X_PX);
+    if (!onHalf || distance > toM(CHAMELEON.tongueReachPx + CHAMELEON.breakMarginPx) ||
+        distance < toM(CHAMELEON.releasePx)) {
+      this.releaseTongue();
+      return;
+    }
+    if (this.phase === 'tongue-extend') {
+      if (this.phaseAge >= CHAMELEON.extendFrames) {
+        if (Vec2.distance(p, this.tongueAim) > toM(CHAMELEON.catchRadiusPx)) this.releaseTongue();
+        else {
+          this.setPhase('tongue-pull');
+          this.landed(caught, 0.25, p);
+        }
+      }
+      return;
+    }
+    if (this.phaseAge > CHAMELEON.pullFrames) {
+      this.releaseTongue();
+      return;
+    }
+    this.tongueAim = p.clone();
+    const u = unit(c.x - p.x, c.y - p.y);
+    if (isPlayer) {
+      // Share the tug with every surviving part and the rail. No limb is stretched.
+      this.target.knock(Vec2(u.x * CHAMELEON.playerPull * dt, 0), 2);
+    } else {
+      const gravity = Math.abs(this.world.getGravity().y * caught.getGravityScale());
+      const ay = Math.max(u.y * CHAMELEON.ballPull, -gravity * CHAMELEON.ballLiftMax);
+      caught.applyLinearImpulse(Vec2(caught.getMass() * u.x * CHAMELEON.ballPull * dt,
+        caught.getMass() * ay * dt), p, true);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -898,9 +1015,10 @@ export class Executer {
     this.setPhase('recover');
   }
 
-  /** A new round re-stands the doll, which would tear its glue: the slime lets go first. */
+  /** Release external grips before a round moves or restores bodies. */
   shakeOff(): void {
     if (!this.dead && this.phase === 'stuck') this.peel();
+    if (!this.dead && this.variant.id === 'chameleon' && this.tongueTarget) this.releaseTongue();
   }
 
   /** Drifting clear as a sensor, walls and the net can't stop it, so this does. */
@@ -927,6 +1045,12 @@ export class Executer {
   /** An active player swing pushes this body away and interrupts its attack. */
   hitByPlayer(impulse: Vec2): void {
     if (this.dead || !this.solid) return;
+    if (this.variant.id === 'chameleon') {
+      if (this.tongueTarget) this.releaseTongue();
+      this.tongueCooldown = CHAMELEON.cooldownFrames;
+      this.knockbackFrames = SWING.executerKnockFrames;
+      return;
+    }
     this.punchFrame = -1;
     if (this.phase === 'latched') this.setPhase('hunt');
     else if (this.phase === 'stuck') this.peel();
@@ -966,6 +1090,7 @@ export class Executer {
   destroy(): void {
     if (this.dead) return;
     this.dead = true;
+    this.tongueTarget = null;
     this.timer.stop();
     this.timers.remove(this.timer);
     this.world.destroyBody(this.body);

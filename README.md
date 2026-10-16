@@ -107,6 +107,10 @@ this browser, previews on the court and applies to all modes and rematches:
 - **Classic spike** retains the cutting blade described below.
 - **Sharp spike** is a tapered spear. Parts that cross its tip are physically
   pinned to it while the rest of the skeleton remains attached, until the next round.
+  Its trapped player's joints visibly stretch under load, with red ligaments
+  joining the separated body parts. Hinges next to the caught part become damped
+  springs, with a rope limiting each gap to 48 world pixels at normal size.
+  The cutouts follow the actual pinned poses; the next round restores the hinges.
 - **Air heater** pushes players away from its column in every direction within
   30% of the original player's height (32.7 world pixels). The range stays fixed
   through size powers. Air forces depend on body mass and distance; the ball is unaffected.
@@ -115,6 +119,8 @@ this browser, previews on the court and applies to all modes and rematches:
 
 Each round releases impaled parts, straightens the rubber net and restores
 both players' full bodies. Wall-button hazards remain an independent setting.
+Both spike variants collect red bloodstains after a cut or a new impalement,
+with a brief spray and streaks running down the blade. Blood clears next round.
 
 The classic blade at the top of the net cuts off a body part only when deeply
 impaled, including the limbs connected beyond that part. Light touches and side
@@ -295,12 +301,12 @@ changes that on purpose:
   the net (collision-filtered, so nothing else ever meets it) keeps it on its
   half. The two original wall buttons are drawn as cracked gravestones; their
   positions, colliders, launch points and activation rules are unchanged.
-- **Five hazards, shuffled.** Both buttons share one queue: magnet, boxer,
-  comet, spring and slime, each run of five in a fresh random order, never the
+- **Six hazards, shuffled.** Both buttons share one queue: magnet, boxer,
+  comet, spring, slime and chameleon, each run of six in a fresh random order, never the
   same one twice in a row. The next hazard is previewed at the top of the screen
   and updates as each launches. A new match
-  shuffles a fresh order. A flipping player's legs can knock any of them
-  away and briefly interrupt its attack.
+  shuffles a fresh order. A flipping player's legs knock flying hazards
+  away and interrupt any hazard's attack.
 - **Magnet.** The slowest hunter (~1.4 m/s), with a strong field out to
   240 px. Its player is dragged toward it — the same sideways acceleration on
   every part, up to 30 m/s², so the doll moves without stretching — and their
@@ -344,6 +350,17 @@ changes that on purpose:
     it glued. The shield won't take its
     glue, and a new round shakes it off, since re-standing the doll would
     yank glued parts back together across the court.
+- **Chameleon.** Emerges from a gravestone over 0.8 s and crawls down that wall
+  at 20 px per physics second for its whole 25-second life. It keeps crawling
+  while attacking and stays attached to the wall when struck. Every 2.4 s
+  after its previous tongue cycle, it aims at the nearest eligible target
+  within 420 px: its player or a free ball in play on its half. The tongue
+  shoots out over 0.2 s, tugs for 0.4 s and retracts. A moving target can
+  dodge the shot or break free by leaving reach. The player receives a small
+  sideways pull shared by their whole body; the ball is pulled toward the
+  chameleon with upward acceleration capped below gravity. Shields block
+  player grabs, a flip interrupts the tongue, and a round reset releases it.
+  Its body remains a kinematic sensor, so it cannot pin a doll against the wall.
 - **Knocks.** Every blow is a change of velocity given to every part of the
   doll alike, plus a jolt to the part struck, and locks steering for a few
   frames so it carries. Shoving only the head and hips, as the opponent's
@@ -371,7 +388,7 @@ changes that on purpose:
   max with the magnet against 23 alone). A limb meeting one at speed can
   overlap it for a single frame, never longer. Frames where a hard knock has
   thrown the doll onto the net are left out: hung on the net top it stretches
-  by itself. The test suite pins this for all five hazards, alongside a
+  by itself. The test suite pins this for all five flying hazards, alongside a
   negative control proving the 400 kg original still tears.
 - **Retained from §13:** its size, the 1.3 m/s base hunting speed (the magnet
   and boxer scale it), and the 25 s life. The ×2 bursts are gone: each hazard

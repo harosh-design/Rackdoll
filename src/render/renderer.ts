@@ -1,5 +1,5 @@
 import {
-  BALL, BALL_TINT, BOXER, CHARGE, COURT, FLIP, EXECUTER, FLOOR_TOP_PX, FPS, MAX_TOUCHES, OPTIONS, PARTS, PRIZE_ANIM,
+  BALL, BALL_TINT, BOXER, CHAMELEON, CHARGE, COURT, FLIP, EXECUTER, FLOOR_TOP_PX, FPS, MAX_TOUCHES, OPTIONS, PARTS, PRIZE_ANIM,
   PRIZE_BUTTONS, SLIME, SPRING, STUN, SWING, VIEW, NET_SPIKE, toPx, type PartName,
 } from '../sim/constants';
 import type { Body, Vec2Value } from 'planck';
@@ -22,6 +22,8 @@ import { AIR_HEATER, RUBBER_NET, SHARP_SPIKE } from '../sim/centerObstacle';
 import { drawBallArt, loadBallArt, pickBallSkin, type BallSkin } from './ballArt';
 import { DEFAULT_GRAVE_SKINS, drawGraveArt, loadGraveArt, pickGraveSkins, type GraveSkins } from './graveArt';
 import { BallSquash, type BallDeformation } from './ballDeformation';
+import { drawChameleonArt, drawChameleonTongue } from './chameleonArt';
+import { drawSpikeBlood } from './spikeArt';
 
 
 /**
@@ -265,6 +267,7 @@ export class Renderer {
       }
       ctx.setLineDash([]);
     }
+    drawSpikeBlood(ctx, obstacle, SOLES_PX, alpha);
     comicPanel(ctx, x - 9, FLOOR_TOP_PX, 18, SOLES_PX - FLOOR_TOP_PX + 3, COMIC.plum);
     ctx.restore();
   }
@@ -675,11 +678,13 @@ export class Renderer {
     const pose = interp.pose(e.body, alpha);
     const t = e.age + alpha;
     if (e.variant.id === 'slime') this.drawSlimeGlue(ctx, e, interp, alpha, t);
+    if (e.variant.id === 'chameleon') drawChameleonTongue(ctx, e, pose, interp, alpha);
     ctx.save();
     ctx.translate(pose.x, pose.y);
     if (!e.solid) {
       // Emerging from the button: grows to full size as it clears the wall.
-      const k = 0.45 + 0.55 * easeOutCubic(Math.min(1, t / EXECUTER.emergeFrames));
+      const emergeFrames = e.variant.id === 'chameleon' ? CHAMELEON.emergeFrames : EXECUTER.emergeFrames;
+      const k = 0.45 + 0.55 * easeOutCubic(Math.min(1, t / emergeFrames));
       ctx.scale(k, k);
     }
     const c = e.body.getWorldCenter();
@@ -711,7 +716,12 @@ export class Renderer {
         );
         break;
       }
-
+      case 'chameleon': {
+        const look = e.tongueTarget?.getWorldCenter() ?? aim;
+        drawChameleonArt(ctx, e.side === 1 ? 1 : -1, Math.atan2(look.y - c.y, look.x - c.x), t,
+          e.phase !== 'crawl');
+        break;
+      }
     }
     ctx.restore();
 
@@ -883,6 +893,7 @@ export class Renderer {
         break;
       case 'spring': this.drawSpringArt(ctx, -Math.PI / 2, 1); break;
       case 'slime': this.drawSlimeArt(ctx, 0, 0, null, 0.4, 20); break;
+      case 'chameleon': ctx.scale(0.7, 0.7); drawChameleonArt(ctx, 1, 0.4, 0); break;
     }
     ctx.restore();
   }
@@ -1052,6 +1063,7 @@ const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
 /** Each hazard's impact ring colour. */
 const IMPACT_RGB: Record<ExecuterId, string> = {
   magnet: '159,198,173', boxer: '218,176,92', comet: '197,106,81', spring: '121,80,134', slime: '159,198,173',
+  chameleon: '197,106,81',
 };
 
 /** The slime's goo. */
