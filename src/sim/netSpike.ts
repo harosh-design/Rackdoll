@@ -24,7 +24,7 @@ export class NetSpike {
     return this.impacts(player).map(hit => hit.part);
   }
 
-  /** Both spikes act only on deep insertion: the classic one cuts, the sharp one catches. */
+  /** The spike catches parts only on deep insertion. */
   impacts(player: Player): SpikeHit[] {
     if (player.power === 'shield') return [];
     const hits: SpikeHit[] = [];

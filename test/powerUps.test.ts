@@ -1,6 +1,6 @@
 import { Vec2 } from 'planck';
 import { describe, expect, it, vi } from 'vitest';
-import { FEATHER, JOINTS, MAX_TOUCHES, NET_X_PX, PARTS, POWER, toM, toPx } from '../src/sim/constants';
+import { FEATHER, JOINTS, LANDING_CENTRE_M, MAX_TOUCHES, NET_X_PX, PARTS, POWER, toM, toPx } from '../src/sim/constants';
 import type { Player } from '../src/sim/player';
 import { POWERS, type PowerId } from '../src/sim/powerUps';
 import { jointErrPx, rng, run, world } from './helpers';
@@ -106,7 +106,7 @@ describe('bee powers without floor gifts', () => {
       return { bodies, fixtures, joints };
     };
     const before = counts();
-    const sequence: PowerId[] = ['giant', 'feather', 'tiny', 'giant', 'highJump', 'shield', 'tiny', 'speed', 'magnet'];
+    const sequence: PowerId[] = ['giant', 'feather', 'tiny', 'giant', 'feather', 'shield', 'tiny', 'speed', 'magnet'];
     for (const kind of sequence) {
       gw.powerUps.activate(1, kind, gw.frame);
       // Swap again before the resize has finished, as well as after.
@@ -135,8 +135,8 @@ describe('bee powers without floor gifts', () => {
 
   it('never bakes joint stretch into the skeleton across repeated resizes', () => {
     const gw = world();
-    // Measure the intact skeleton independently of cuts at the net blade.
-    vi.spyOn(gw.netSpike, 'hits').mockReturnValue([]);
+    // Measure the intact skeleton independently of impalement at the spike.
+    vi.spyOn(gw.netSpike, 'impacts').mockReturnValue([]);
     const r = rng(7);
     const keys = [37, 38, 39, 40];
     for (let cycle = 0; cycle < 40; cycle++) {
@@ -157,7 +157,7 @@ describe('bee powers without floor gifts', () => {
     expect(toPx(gw.p1.head.getWorldCenter().y)).toBeLessThan(275);
   });
 
-  it('a giant growing against the net keeps every limb on its own side', () => {
+  it('a giant growing against the spike keeps its head on its own half and its body parts finite', () => {
     for (const jump of [false, true]) {
       const gw = world();
       gw.game.update = () => {};
@@ -175,7 +175,12 @@ describe('bee powers without floor gifts', () => {
       gw.powerUps.activate(1, 'giant', gw.frame);
       for (let f = 0; f < 150; f++) {
         gw.step();
-        for (const b of gw.p1.bodies) expect(toPx(b.getWorldCenter().x)).toBeLessThan(NET_X_PX);
+        // Pinned limbs can stretch across the spike; the head stays on its rail.
+        expect(toPx(gw.p1.head.getWorldCenter().x)).toBeLessThan(NET_X_PX);
+        for (const body of [...gw.p1.bodies, ...gw.p1.detachedBodies]) {
+          const position = body.getWorldCenter(), velocity = body.getLinearVelocity();
+          expect(Number.isFinite(position.x + position.y + velocity.x + velocity.y + body.getAngle())).toBe(true);
+        }
       }
     }
   });
@@ -187,24 +192,37 @@ describe('bee powers without floor gifts', () => {
     expect(powered.p2.recoilFrames).toBe(0);
   });
 
-  it('high jump lifts higher and magnet hands pull a nearby free ball', () => {
-    const jumpLift = (high: boolean) => {
+  it.each([1, 2] as const)('Updraft boosts player %i\'s jump only until it is replaced or expires', (owner) => {
+    const jumpLift = (state: 'active' | 'replaced' | 'expired' | null) => {
       const gw = world();
+      // Measure jump height without a held ball pulling on the ragdoll.
+      gw.world.destroyJoint(gw.p1.holdingJoint!);
+      gw.p1.forgetBallJoint();
+      gw.ball.ballOfPlayer = 0;
+      gw.ball.body.setActive(false);
       run(gw, 90);
-      if (high) gw.powerUps.activate(1, 'highJump', gw.frame);
-      const start = gw.p1.head.getWorldCenter().y;
-      gw.p1.jump();
+      if (state) gw.powerUps.activate(owner, 'feather', gw.frame);
+      if (state === 'replaced') gw.powerUps.activate(owner, 'speed', gw.frame);
+      if (state === 'expired') gw.powerUps.tick(gw.powerUps.active[owner]!.expiresAt);
+      const player = owner === 1 ? gw.p1 : gw.p2;
+      const start = player.head.getWorldCenter().y;
+      player.jump();
       let peak = start;
       for (let i = 0; i < 50; i++) {
         gw.step();
-        peak = Math.min(peak, gw.p1.head.getWorldCenter().y);
+        peak = Math.min(peak, player.head.getWorldCenter().y);
       }
       return start - peak;
     };
-    const heightRatio = jumpLift(true) / jumpLift(false);
+    const normal = jumpLift(null);
+    const heightRatio = jumpLift('active') / normal;
     expect(heightRatio).toBeGreaterThan(1.4);
     expect(heightRatio).toBeLessThan(1.65);
+    expect(jumpLift('replaced')).toBeCloseTo(normal, 6);
+    expect(jumpLift('expired')).toBeCloseTo(normal, 6);
+  });
 
+  it('magnet hands pull a nearby free ball', () => {
     const gw = world();
     const grip = gw.p1.holdingJoint!;
     gw.world.destroyJoint(grip);
@@ -244,21 +262,67 @@ describe('bee powers without floor gifts', () => {
     expect(Math.abs(tiny.apex - normal.apex)).toBeLessThan(12);
   });
 
-  it('feather ball falls slower only over the feathered player\'s half', () => {
+  it.each([1, 2] as const)('Updraft slows only player %i\'s half after they collect it', (owner) => {
     const drop = (kind: PowerId | null, xPx: number) => {
       const gw = world();
       gw.game.update = () => {};
       gw.world.destroyJoint(gw.p1.holdingJoint!);
       gw.p1.forgetBallJoint();
       gw.ball.ballOfPlayer = 0;
-      if (kind) gw.powerUps.activate(1, kind, 0);
+      if (kind) gw.powerUps.activate(owner, kind, 0);
       gw.ball.body.setTransform(Vec2(toM(xPx), toM(-100)), 0);
       gw.ball.body.setLinearVelocity(Vec2(0, 0));
       run(gw, 10);
       return gw.ball.velocity.y;
     };
-    expect(drop('feather', 100)).toBeCloseTo(drop(null, 100) * FEATHER.gravityScale, 3);
-    expect(drop('feather', 500)).toBeCloseTo(drop(null, 500), 6);
+    const home = owner === 1 ? 100 : 500;
+    const away = owner === 1 ? 500 : 100;
+    expect(drop('feather', home)).toBeCloseTo(drop(null, home) * FEATHER.gravityScale, 3);
+    expect(drop('feather', away)).toBeCloseTo(drop(null, away), 6);
+  });
+
+  it.each([1, 2] as const)('updates feather gravity as the ball crosses player %i\'s boundary', (owner) => {
+    const gw = world();
+    gw.game.update = () => {};
+    gw.world.destroyJoint(gw.p1.holdingJoint!);
+    gw.p1.forgetBallJoint();
+    gw.ball.ballOfPlayer = 0;
+    gw.powerUps.activate(owner, 'feather', 0);
+    const direction = owner === 1 ? 1 : -1;
+    gw.ball.body.setTransform(Vec2(LANDING_CENTRE_M - direction * toM(4), toM(-100)), 0);
+    gw.ball.body.setLinearVelocity(Vec2(direction * 8, 0));
+    gw.step();
+    expect((gw.ball.position.x - LANDING_CENTRE_M) * direction).toBeGreaterThan(0);
+    expect(gw.ball.body.getGravityScale()).toBe(FEATHER.gravityScale);
+    gw.step();
+    expect(gw.ball.body.getGravityScale()).toBe(1);
+
+    gw.ball.body.setLinearVelocity(Vec2(-direction * 8, 0));
+    run(gw, 3);
+    expect((gw.ball.position.x - LANDING_CENTRE_M) * direction).toBeLessThan(0);
+    expect(gw.ball.body.getGravityScale()).toBe(FEATHER.gravityScale);
+  });
+
+  it.each([1, 2] as const)('clears player %i\'s feather gravity when replaced or expired', (owner) => {
+    const gw = world();
+    gw.game.update = () => {};
+    gw.world.destroyJoint(gw.p1.holdingJoint!);
+    gw.p1.forgetBallJoint();
+    gw.ball.ballOfPlayer = 0;
+    gw.ball.body.setTransform(Vec2(toM(owner === 1 ? 100 : 500), toM(-100)), 0);
+    gw.powerUps.activate(owner, 'feather', 0);
+    gw.step();
+    expect(gw.ball.body.getGravityScale()).toBe(FEATHER.gravityScale);
+    gw.powerUps.activate(owner, 'speed', gw.frame);
+    gw.step();
+    expect(gw.ball.body.getGravityScale()).toBe(1);
+
+    gw.powerUps.activate(owner, 'feather', gw.frame);
+    gw.step();
+    expect(gw.ball.body.getGravityScale()).toBe(FEATHER.gravityScale);
+    gw.powerUps.tick(gw.powerUps.active[owner]!.expiresAt);
+    gw.step();
+    expect(gw.ball.body.getGravityScale()).toBe(1);
   });
 
   it('speed increases lateral movement impulse for either player', () => {

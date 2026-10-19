@@ -599,7 +599,7 @@ export class GameWorld {
   }
 
   /**
-   * Feather ball: a free ball over a feathered player's half falls at a
+   * Updraft: a free ball over its holder's half falls at a
    * fraction of gravity, giving them longer to reach it. Set before the step.
    */
   private applyFeather(): void {
@@ -611,7 +611,7 @@ export class GameWorld {
     this.ball.body.setGravityScale(scale);
   }
 
-  /** Who the feather ball is slowing right now, for the renderer. */
+  /** Whose half Updraft is slowing the ball over right now, for the renderer. */
   get featherSide(): PlayerId | null {
     if (this.ball.body.getGravityScale() === 1) return null;
     return this.ball.position.x < LANDING_CENTRE_M ? 1 : 2;

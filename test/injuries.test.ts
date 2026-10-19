@@ -22,15 +22,16 @@ describe('net blade collision', () => {
     expect(gw.centerObstacle.bloodstains).toHaveLength(0);
   });
 
-  it.each([1, 2] as const)('cuts player %s only when deeply impaled without ending the rally', id => {
+  it.each([1, 2] as const)('pins player %s only when deeply impaled without ending the rally', id => {
     const gw = world();
     const player = id === 1 ? gw.p1 : gw.p2;
     player.part('FingerLeft').setTransform(impaledHandPosition, 0);
     gw.step();
-    expect(player.isAttached('FingerLeft')).toBe(false);
-    expect(player.injured).toBe(true);
+    expect(player.isAttached('FingerLeft')).toBe(true);
+    expect(player.injured).toBe(false);
+    expect(gw.centerObstacle.pins.has(player.part('FingerLeft'))).toBe(true);
     expect(gw.centerObstacle.bloodstains).toHaveLength(1);
-    expect(player.impaled).toBe(false);
+    expect(player.impaled).toBe(true);
     expect(gw.game.phase).toBe('play');
     expect(gw.game.score).toEqual({ 1: 0, 2: 0 });
   });
@@ -86,7 +87,7 @@ describe('net blade collision', () => {
     expect(blade.hits(gw.p1)).toContain('Head');
   });
 
-  it('does not turn repeated shallow touches into a cut', () => {
+  it('does not turn repeated shallow touches into an impalement', () => {
     const gw = world();
     gw.p1.part('FingerLeft').setTransform(bladePosition, 0);
     for (let frame = 0; frame < 20; frame++) {
@@ -94,6 +95,7 @@ describe('net blade collision', () => {
       expect(gw.centerObstacle.afterStep([gw.p1]).length).toBe(0);
     }
     expect(gw.p1.injured).toBe(false);
+    expect(gw.p1.impaled).toBe(false);
   });
 
   it('leaves parts touching the side of the pole below the blade attached', () => {

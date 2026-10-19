@@ -17,15 +17,14 @@ export interface BeeFlight {
 
 /**
  * How each power's bee flies, so the gift can be read before it is hit: the
- * giant's bee is big and lumbering, the tiny's small and jittery, the high
- * jump's bounces along and the speed's races across. What each one carries
+ * giant's bee is big and lumbering, the tiny's small and jittery, Updraft's
+ * drifts gently and the speed's races across. What each one carries
  * is drawn by the renderer.
  */
 export const BEE_FLIGHT: Record<PowerId, BeeFlight> = {
   giant: { scale: 1.6, speed: 90, style: 'bob', amp: 14, freq: 1.6 },
   tiny: { scale: 0.6, speed: 130, style: 'jitter', amp: 12, freq: 4 },
   feather: { scale: 1, speed: 85, style: 'bob', amp: 26, freq: 1.1 },
-  highJump: { scale: 1, speed: 110, style: 'hop', amp: 48, freq: 2.4 },
   speed: { scale: 1, speed: 210, style: 'bob', amp: 7, freq: 3 },
   magnet: { scale: 1, speed: 115, style: 'bob', amp: 18, freq: 2.2 },
   shield: { scale: 1, speed: 110, style: 'bob', amp: 18, freq: 2 },

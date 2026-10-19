@@ -4,8 +4,52 @@ import type { PoseSource } from './dollPose';
 import type { Pose } from './interp';
 import { COMIC, hatch } from './comicStyle';
 
+let sprite: HTMLImageElement | undefined;
+let loading: Promise<void> | undefined;
+let reducedMotion: MediaQueryList | undefined;
+
+/** The approved fern-and-lichen cutout is also used by the hazard queue icon. */
+export function loadChameleonArt(): Promise<void> {
+  loading ??= new Promise<void>(resolve => {
+    const image = new Image();
+    image.onload = () => { sprite = image; resolve(); };
+    image.onerror = () => { console.warn('Could not load chameleon art'); resolve(); };
+    image.src = import.meta.env.BASE_URL + 'art/horror/props/chameleon.webp';
+  });
+  return loading;
+}
+
+/** A tiny travelling bend animates the printed cutout while its mouth stays fixed. */
+function drawMossChameleon(ctx: CanvasRenderingContext2D, inward: number, gaze: number, t: number, pulling: boolean): void {
+  if (!sprite) return;
+  reducedMotion ??= window.matchMedia('(prefers-reduced-motion: reduce)');
+  const phase = reducedMotion.matches ? 0 : t * 0.16 * 1.15;
+  const x = -31, y = -40, w = 56, h = 84, bands = 28;
+  ctx.save(); ctx.scale(inward, 1);
+  for (let band = 0; band < bands; band++) {
+    const f = band / bands;
+    const sy = sprite.naturalHeight * f;
+    const sh = Math.min(sprite.naturalHeight - sy, sprite.naturalHeight / bands + 1);
+    const bend = reducedMotion.matches ? 0 : Math.sin(phase + f * Math.PI * 3) * 0.65 * Math.max(0, 1 - f / 0.7);
+    ctx.drawImage(sprite, 0, sy, sprite.naturalWidth, sh, x + bend, y + h * f, w, h * sh / sprite.naturalHeight);
+  }
+  // Rotate the original golden iris inside its fixed ink rim to follow the target.
+  ctx.save();
+  ctx.beginPath(); ctx.arc(17.3, 20.5, 2.65, 0, Math.PI * 2); ctx.clip();
+  ctx.translate(17.3, 20.5);
+  ctx.rotate(Math.atan2(Math.sin(gaze), Math.cos(gaze) * inward) + 0.6);
+  ctx.translate(-17.3, -20.5); ctx.drawImage(sprite, x, y, w, h); ctx.restore();
+  if (pulling) {
+    ctx.fillStyle = COMIC.rust; ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 0.7;
+    ctx.beginPath(); ctx.ellipse(CHAMELEON.mouthOffsetXPx, CHAMELEON.mouthOffsetYPx, 2.5, 1.4, -0.2, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+  }
+  ctx.restore();
+}
+
 /** Downward-facing wall crawler, with a curled tail and four grasping feet. */
 export function drawChameleonArt(ctx: CanvasRenderingContext2D, inward: number, gaze: number, t: number, pulling = false): void {
+  if (sprite) { drawMossChameleon(ctx, inward, gaze, t, pulling); return; }
   ctx.save(); ctx.scale(inward, 1);
   ctx.lineJoin = 'round'; ctx.lineCap = 'round';
   ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 2;
@@ -21,7 +65,7 @@ export function drawChameleonArt(ctx: CanvasRenderingContext2D, inward: number, 
 
   // Opposite pairs step together, with split toes pressed against the wall.
   for (const [row, side] of [[-1, -1], [-1, 1], [1, -1], [1, 1]]) {
-    const step = Math.sin(t * 0.16 + (row === side ? 0 : Math.PI)) * 2.5;
+    const step = Math.sin(t * 0.184 + (row === side ? 0 : Math.PI)) * 2.5;
     const y = row * 12;
     const toeX = side < 0 ? -25 : 12;
     const toeY = y + 8 + step;
@@ -82,7 +126,7 @@ export function drawChameleonArt(ctx: CanvasRenderingContext2D, inward: number, 
 export function drawChameleonTongue(ctx: CanvasRenderingContext2D, e: Executer, pose: Pose, interp: PoseSource, alpha: number): void {
   if (e.phase === 'crawl') return;
   const inward = e.side === 1 ? 1 : -1;
-  const mouth = { x: pose.x + inward * 18, y: pose.y + 26 };
+  const mouth = { x: pose.x + inward * CHAMELEON.mouthOffsetXPx, y: pose.y + CHAMELEON.mouthOffsetYPx };
   const frame = Math.max(0, e.phaseAge - 1 + alpha);
   const attached = e.phase === 'tongue-pull' && e.tongueTarget;
   const end = attached ? interp.pose(attached, alpha) : { x: toPx(e.tongueAim.x), y: toPx(e.tongueAim.y) };

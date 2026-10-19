@@ -5,14 +5,13 @@ import type { Player } from './player';
 import type { BodyUserData } from './types';
 
 export const CENTER_OBSTACLES = [
-  { id: 'classic', label: 'Classic spike', caption: 'Cuts on deep impalement', description: 'The blade cuts off deeply impaled body parts. Light touches are safe. Lost body parts return at the start of every round.' },
   { id: 'sharp', label: 'Sharp spike', caption: 'Impales and holds', description: 'A tapered spear impales body parts that sink onto its point. Hold jump to pull free; holding down or taking a blow drives them deeper. Struggle against a strong pull and a caught arm or leg tears off.' },
   { id: 'blower', label: 'Air heater', caption: 'Blows players away', description: 'A thin heater pushes players away in every direction within 30% of their original height.' },
   { id: 'rubber', label: 'Rubber net', caption: 'Bends under pressure', description: 'Lean on the flexible rubber net to bend it into your opponent’s half. It springs back when released.' },
 ] as const;
 export type CenterObstacleId = typeof CENTER_OBSTACLES[number]['id'];
 export const normalizeCenterObstacle = (value: unknown): CenterObstacleId =>
-  CENTER_OBSTACLES.find(option => option.id === value)?.id ?? 'classic';
+  CENTER_OBSTACLES.find(option => option.id === value)?.id ?? 'sharp';
 
 const partExtent = (part: typeof PARTS[number]): number => part.shape.kind === 'circle' ? part.shape.r : part.shape.hh;
 export const ORIGINAL_PLAYER_HEIGHT_PX = Math.max(...PARTS.map(part => part.dy + partExtent(part)))
@@ -97,9 +96,9 @@ export class CenterObstacle {
   private readonly springs: RevoluteJoint[] = [];
   private readonly restPositions = new Map<Body, Vec2>();
 
-  constructor(private readonly world: World, id: CenterObstacleId = 'classic') {
+  constructor(private readonly world: World, id: CenterObstacleId = 'sharp') {
     this.id = normalizeCenterObstacle(id);
-    this.blade = new NetSpike(this.id === 'sharp' ? SHARP_NECK_PX : NET_SPIKE.halfWidthPx);
+    this.blade = new NetSpike(SHARP_NECK_PX);
     if (this.id === 'rubber') {
       // Clearance lets the foot rotate without wedging its corner into the floor.
       const base = world.createBody({ position: Vec2(toM(NET_X_PX), toM(RUBBER_NET.basePx)) });
@@ -122,8 +121,8 @@ export class CenterObstacle {
     } else {
       this.net = this.makeBody(COURT.net.y);
       if (this.id === 'sharp') {
-        // Like the classic blade, the top of the point is not solid, so it
-        // can sink into a part. Only a deep insertion catches.
+        // The top of the point is not solid, so it can sink into a part.
+        // Only a deep insertion catches.
         this.net.createFixture(Polygon([
           Vec2(toM(-SHARP_SPIKE.halfWidthPx), toM(FLOOR_TOP_PX - COURT.net.y)),
           Vec2(toM(-SHARP_NECK_PX), toM(NET_TOP_PX - COURT.net.y)),
@@ -136,8 +135,8 @@ export class CenterObstacle {
           if ((a === this.net && this.pins.has(b)) || (b === this.net && this.pins.has(a))) contact.setEnabled(false);
         });
       } else {
-        this.net.createFixture(Box(toM(this.id === 'blower' ? AIR_HEATER.halfWidthPx : COURT.net.hw), toM(COURT.net.hh)), {
-          friction: this.id === 'blower' ? 0.2 : COURT.net.friction,
+        this.net.createFixture(Box(toM(AIR_HEATER.halfWidthPx), toM(COURT.net.hh)), {
+          friction: 0.2,
         });
       }
     }
@@ -191,7 +190,7 @@ export class CenterObstacle {
   /** Run after the solver: joints cannot be created or destroyed while it is locked. */
   afterStep(players: readonly Player[]): Player[] {
     const cut: Player[] = [];
-    if (this.id !== 'classic' && this.id !== 'sharp') return cut;
+    if (this.id !== 'sharp') return cut;
     cut.push(...this.strainTendons());
     for (const pin of [...this.pins.values()]) this.settlePin(pin);
     for (const [body, clearance] of this.freed) {
@@ -201,20 +200,13 @@ export class CenterObstacle {
       if (frames > 1) this.grace.set(player, frames - 1); else this.grace.delete(player);
     }
     for (const player of players) {
-      let severed = false;
       for (const hit of this.blade.impacts(player)) {
-        if (this.id === 'classic') {
-          if (!player.sever(hit.part)) continue;
-          severed = true;
-        } else {
-          const body = player.part(hit.part);
-          if (this.pins.has(body) || this.freed.has(body) || this.grace.has(player)) continue;
-          this.impale(player, hit);
-        }
-        // Record an actual cut or a new pin once, rather than every contact frame.
+        const body = player.part(hit.part);
+        if (this.pins.has(body) || this.freed.has(body) || this.grace.has(player)) continue;
+        this.impale(player, hit);
+        // Record a new pin once, rather than every contact frame.
         this.bleed(hit.height, player.partScale(hit.part));
       }
-      if (severed && !cut.includes(player)) cut.push(player);
       if (this.impaledPlayers.has(player)) player.healLigaments();
     }
     return cut;

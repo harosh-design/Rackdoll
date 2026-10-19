@@ -1,6 +1,6 @@
 import {
   BALL, BALL_TINT, BOXER, CHAMELEON, CHARGE, COURT, FLIP, EXECUTER, FLOOR_TOP_PX, FPS, MAX_TOUCHES, OPTIONS, PARTS, PRIZE_ANIM,
-  PRIZE_BUTTONS, SLIME, SPRING, STUN, SWING, VIEW, NET_SPIKE, toPx, type PartName,
+  PRIZE_BUTTONS, SLIME, SPRING, STUN, SWING, VIEW, toPx, type PartName,
 } from '../sim/constants';
 import type { Body, Vec2Value } from 'planck';
 import type { Executer } from '../sim/executer';
@@ -22,8 +22,10 @@ import { AIR_HEATER, RUBBER_NET, SHARP_SPIKE } from '../sim/centerObstacle';
 import { drawBallArt, loadBallArt, pickBallSkin, type BallSkin } from './ballArt';
 import { DEFAULT_GRAVE_SKINS, drawGraveArt, loadGraveArt, pickGraveSkins, type GraveSkins } from './graveArt';
 import { BallSquash, type BallDeformation } from './ballDeformation';
-import { drawChameleonArt, drawChameleonTongue } from './chameleonArt';
+import { drawChameleonArt, drawChameleonTongue, loadChameleonArt } from './chameleonArt';
 import { drawSpikeBlood } from './spikeArt';
+import { drawFeatherAirflow } from './featherAirflow';
+import { pickWeather, WeatherEffects, type WeatherChoice, type WeatherId } from './weather';
 
 
 /**
@@ -114,6 +116,10 @@ export class Renderer {
   private grainPixelRatio = 1;
   private scenerySeconds = 0;
   private sceneryAt: number | null = null;
+  private weather = new WeatherEffects(pickWeather('random'));
+  private previousWeather?: WeatherId;
+  private weatherStartedAt = 0;
+  private readonly reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   private readonly grain = new PencilGrain();
   private readonly backdrop: AmbientBackdrop | null;
   readonly ready: Promise<void>;
@@ -123,11 +129,13 @@ export class Renderer {
     this.ctx = canvas.getContext('2d', { alpha: false })!;
     this.backdrop = backdrop ? new AmbientBackdrop(backdrop) : null;
     this.resize();
-    this.ready = Promise.all([loadHorrorArt(), loadBallArt(), loadGraveArt()]).then(() => {});
+    this.ready = Promise.all([loadHorrorArt(), loadBallArt(), loadGraveArt(), loadChameleonArt()]).then(() => {});
   }
 
-  /** Called only for a new match; rounds and pauses retain their selected skin. */
-  startMatch(gw: GameWorld): void {
+  /** Called only for a new match; rounds and pauses retain their skins and weather. */
+  startMatch(gw: GameWorld, weatherChoice: WeatherChoice = 'random'): void {
+    this.setWeather(pickWeather(weatherChoice, this.previousWeather));
+    this.previousWeather = this.weather.id;
     const skin = pickBallSkin(this.previousBallSkin);
     this.ballSkins.set(gw, skin);
     this.previousBallSkin = skin;
@@ -135,6 +143,18 @@ export class Renderer {
     this.graveSkins.set(gw, graves);
     this.previousGraveSkins = graves;
     this.ballSquashFor(gw);
+  }
+
+  get weatherId(): WeatherId { return this.weather.id; }
+
+  /** Menu previews replace only the decorative weather, without restarting physics. */
+  previewWeather(choice: WeatherChoice): void {
+    this.setWeather(pickWeather(choice));
+  }
+
+  private setWeather(id: WeatherId): void {
+    this.weather = new WeatherEffects(id);
+    this.weatherStartedAt = this.scenerySeconds;
   }
 
   private ballSquashFor(gw: GameWorld): BallSquash {
@@ -197,7 +217,11 @@ export class Renderer {
   private paintCourt(ctx: CanvasRenderingContext2D): void {
     this.backdrop?.draw(this.scenerySeconds);
     this.stageSpace(ctx);
-    drawHorrorBackground(ctx, VIEW.stageW, VIEW.stageH, this.toStage(0, SOLES_PX).y, this.scenerySeconds);
+    const floorY = this.toStage(0, SOLES_PX).y;
+    const weatherSeconds = this.scenerySeconds - this.weatherStartedAt;
+    drawHorrorBackground(ctx, VIEW.stageW, VIEW.stageH, floorY, this.scenerySeconds,
+      this.weather, weatherSeconds, this.reducedMotion.matches);
+    this.weather.drawCourt(ctx, VIEW.stageW, VIEW.stageH, floorY, weatherSeconds, this.reducedMotion.matches);
     this.worldSpace(ctx);
     const ground = COURT.ground;
     ctx.fillStyle = '#cfb3cb';
@@ -225,13 +249,7 @@ export class Renderer {
     const obstacle = gw.centerObstacle;
     const x = COURT.net.x, top = COURT.net.y - COURT.net.hh;
     ctx.save(); ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 1.6;
-    if (obstacle.id === 'classic') {
-      ctx.fillStyle = COMIC.mint; inkRect(ctx, x - 2, top, 4, SOLES_PX - top, 1); ctx.fill(); ctx.stroke();
-      ctx.fillStyle = COMIC.paper; ctx.fillRect(x - 1.1, top, 2.2, (SOLES_PX - top) * 0.47);
-      ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 0.7;
-      for (let y = top + 4; y < SOLES_PX; y += 12) { ctx.beginPath(); ctx.moveTo(x - 1.5, y); ctx.lineTo(x + 1, y - 2); ctx.stroke(); }
-      this.drawNetSpike(ctx, x, top);
-    } else if (obstacle.id === 'sharp') {
+    if (obstacle.id === 'sharp') {
       ctx.beginPath(); ctx.moveTo(x - SHARP_SPIKE.halfWidthPx, FLOOR_TOP_PX);
       ctx.lineTo(x, SHARP_SPIKE.topPx); ctx.lineTo(x + SHARP_SPIKE.halfWidthPx, FLOOR_TOP_PX); ctx.closePath();
       ctx.fillStyle = COMIC.paper; ctx.fill(); ctx.stroke();
@@ -272,24 +290,20 @@ export class Renderer {
     ctx.restore();
   }
 
-  private drawNetSpike(ctx: CanvasRenderingContext2D, x: number, top: number): void {
-    ctx.beginPath(); ctx.moveTo(x - NET_SPIKE.halfWidthPx, top); ctx.lineTo(x, top - NET_SPIKE.heightPx);
-    ctx.lineTo(x + NET_SPIKE.halfWidthPx, top); ctx.closePath();
-    ctx.fillStyle = COMIC.paper; ctx.fill(); ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 1.2; ctx.stroke();
-  }
-
   draw(gw: GameWorld, frames: Interpolator, alpha: number, hud: HudState): void {
     const ctx = this.ctx;
     const sceneryAt = performance.now() / 1000;
     const sceneryDt = this.sceneryAt === null ? 0 : Math.min(0.1, Math.max(0, sceneryAt - this.sceneryAt));
+    this.weather.observeFrame(sceneryDt, !hud.paused && !document.hidden);
     if (this.sceneryAt !== null && !hud.paused) this.scenerySeconds += sceneryDt;
     this.sceneryAt = sceneryAt;
     const interp = closedPoses(frames, alpha, [gw.p1, gw.p2], gw.ball.body);
+    const now = gw.frame - 1 + alpha;
     this.paintCourt(ctx);
+    drawFeatherAirflow(ctx, gw, now);
     this.drawShadows(gw, interp, alpha);
     this.worldSpace(ctx);
     this.drawCenterObstacle(ctx, gw, interp, alpha);
-    const now = gw.frame - 1 + alpha;
     this.drawPrizeButtons(ctx, gw, now);
     this.drawFootMotion(ctx, gw, interp, now);
     drawHorrorPlayers(ctx, [gw.p1, gw.p2], interp, alpha);
@@ -303,6 +317,9 @@ export class Renderer {
     this.drawSpecialEffects(ctx, gw, interp, alpha);
     for (const e of gw.executers) if (!e.dead) this.drawExecuter(ctx, e, interp, alpha);
     this.drawChargeMeters(ctx, gw, interp, alpha);
+    this.stageSpace(ctx);
+    this.weather.drawForeground(ctx, VIEW.stageW, VIEW.stageH, this.toStage(0, SOLES_PX).y,
+      this.scenerySeconds - this.weatherStartedAt, this.reducedMotion.matches);
     this.grain.draw(ctx, this.canvas.width, this.canvas.height, this.scenerySeconds, this.grainPixelRatio);
     this.stageSpace(ctx);
     this.drawOffscreenBall(ctx, gw, interp, alpha);

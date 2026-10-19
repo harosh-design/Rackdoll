@@ -30,6 +30,20 @@ The start menu sits over a blurred view of the court. Both players' current
 controls stay visible beside match setup, with character portraits and small
 comic stickers. The guide updates immediately when keys are remapped.
 
+Each match also picks one of three decorative weather presets: light rain with
+occasional distant lightning, drifting snowfall, or a starry autumn night with
+passing leaves. Random weather avoids consecutive repeats and stays fixed across
+rounds and pauses. Distant particles pass behind the scenery, middle particles
+behind the players, and a few larger flakes or leaves cross the foreground.
+The start menu's **Weather** selector previews and forces a preset for testing;
+**Random** restores automatic selection. This testing override lasts for the
+current page session. Weather freezes when paused, respects reduced motion,
+and does not affect physics or gameplay.
+The star field has soft, independent glints. Weather reuses bounded-size cached
+artwork, batches rain and snow by depth, and reduces particle density after a
+sustained frame-rate drop. All three depth layers remain visible at every
+quality level; full density returns gradually when performance recovers.
+
 ```bash
 npm install
 npm run dev        # play at http://localhost:5173
@@ -102,11 +116,11 @@ original.
 ## How to play it
 
 Choose a **Centre obstacle** in the start menu. The selection is remembered in
-this browser, previews on the court and applies to all modes and rematches:
+this browser, previews on the court and applies to all modes and rematches.
+Sharp spike is the default:
 
-- **Classic spike** retains the cutting blade described below.
-- **Sharp spike** is a tapered spear. Like the classic blade, its point acts
-  only on a deep impalement, using the same test; grazes and touches are safe.
+- **Sharp spike** is a tapered spear. Its point acts only on a deep impalement;
+  grazes and touches are safe.
   An impaled part is physically pinned while the rest of the skeleton remains
   attached. It slides along the shaft and still turns freely on it. Hold
   **jump** (up) to pull it back up and off the point, or **down** to drive it
@@ -135,19 +149,17 @@ this browser, previews on the court and applies to all modes and rematches:
 
 Each round releases impaled parts, straightens the rubber net and restores
 both players' full bodies. Wall-button hazards remain an independent setting.
-Both spike variants collect red bloodstains after a cut or a new impalement,
+The sharp spike collects red bloodstains after a tear or a new impalement,
 with a brief spray and streaks running down the blade. Blood clears next round.
 
-The classic blade at the top of the net cuts off a body part only when deeply
-impaled, including the limbs connected beyond that part. Light touches and side
-scrapes are safe. The tip must sit inside the part, away from its edges, with at
+The spike's tip must sit inside the part, away from its edges, with at
 least 65% of the shorter of the blade length and the part's thickness embedded.
 The check accounts for rotation and size powers and detects deep impalement
-even during a fast crossing. Detached pieces fall and collide
+even during a fast crossing. Torn-off pieces fall and collide
 with the court independently. You can keep moving, jumping and serving with the
 remaining body; serving uses another attached hand or the surviving body if both
 arms are gone. Lost parts cannot strike or count as ball touches. Injuries heal
-before every new round. Shield protects against cutting and impalement.
+before every new round. Shield protects against impalement.
 
 The main menu shows both players' controls immediately. Choose **Remap keys**
 or **Edit keys**, then click a key to reassign that action for either player.
@@ -216,10 +228,17 @@ to each world independently and do not modify the reference constants.
 
 Powers come from talismans carried by bats.
 Hitting a talisman with the ball grants its ability for 30 seconds: 1.5× body size,
-⅔ body size, feather ball (a free ball
-over your half falls at 40% gravity), 1.5× jump, faster movement, a nearby-ball
+⅔ body size, Updraft (1.5× jump height and a free ball
+over your half falling at 40% gravity), faster movement, a nearby-ball
 magnet, or protection against knockback from the opponent and the hazards. The player then returns to normal. The HUD shows the ability and its
 remaining time.
+
+Updraft combines the higher jump and slower ball in a single power. Its slow
+fall applies only over the half belonging to the player who collected it,
+regardless of where the bat was hit or who last touched the ball afterward.
+Faint streams of air rise across that half while the power is active. They
+freeze with the match and disappear when the power expires or is replaced.
+The jump boost ends at the same time.
 
 Size changes affect the ragdoll's actual collision shapes. The doll grows or
 shrinks over about 13 frames. An instant ×1.5 would teleport a hand through the
@@ -237,13 +256,13 @@ grounded checks scale with the doll as well.
 ## Bat familiars
 
 Bat familiars fly in from either screen edge every 12–20 seconds, with at most
-two active. They carry one of seven abilities. Hit the talisman with a ball you
+two active. They carry one of six abilities. Hit the talisman with a ball you
 last touched to collect its 30-second power. A new pickup replaces the current
 ability. The ball continues its flight. During goal replays the delivery slows
 with the simulation.
 
 Talisman glyphs identify the power: plus for Giant, minus for Tiny, a wave for
-Feather ball, an up arrow for High jump, chevrons for Speed, an arch for Magnet,
+Updraft, chevrons for Speed, an arch for Magnet,
 and a diamond for Shield. The short label beneath each talisman names the effect.
 Giant and Tiny deliveries retain their different sizes and flight styles.
 
@@ -285,7 +304,7 @@ code where it happens.
   half. The spec says when it is set but not when it is cleared.
 - **Campaign levels** scale the points a goal is worth. Levels 1–5 use the
   spec's AI defaults (`AImaxSpeed` 7). **Level 6** is a champion challenge. It
-  forecasts the ball's flight (walls, net, feather ball), finds where the ball
+  forecasts the ball's flight (walls, net, Updraft), finds where the ball
   will meet its head, and picks the contact angle whose rebound lands farthest
   from the opponent. It does this with a bounce model fitted to real head
   contacts: restitution 0.8, friction and spin. With its swing ready it lines
@@ -372,15 +391,18 @@ changes that on purpose:
     it glued. The shield won't take its
     glue, and a new round shakes it off, since re-standing the doll would
     yank glued parts back together across the court.
-- **Chameleon.** Emerges from a gravestone over 0.8 s and crawls down that wall
-  at 20 px per physics second for its whole 25-second life. It keeps crawling
+- **Chameleon.** Wears the approved moss-green fern-and-lichen skin, with a
+  curled tail and golden eye. It emerges from a gravestone over 0.8 s and crawls
+  down that wall at 23 px per physics second, 15% faster than before. It stops
+  clear of the floor and remains for its full 25-second life. It keeps crawling
   while attacking and stays attached to the wall when struck. Every 2.4 s
   after its previous tongue cycle, it aims at the nearest eligible target
   within 420 px: its player or a free ball in play on its half. The tongue
   shoots out over 0.2 s, tugs for 0.4 s and retracts. A moving target can
-  dodge the shot or break free by leaving reach. The player receives a small
-  sideways pull shared by their whole body; the ball is pulled toward the
-  chameleon with upward acceleration capped below gravity. Shields block
+  dodge the shot or break free by leaving reach. The player receives a gentle
+  pull toward the mouth shared by their whole body; the ball is pulled
+  toward the mouth too. Upward acceleration is capped at 25% of gravity for
+  the player and 45% for the ball, so neither can be held aloft. Shields block
   player grabs, a flip interrupts the tongue, and a round reset releases it.
   Its body remains a kinematic sensor, so it cannot pin a doll against the wall.
 - **Knocks.** Every blow is a change of velocity given to every part of the

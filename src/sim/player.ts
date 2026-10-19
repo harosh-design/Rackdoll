@@ -593,7 +593,7 @@ export class Player {
     const v = Vec2.mul(norm(d), ACTIONS.jumpLeanImpulse * this.massFactor * this.controlScale * this.jumpStrength);
     // The rail and ragdoll joints absorb much of the extra impulse. A 2x
     // launch impulse produces about 1.5x measured head height.
-    const lift = ACTIONS.jumpLift * this.massFactor * this.jumpBoost * (this.power === 'highJump' ? 2 : 1) * this.controlScale * this.jumpStrength;
+    const lift = ACTIONS.jumpLift * this.massFactor * this.jumpBoost * (this.power === 'feather' ? 2 : 1) * this.controlScale * this.jumpStrength;
 
     ass.setLinearVelocity(Vec2(0, 0));
     head.setLinearVelocity(Vec2(0, 0));

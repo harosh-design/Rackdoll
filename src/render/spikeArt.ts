@@ -1,24 +1,16 @@
 import type { CenterObstacle } from '../sim/centerObstacle';
 import { SHARP_SPIKE } from '../sim/centerObstacle';
-import { FLOOR_TOP_PX, NET_SPIKE, NET_TOP_PX, NET_X_PX } from '../sim/constants';
+import { FLOOR_TOP_PX, NET_X_PX } from '../sim/constants';
 
 /** Blood accumulates on the blade and trickles down its silhouette until reset. */
 export function drawSpikeBlood(ctx: CanvasRenderingContext2D, obstacle: CenterObstacle, basePx: number, alpha: number): void {
-  if (!obstacle.bloodstains.length || (obstacle.id !== 'classic' && obstacle.id !== 'sharp')) return;
-  const x = NET_X_PX, tip = NET_TOP_PX - NET_SPIKE.heightPx;
+  if (!obstacle.bloodstains.length || obstacle.id !== 'sharp') return;
+  const x = NET_X_PX, tip = SHARP_SPIKE.topPx;
   ctx.save();
   ctx.beginPath();
-  if (obstacle.id === 'sharp') {
-    ctx.moveTo(x, SHARP_SPIKE.topPx);
-    ctx.lineTo(x + SHARP_SPIKE.halfWidthPx, FLOOR_TOP_PX);
-    ctx.lineTo(x - SHARP_SPIKE.halfWidthPx, FLOOR_TOP_PX);
-  } else {
-    ctx.moveTo(x, tip);
-    ctx.lineTo(x + NET_SPIKE.halfWidthPx, NET_TOP_PX);
-    ctx.lineTo(x + 2, NET_TOP_PX); ctx.lineTo(x + 2, basePx);
-    ctx.lineTo(x - 2, basePx); ctx.lineTo(x - 2, NET_TOP_PX);
-    ctx.lineTo(x - NET_SPIKE.halfWidthPx, NET_TOP_PX);
-  }
+  ctx.moveTo(x, tip);
+  ctx.lineTo(x + SHARP_SPIKE.halfWidthPx, FLOOR_TOP_PX);
+  ctx.lineTo(x - SHARP_SPIKE.halfWidthPx, FLOOR_TOP_PX);
   ctx.closePath(); ctx.clip();
   ctx.lineCap = 'round';
   for (let i = 0; i < obstacle.bloodstains.length; i++) {

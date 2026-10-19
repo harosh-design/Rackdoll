@@ -20,8 +20,9 @@ in earlier Git commits.
   the larger production size. Scenery is independently drawn at device resolution.
 - `public/art/horror/masked.webp`: thirteen masked-player cutouts in a 4-by-4 atlas.
 - `public/art/horror/skeleton.webp`: thirteen skeleton cutouts with transparent rib gaps.
-- `public/art/horror/props/*.webp`: nine transparent comic prop cutouts for
-  hazards, bats, talismans and fists, loaded by `src/render/horrorProps.ts`.
+- `public/art/horror/props/*.webp`: ten transparent comic prop cutouts for
+  hazards, bats, talismans and fists, loaded by `src/render/horrorProps.ts`
+  and `src/render/chameleonArt.ts`.
 - `public/art/horror/balls/*.webp`: three transparent 512-pixel ball sprites,
   matching concepts 02 Stitched, 04 Dead Moon and 05 Evil Eye from the ball sheet.
   Built-in ImageGen isolated each selected concept; the sprites retain their
@@ -114,6 +115,18 @@ Skeletal arms and separate cloth
 fists follow the actual punch reach. Both the HUD preview and live hazards
 use the same production art. No service equipment or arena prop image loads.
 
+The wall-crawling chameleon uses the approved Moss Wraith cutout in
+`public/art/horror/props/chameleon.webp`: sage scales, fern and lichen markings,
+a cream belly, spiral tail and golden eye. Built-in ImageGen removed the concept
+background; the 512-by-768 WebP retains real alpha transparency. The gameplay
+sprite and queue icon share this art. A small travelling bend moves its tail
+and body, while the painted mouth stays fixed to the tongue's simulation anchor.
+Its original iris turns inside the ink rim to track the target. Reduced motion
+fixes the bend. The earlier Canvas drawing remains as a loading/error fallback.
+The crawler moves at 23 world pixels per physics second and stops above the floor;
+an attached tongue briefly pulls toward the mouth, sharing the player's impulse
+across all surviving parts and the head rail to preserve the joints.
+
 The two existing wall buttons use five side-view gravestone sprites under
 `public/art/horror/graves/`: rounded, skull-seal, coffin, gothic and broken-seal.
 Built-in ImageGen isolated the approved concepts and removed their stone
@@ -163,7 +176,7 @@ outside its scope.
 Run `npm run build` for TypeScript and production-build checks and `npm test`
 for the simulation and input regression suite. Visual checks should cover line
 boil, fixed sky/ground, grain, pause and reduced motion, jump-serve, size powers,
-detached limbs, all four obstacles and all nine prop loads. Check the start menu
+detached limbs, all three obstacles and all nine prop loads. Check the start menu
 at desktop and mobile widths, including remapping, mode badges and start/pause
 transitions. Save any new screenshots or validation reports under the ignored
 `output/` directory.

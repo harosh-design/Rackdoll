@@ -21,7 +21,7 @@ export interface BallSample {
 /**
  * Step a free ball forward with gravity, the walls and the net, frame by frame,
  * until it reaches the floor. Walls and the net keep 60% of vx (§10). Players
- * are ignored. Optional tuning follows the live world. `gravityScaleAt` is the feather ball's slow fall over one half.
+ * are ignored. Optional tuning follows the live world. `gravityScaleAt` is Updraft's slow fall over one half.
  */
 export function forecastBall(
   position: Vec2Value,
@@ -776,7 +776,7 @@ export class AI {
     return Vec2(this.flip ? -x : x, 0);
   }
 
-  /** The feather ball falls slower over a feathered player's half. */
+  /** Updraft slows the ball over its holder's half. */
   private gravityScaleAt = (x: number): number => {
     const ownerId = x < LANDING_CENTRE_M ? 1 : 2;
     const owner = ownerId === this.computer.id ? this.computer : this.opponent;

@@ -1,6 +1,6 @@
 import { Vec2 } from 'planck';
 import { describe, expect, it } from 'vitest';
-import { BEES, FPS, VIEW, toM, toPx } from '../src/sim/constants';
+import { BEES, FEATHER, FPS, VIEW, toM, toPx } from '../src/sim/constants';
 import { BEE_FLIGHT, BEE_LANES, beePosition, beeRadiusPx, type Bee } from '../src/sim/bees';
 import { POWERS, type PowerId } from '../src/sim/powerUps';
 import type { GameWorld } from '../src/sim/world';
@@ -77,16 +77,17 @@ describe('bee gifts', () => {
     expect(dirs).toEqual(new Set([1, -1]));
   });
 
-  it('carry every power once per seven, in a fresh order, never the same twice running', () => {
+  it('carry every power once per shuffled set, never the same twice running', () => {
     const gw = playWorld({ beeSeed: 3 });
     const kinds: PowerId[] = [];
     const bees = gw.bees as unknown as { nextKind(): PowerId };
-    for (let i = 0; i < 70; i++) kinds.push(bees.nextKind());
-    for (let run7 = 0; run7 < 10; run7++) {
-      expect(new Set(kinds.slice(run7 * 7, run7 * 7 + 7))).toEqual(new Set(POWERS));
+    const count = POWERS.length;
+    for (let i = 0; i < count * 10; i++) kinds.push(bees.nextKind());
+    for (let batch = 0; batch < 10; batch++) {
+      expect(new Set(kinds.slice(batch * count, (batch + 1) * count))).toEqual(new Set(POWERS));
     }
     for (let i = 1; i < kinds.length; i++) expect(kinds[i]).not.toBe(kinds[i - 1]);
-    expect(kinds.slice(0, 7)).not.toEqual(kinds.slice(7, 14));
+    expect(kinds.slice(0, count)).not.toEqual(kinds.slice(count, count * 2));
   });
 
   it('the giant bee is far bigger than the tiny bee, and the hit radius follows the size', () => {
@@ -139,6 +140,30 @@ describe('bee gifts', () => {
     nobody.step();
     expect(nobody.bees.bees).toEqual([stray]);
     expect(nobody.powerUps.active).toEqual({ 1: null, 2: null });
+  });
+
+  it.each([1, 2] as const)('an Updraft bat over the opposite half still rewards player %i who hit it', (owner) => {
+    const gw = playWorld();
+    const bee = gw.bees.spawn('feather', 1, -100);
+    const pickupX = owner === 1 ? 500 : 100;
+    (bee as { startXPx: number }).startXPx += pickupX - beePosition(bee).xPx;
+    const at = beePosition(bee);
+    freeBallAt(gw, at.xPx, at.yPx);
+    (owner === 1 ? gw.p1 : gw.p2).contact = 1;
+    gw.step();
+    expect(gw.powerUps.active[owner]?.kind).toBe('feather');
+    expect(gw.powerUps.active[owner === 1 ? 2 : 1]).toBeNull();
+    expect(gw.bees.pops).toMatchObject([{ kind: 'feather', owner }]);
+    gw.step();
+    expect(gw.ball.body.getGravityScale()).toBe(1);
+
+    freeBallAt(gw, owner === 1 ? 100 : 500, -100);
+    // A later touch by the opponent does not transfer the active territory.
+    gw.p1.contact = owner === 2 ? 1 : 0;
+    gw.p2.contact = owner === 1 ? 1 : 0;
+    gw.step();
+    expect(gw.ball.body.getGravityScale()).toBe(FEATHER.gravityScale);
+    expect(gw.powerUps.active[owner]?.kind).toBe('feather');
   });
 
   it('a bee that only nears the ball is left alone, and none are hit outside play', () => {

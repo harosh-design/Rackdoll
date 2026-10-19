@@ -20,7 +20,7 @@ export class Ground {
   /** Keeps executers on their own half. Invisible; touches nothing else. */
   readonly executerBarrier: Body;
 
-  constructor(world: World, obstacle: CenterObstacleId = 'classic') {
+  constructor(world: World, obstacle: CenterObstacleId = 'sharp') {
     this.leftWall = this.make(world, COURT.leftWall, 'leftWall');
     this.rightWall = this.make(world, COURT.rightWall, 'rightWall');
     this.ceiling = this.make(world, COURT.ceiling, 'ceiling');

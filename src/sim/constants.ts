@@ -454,7 +454,7 @@ export const BEES = {
   popFrames: 18,
 } as const;
 
-/** Feather ball: over its holder's half, the free ball falls at this fraction of gravity. */
+/** Updraft: over its holder's half, the free ball falls at this fraction of gravity. */
 export const FEATHER = { gravityScale: 0.4 } as const;
 
 /** Giant and tiny resize the doll this much per frame: 1 → 1.5 takes 13 frames. */
@@ -728,17 +728,24 @@ export const SLIME = {
 
 /** A wall crawler with a short, interruptible tongue tug instead of a body attack. */
 export const CHAMELEON = {
-  crawlSpeedPx: 20,
+  crawlSpeedPx: 23,
+  /** Keep the complete head-down sprite above the floor when it reaches the bottom. */
+  floorClearancePx: 44,
   emergeFrames: 24,
   emergeDistancePx: 14,
+  /** The painted mouth, relative to the crawler's physical centre. */
+  mouthOffsetXPx: 21,
+  mouthOffsetYPx: 27,
   tongueReachPx: 420,
   /** Pause between attempts, with a visible wind-up and a short pull. */
   cooldownFrames: 72,
   extendFrames: 6,
   pullFrames: 12,
   retractFrames: 8,
-  /** Acceleration while attached, m/s². The player is pulled sideways as a whole. */
-  playerPull: 2.6,
+  /** Acceleration toward the mouth while attached, m/s², shared by the whole player. */
+  playerPull: 3.2,
+  /** The upward tug stays well below gravity, so it cannot suspend a player. */
+  playerLiftMax: 0.25,
   ballPull: 6,
   ballLiftMax: 0.45,
   /** A fleeing target can break the tongue before or during the tug. */

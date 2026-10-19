@@ -164,11 +164,11 @@ describe('bouncing bone spring', () => {
 
 describe('wall chameleon', () => {
   /** A crawler level with the player, for precise tongue timing and impulse checks. */
-  const setup = (side: 1 | 2 = 1) => {
+  const setup = (side: 1 | 2 = 1, heightOffsetPx = 0) => {
     const gw = hazardWorld({ executerOrder: ['chameleon'] });
     const player = side === 1 ? gw.p1 : gw.p2;
     const origin = gw.ground.prizeButtons[side - 1].launchPoint();
-    origin.y = player.tors.getWorldCenter().y;
+    origin.y = player.tors.getWorldCenter().y + toM(heightOffsetPx);
     const e = new Executer({ world: gw.world, timers: gw.timers, target: player, side,
       variant: executerVariant('chameleon'), origin });
     gw.executers.push(e);
@@ -180,49 +180,62 @@ describe('wall chameleon', () => {
     expect(e.phase).toBe(phase);
   };
 
-  it.each([1, 2] as const)('emerges from grave %i and descends along that wall for its full lifetime', side => {
+  it.each([1, 2] as const)('crawls 15% faster from grave %i and stops safely above the floor until expiry', side => {
     const gw = hazardWorld({ executerOrder: ['chameleon'], physics: { airDensity: 5 } });
     fireAtButton(gw, side);
     const e = gw.executers[0];
     const button = gw.ground.prizeButtons[side - 1];
     const wallX = button.launchPoint().x;
-    let previousY = e.body.getPosition().y;
+    const startY = e.body.getPosition().y;
+    let previousY = startY;
+    expect(toPx(e.body.getLinearVelocity().y)).toBeCloseTo(20 * 1.15, 8);
     let maxJointPx = 0;
     let frames = 0;
     while (!e.dead && frames < OPTIONS.myExLife * FPS) {
       gw.step();
       if (e.dead) break;
       const p = e.body.getPosition();
-      expect(p.y).toBeGreaterThan(previousY);
-      expect(e.body.getLinearVelocity().y).toBeGreaterThan(0);
+      expect(p.y).toBeGreaterThanOrEqual(previousY - 1e-10);
+      expect(e.body.getLinearVelocity().y).toBeGreaterThanOrEqual(0);
       expect(e.body.getLinearVelocity().y).toBeLessThanOrEqual(toM(CHAMELEON.crawlSpeedPx));
       if (e.solid) expect(p.x).toBeCloseTo(wallX, 8);
       else expect(Math.abs(p.x - wallX)).toBeLessThanOrEqual(toM(CHAMELEON.emergeDistancePx));
-      expect(toPx(p.y)).toBeLessThan(FLOOR_TOP_PX - 32);
+      expect(toPx(p.y)).toBeLessThanOrEqual(FLOOR_TOP_PX - CHAMELEON.floorClearancePx + 1e-8);
       expect(e.body.getFixtureList()!.isSensor()).toBe(true);
       previousY = p.y;
       maxJointPx = Math.max(maxJointPx, jointErrPx(e.target));
       frames++;
+      if (frames === 60) expect(toPx(p.y - startY)).toBeCloseTo(20 * 1.15 * TIME_STEP * 60, 6);
     }
     expect(frames).toBeGreaterThan(OPTIONS.myExLife * FPS - 3);
     expect(e.dead).toBe(true);
     expect(button.armed).toBe(true);
     expect(e.hits).toBeGreaterThanOrEqual(2);
     expect(maxJointPx).toBeLessThan(15);
+    expect(toPx(previousY)).toBeCloseTo(FLOOR_TOP_PX - CHAMELEON.floorClearancePx, 6);
   });
 
   it.each([1, 2] as const)('briefly tugs the whole player toward wall %i with a bounded impulse', side => {
     const { gw, e, player } = setup(side);
     untilPhase(e, 'tongue-extend');
     expect(e.tongueTarget).toBe(player.tors);
-    const before = player.bodies.map(body => body.getLinearVelocity().clone());
+    const bodies = [...player.bodies, player.prismBody];
+    const before = bodies.map(body => body.getLinearVelocity().clone());
     untilPhase(e, 'tongue-pull');
     expect(e.hits).toBe(1);
+    const c = e.body.getWorldCenter(), p = player.tors.getWorldCenter();
+    const direction = Vec2(c.x + (side === 1 ? 1 : -1) * toM(CHAMELEON.mouthOffsetXPx) - p.x,
+      c.y + toM(CHAMELEON.mouthOffsetYPx) - p.y);
+    direction.normalize();
+    const duration = CHAMELEON.pullFrames * TIME_STEP;
+    const expectedX = direction.x * CHAMELEON.playerPull * duration;
+    const expectedY = Math.max(direction.y * CHAMELEON.playerPull,
+      -gw.world.getGravity().y * CHAMELEON.playerLiftMax) * duration;
     for (let f = 0; f < CHAMELEON.pullFrames; f++) e.update(TIME_STEP);
-    const expected = (side === 1 ? -1 : 1) * CHAMELEON.playerPull * CHAMELEON.pullFrames * TIME_STEP;
-    player.bodies.forEach((body, i) => {
-      expect(body.getLinearVelocity().x - before[i].x).toBeCloseTo(expected, 6);
-      expect(body.getLinearVelocity().y).toBeCloseTo(before[i].y, 6);
+    expect(expectedX * (side === 1 ? -1 : 1)).toBeGreaterThan(0);
+    bodies.forEach((body, i) => {
+      expect(body.getLinearVelocity().x - before[i].x).toBeCloseTo(expectedX, 6);
+      expect(body.getLinearVelocity().y - before[i].y).toBeCloseTo(expectedY, 6);
     });
     untilPhase(e, 'crawl');
     expect(e.tongueTarget).toBeNull();
@@ -233,6 +246,26 @@ describe('wall chameleon', () => {
     expect(e.hits).toBe(hits + 1);
     run(gw, 30);
     expect(jointErrPx(player)).toBeLessThan(15);
+  });
+
+  it('pulls a lower player upward toward its mouth without overcoming gravity', () => {
+    const { gw, e, player } = setup(1, -240);
+    untilPhase(e, 'tongue-extend');
+    const before = player.bodies.map(body => body.getLinearVelocity().clone());
+    untilPhase(e, 'tongue-pull');
+    player.bodies.forEach((body, i) => expect(body.getLinearVelocity()).toEqual(before[i]));
+    for (let f = 0; f < CHAMELEON.pullFrames; f++) e.update(TIME_STEP);
+    player.bodies.forEach((body, i) => {
+      const dv = Vec2.sub(body.getLinearVelocity(), before[i]);
+      expect(dv.x).toBeLessThan(0);
+      expect(dv.y).toBeLessThan(0);
+      expect(dv.y).toBeGreaterThanOrEqual(-gw.world.getGravity().y * CHAMELEON.playerLiftMax * CHAMELEON.pullFrames * TIME_STEP - 1e-9);
+      expect(dv.length()).toBeLessThanOrEqual(CHAMELEON.playerPull * CHAMELEON.pullFrames * TIME_STEP + 1e-9);
+    });
+    untilPhase(e, 'crawl');
+    const released = player.bodies.map(body => body.getLinearVelocity().clone());
+    e.update(TIME_STEP);
+    player.bodies.forEach((body, i) => expect(body.getLinearVelocity()).toEqual(released[i]));
   });
 
   it('chooses a nearer free ball and gently bends its flight without holding it up', () => {
@@ -253,7 +286,7 @@ describe('wall chameleon', () => {
   });
 
   it('ignores held and out-of-play balls and freezes its descent and tongue while paused', () => {
-    const { gw, e, player } = setup();
+    const { gw, e, player } = setup(1, -300);
     player.power = 'shield';
     player.takeBall(gw.ball.body);
     gw.ball.ballOfPlayer = player.id;

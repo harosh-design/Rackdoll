@@ -72,7 +72,7 @@ describe('doll art placement', () => {
 });
 
 describe('drawn joints', () => {
-  it('meet exactly in every frame of random play, however far the solver opens them', () => {
+  it('close rigid joints during random play and preserve stretched poses on the spike', () => {
     const r = rng(3);
     const gw = world({ hazards: true });
     const interp = new Interpolator();
@@ -88,6 +88,10 @@ describe('drawn joints', () => {
       const alpha = 0.25 + (i % 4) * 0.25;
       const poses = closedPoses(interp, alpha, [gw.p1, gw.p2], gw.ball.body);
       for (const p of [gw.p1, gw.p2]) {
+        if (p.stretched) {
+          for (const body of p.bodies) expect(poses.pose(body, alpha)).toEqual(interp.pose(body, alpha));
+          continue;
+        }
         for (const j of p.revolutes) {
           const a = anchor(poses.pose(j.getBodyA(), alpha), j.getLocalAnchorA());
           const b = anchor(poses.pose(j.getBodyB(), alpha), j.getLocalAnchorB());

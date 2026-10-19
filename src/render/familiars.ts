@@ -7,11 +7,11 @@ import { drawHorrorBat, drawHorrorProp } from './horrorProps';
 import { COMIC, COMIC_TEXT, burstPath } from './comicStyle';
 
 const POWER_INK: Record<PowerId, string> = {
-  giant: COMIC.ochre, tiny: COMIC.plum, feather: COMIC.paper, highJump: COMIC.mint,
+  giant: COMIC.ochre, tiny: COMIC.plum, feather: COMIC.paper,
   speed: COMIC.rust, magnet: COMIC.ochre, shield: COMIC.mint,
 };
 const GLYPHS: Record<PowerId, string> = {
-  giant: '+', tiny: '−', feather: '≈', highJump: '↑', speed: '»', magnet: '∩', shield: '◇',
+  giant: '+', tiny: '−', feather: '≈', speed: '»', magnet: '∩', shield: '◇',
 };
 
 /** Bats carry power seals on the original collectible flight and hit circle. */

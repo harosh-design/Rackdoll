@@ -1,6 +1,6 @@
 import { Circle, Vec2, type Body, type Fixture, type Vec2Value, type World } from 'planck';
 import {
-  BODYTYPE, BOXER, CHAMELEON, clamp01, COLLISION, COMET, COURT, EXECUTER, FLOOR_TOP_PX, FPS, GRAVITY, LEFT_WALL_INNER_PX, MAGNET,
+  BODYTYPE, BOXER, CHAMELEON, clamp01, COLLISION, COMET, COURT, EXECUTER, FLOOR_TOP_PX, GRAVITY, LEFT_WALL_INNER_PX, MAGNET,
   NET_X_PX, OPTIONS, PARTS, RIGHT_WALL_INNER_PX, SLIME, SPRING, SWING, TIME_STEP, TIMERS, toM, toPx, type PartName,
 } from './constants';
 import { FrameTimer, type TimerSet } from './timer';
@@ -201,7 +201,6 @@ export class Executer {
   /** Slime: parts that tore free, and the age until which it can't glue them again. */
   private readonly regrab = new Map<Body, number>();
   private readonly wallX: number;
-  private readonly crawlSpeed: number;
   private tongueCooldown = CHAMELEON.cooldownFrames;
 
   constructor(o: ExecuterOptions) {
@@ -224,9 +223,6 @@ export class Executer {
       ...o.tuning,
     };
     this.wallX = o.origin.x;
-    // Leave enough wall for the entire lifetime, including a longer custom life.
-    this.crawlSpeed = toM(Math.min(CHAMELEON.crawlSpeedPx,
-      Math.max(0, FLOOR_TOP_PX - EXECUTER.radiusPx - toPx(o.origin.y)) / (this.lifeSeconds * FPS * TIME_STEP) * 0.95));
 
     this.body = o.world.createBody({
       type: o.variant.id === 'chameleon' ? 'kinematic' : 'dynamic',
@@ -410,15 +406,25 @@ export class Executer {
     const inward = this.side === 1 ? 1 : -1;
     const emergeLeft = Math.max(0, CHAMELEON.emergeFrames - this.age);
     const x = this.wallX - inward * toM(CHAMELEON.emergeDistancePx) * emergeLeft / CHAMELEON.emergeFrames;
-    this.body.setTransform(Vec2(x, p.y), 0);
+    const floorY = toM(FLOOR_TOP_PX - CHAMELEON.floorClearancePx);
+    const y = Math.min(p.y, floorY);
+    this.body.setTransform(Vec2(x, y), 0);
+    // Keep the requested speed until the foot of the wall, then stop above the floor.
+    const descent = Math.min(toM(CHAMELEON.crawlSpeedPx), Math.max(0, (floorY - y) / TIME_STEP));
     this.body.setLinearVelocity(Vec2(emergeLeft > 0
-      ? inward * toM(CHAMELEON.emergeDistancePx) / (CHAMELEON.emergeFrames * TIME_STEP) : 0, this.crawlSpeed));
+      ? inward * toM(CHAMELEON.emergeDistancePx) / (CHAMELEON.emergeFrames * TIME_STEP) : 0, descent));
+  }
+
+  private tongueMouth(): Vec2 {
+    const c = this.body.getWorldCenter();
+    const inward = this.side === 1 ? 1 : -1;
+    return Vec2(c.x + inward * toM(CHAMELEON.mouthOffsetXPx), c.y + toM(CHAMELEON.mouthOffsetYPx));
   }
 
   private tongueCanReach(body: Body): boolean {
     const p = body.getWorldCenter();
     const onHalf = this.side === 1 ? p.x < toM(NET_X_PX) : p.x > toM(NET_X_PX);
-    return onHalf && Vec2.distance(this.body.getWorldCenter(), p) <= toM(CHAMELEON.tongueReachPx);
+    return onHalf && Vec2.distance(this.tongueMouth(), p) <= toM(CHAMELEON.tongueReachPx);
   }
 
   private releaseTongue(): void {
@@ -427,7 +433,7 @@ export class Executer {
     this.setPhase('tongue-retract');
   }
 
-  /** Attacks never interrupt the descent, and only a free, in-play ball is eligible. */
+  /** Attacks do not interrupt crawling, and only a free, in-play ball is eligible. */
   private updateChameleon(dt: number, ball: Body | null): void {
     this.crawlDownWall();
     if (!this.solid || this.knockbackFrames > 0) return;
@@ -436,8 +442,8 @@ export class Executer {
       if (--this.tongueCooldown > 0) return;
       const choices = [this.target.power === 'shield' ? null : playerPart, ball]
         .filter((b): b is Body => b !== null && this.tongueCanReach(b));
-      choices.sort((a, b) => Vec2.distance(this.body.getWorldCenter(), a.getWorldCenter()) -
-        Vec2.distance(this.body.getWorldCenter(), b.getWorldCenter()));
+      const mouth = this.tongueMouth();
+      choices.sort((a, b) => Vec2.distance(mouth, a.getWorldCenter()) - Vec2.distance(mouth, b.getWorldCenter()));
       this.tongueCooldown = CHAMELEON.cooldownFrames;
       this.tongueTarget = choices[0] ?? null;
       if (this.tongueTarget) {
@@ -457,7 +463,7 @@ export class Executer {
       return;
     }
     const p = caught.getWorldCenter();
-    const c = this.body.getWorldCenter();
+    const c = this.tongueMouth();
     const distance = Vec2.distance(c, p);
     const onHalf = this.side === 1 ? p.x < toM(NET_X_PX) : p.x > toM(NET_X_PX);
     if (!onHalf || distance > toM(CHAMELEON.tongueReachPx + CHAMELEON.breakMarginPx) ||
@@ -483,7 +489,9 @@ export class Executer {
     const u = unit(c.x - p.x, c.y - p.y);
     if (isPlayer) {
       // Share the tug with every surviving part and the rail. No limb is stretched.
-      this.target.knock(Vec2(u.x * CHAMELEON.playerPull * dt, 0), 2);
+      const gravity = Math.abs(this.world.getGravity().y * caught.getGravityScale());
+      const ay = Math.max(u.y * CHAMELEON.playerPull, -gravity * CHAMELEON.playerLiftMax);
+      this.target.knock(Vec2(u.x * CHAMELEON.playerPull * dt, ay * dt), 2);
     } else {
       const gravity = Math.abs(this.world.getGravity().y * caught.getGravityScale());
       const ay = Math.max(u.y * CHAMELEON.ballPull, -gravity * CHAMELEON.ballLiftMax);

@@ -980,7 +980,8 @@ describe('hazards (reworked §13)', () => {
 
   it('the comet lines up on the ball’s side and rams its player away from the ball', () => {
     for (const ballSide of [1, -1] as const) {
-      const gw = hazardWorld({ executerOrder: ['comet'] });
+      // Measure the ram direction without pinning the target on a spike.
+      const gw = hazardWorld({ centerObstacle: 'blower', executerOrder: ['comet'] });
       fireAtButton(gw, 1);
       const e = gw.executers[0];
       const shifts: number[] = [];

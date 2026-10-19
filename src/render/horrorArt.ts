@@ -6,6 +6,7 @@ import { HorrorBackground } from './horrorBackground';
 import layouts from './horrorAtlas.json';
 import { loadHorrorProps } from './horrorProps';
 import { drawLigaments } from './ligamentArt';
+import type { WeatherEffects } from './weather';
 
 const players: Partial<Record<1 | 2, HTMLImageElement>> = {};
 let background: HorrorBackground | undefined;
@@ -33,11 +34,13 @@ export function loadHorrorArt(): Promise<void> {
   return loading;
 }
 
-export function drawHorrorBackground(ctx: CanvasRenderingContext2D, width: number, height: number, floorY: number, seconds: number): void {
-  if (background) background.draw(ctx, width, height, floorY, seconds);
+export function drawHorrorBackground(ctx: CanvasRenderingContext2D, width: number, height: number, floorY: number, seconds: number,
+  weather?: WeatherEffects, weatherSeconds = seconds, reducedMotion = false): void {
+  if (background) background.draw(ctx, width, height, floorY, seconds, weather, weatherSeconds, reducedMotion);
   else {
     ctx.fillStyle = '#4c66a2'; ctx.fillRect(0, 0, width, floorY);
     ctx.fillStyle = '#75567b'; ctx.fillRect(0, floorY, width, height - floorY);
+    weather?.drawSky(ctx, width, height, floorY, weatherSeconds, reducedMotion);
   }
 }
 
