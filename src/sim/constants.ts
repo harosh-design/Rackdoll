@@ -734,8 +734,8 @@ export const CHAMELEON = {
   emergeFrames: 24,
   emergeDistancePx: 14,
   /** The painted mouth, relative to the crawler's physical centre. */
-  mouthOffsetXPx: 21,
-  mouthOffsetYPx: 27,
+  mouthOffsetXPx: 6.2,
+  mouthOffsetYPx: 33.6,
   tongueReachPx: 420,
   /** Pause between attempts, with a visible wind-up and a short pull. */
   cooldownFrames: 72,

@@ -702,7 +702,10 @@ export class Renderer {
       // Emerging from the button: grows to full size as it clears the wall.
       const emergeFrames = e.variant.id === 'chameleon' ? CHAMELEON.emergeFrames : EXECUTER.emergeFrames;
       const k = 0.45 + 0.55 * easeOutCubic(Math.min(1, t / emergeFrames));
-      ctx.scale(k, k);
+      if (e.variant.id === 'chameleon') {
+        const wall = e.side === 1 ? COURT.leftWall.x + COURT.leftWall.hw : COURT.rightWall.x - COURT.rightWall.hw;
+        ctx.translate(wall - pose.x, 0); ctx.scale(k, k); ctx.translate(pose.x - wall, 0);
+      } else ctx.scale(k, k);
     }
     const c = e.body.getWorldCenter();
     const aim = e.target.tors.getWorldCenter();
@@ -744,8 +747,10 @@ export class Renderer {
       }
       case 'chameleon': {
         const look = e.tongueTarget?.getWorldCenter() ?? aim;
+        const inward = e.side === 1 ? 1 : -1;
+        const wall = e.side === 1 ? COURT.leftWall.x + COURT.leftWall.hw : COURT.rightWall.x - COURT.rightWall.hw;
         drawChameleonArt(ctx, e.side === 1 ? 1 : -1, Math.atan2(look.y - c.y, look.x - c.x), t,
-          e.phase !== 'crawl');
+          e.phase !== 'crawl', { wallX: (wall - pose.x) * inward, travelPx: pose.y - PRIZE_BUTTONS[e.side - 1].y });
         break;
       }
     }
@@ -1044,8 +1049,10 @@ export class Renderer {
       const dir = id === 1 ? 1 : -1;
       const ink = id === 1 ? COMIC.ochre : COMIC.mint;
       ctx.textAlign = id === 1 ? 'left' : 'right'; ctx.textBaseline = 'top';
-      comicPanel(ctx, id === 1 ? x - 12 : x - 57, 8, 69, 54, COMIC.night);
-      ctx.fillStyle = ink; ctx.fillRect(id === 1 ? x - 8 : x + 6, 13, 2, 43);
+      ctx.save(); ctx.globalAlpha = 0.18;
+      comicPanel(ctx, id === 1 ? x - 12 : x - 57, 8, 69, 60, COMIC.night);
+      ctx.restore();
+      ctx.fillStyle = ink; ctx.fillRect(id === 1 ? x - 8 : x + 6, 13, 2, 49);
       const level = gw.levelOf(id);
       const label = gw.isCpu(id) ? 'CPU · ' + level : hud.singlePlayer ? 'YOU' : 'P' + id;
       ctx.font = '600 7px ' + COMIC_TEXT; ctx.fillStyle = COMIC.paper; ctx.fillText(label, x, 13);
@@ -1053,7 +1060,7 @@ export class Renderer {
       for (let i = 0; i < MAX_TOUCHES; i++) {
         const on = i < Math.min(player.contact, MAX_TOUCHES);
         ctx.fillStyle = on ? player.contact >= MAX_TOUCHES ? COMIC.rust : ink : 'rgba(235,220,181,0.25)';
-        ctx.beginPath(); ctx.arc(x + dir * (3 + i * 8), 54, 2.1, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(x + dir * (3 + i * 8), 60, 2.1, 0, Math.PI * 2); ctx.fill();
       }
       const status = (label: string, fraction: number, color: string, y: number) => {
         const cx = x + dir * 6;
@@ -1063,7 +1070,7 @@ export class Renderer {
         ctx.arc(cx, y + 5, 5.5, -Math.PI / 2, -Math.PI / 2 + clamp01(fraction) * Math.PI * 2); ctx.stroke();
         ctx.fillStyle = COMIC.paper; ctx.font = '600 6px ' + COMIC_TEXT; ctx.fillText(label, x + dir * 16, y + 1);
       };
-      let y = 65;
+      let y = 71;
       if (player.injured) {
         ctx.fillStyle = COMIC.rust; ctx.font = '600 6px ' + COMIC_TEXT;
         ctx.fillText('INJURED · ' + player.detachedBodies.length + ' PARTS LOST', x, y);

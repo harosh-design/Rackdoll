@@ -20,7 +20,7 @@ in earlier Git commits.
   the larger production size. Scenery is independently drawn at device resolution.
 - `public/art/horror/masked.webp`: thirteen masked-player cutouts in a 4-by-4 atlas.
 - `public/art/horror/skeleton.webp`: thirteen skeleton cutouts with transparent rib gaps.
-- `public/art/horror/props/*.webp`: ten transparent comic prop cutouts for
+- `public/art/horror/props/*.webp`: eleven transparent comic prop cutouts for
   hazards, bats, talismans and fists, loaded by `src/render/horrorProps.ts`
   and `src/render/chameleonArt.ts`.
 - `public/art/horror/balls/*.webp`: three transparent 512-pixel ball sprites,
@@ -115,14 +115,20 @@ Skeletal arms and separate cloth
 fists follow the actual punch reach. Both the HUD preview and live hazards
 use the same production art. No service equipment or arena prop image loads.
 
-The wall-crawling chameleon uses the approved Moss Wraith cutout in
-`public/art/horror/props/chameleon.webp`: sage scales, fern and lichen markings,
-a cream belly, spiral tail and golden eye. Built-in ImageGen removed the concept
-background; the 512-by-768 WebP retains real alpha transparency. The gameplay
-sprite and queue icon share this art. A small travelling bend moves its tail
-and body, while the painted mouth stays fixed to the tongue's simulation anchor.
-Its original iris turns inside the ink rim to track the target. Reduced motion
-fixes the bend. The earlier Canvas drawing remains as a loading/error fallback.
+The wall-crawling chameleon uses the approved Moss Wraith skin: sage scales,
+fern and lichen markings, a cream belly, spiral tail and golden eye. Built-in
+ImageGen prepared a separate leg-free body and one textured limb cutout in
+`public/art/horror/props/chameleon-body.webp` and `chameleon-leg.webp`, with real
+alpha transparency. Gameplay and the queue icon share the same articulated art.
+The body is turned upright beside the wall, with four separate limbs driven by
+two-segment inverse kinematics. Diagonal pairs alternate between gripping and
+stepping. A planted toe pad stays at the actual wall face and at a fixed world
+height while the body descends; a free foot lifts inward and reaches one stride
+lower. Gait phase follows interpolated distance travelled, so stopping at the
+floor or pausing also stops the feet. Emergence scales around the wall face to
+keep the grips attached. Reduced motion fixes the limb pose. The iris follows
+the target, and the rotated mouth remains the tongue's shared simulation anchor.
+Canvas body and limb drawings provide a loading/error fallback.
 The crawler moves at 23 world pixels per physics second and stops above the floor;
 an attached tongue briefly pulls toward the mouth, sharing the player's impulse
 across all surviving parts and the head rail to preserve the joints.
