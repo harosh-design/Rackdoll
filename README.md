@@ -51,6 +51,19 @@ npm test           # the spec's §17 checks, headless
 npm run build      # static site in dist/
 ```
 
+## GitHub Pages
+
+The [deployment workflow](.github/workflows/deploy-pages.yml) builds and publishes
+the game after every push to `main`. It can also be run manually from the
+repository's **Actions** tab. In **Settings → Pages**, select **GitHub Actions**
+as the publishing source. GitHub Pages must be available on the repository's
+plan; private repositories require a plan that supports Pages.
+
+After enabling Pages, the game is published at
+<https://harosh-design.github.io/Rackdoll/>.
+Vite uses relative asset paths so images, audio and scripts load from the
+repository's subdirectory.
+
 ## Repository contents
 
 Only the current game's source, tests, specifications, documentation and runtime
