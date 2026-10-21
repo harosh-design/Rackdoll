@@ -14,6 +14,7 @@ import { ExecuterQueue, seededRandom, type ExecuterId, type ExecuterVariant } fr
 import { Game, type GameEvents } from './game';
 import { Ground } from './ground';
 import type { CenterObstacleId } from './centerObstacle';
+import { gameMap, mapForObstacle, type GameMapId } from './maps';
 import { Player, type PlayerId } from './player';
 import { PowerUps, type PowerId } from './powerUps';
 import { airDamping, normalizePhysics, type PhysicsSettings } from './physics';
@@ -32,7 +33,9 @@ export interface GameWorldOptions {
   p1Level?: number;
   /** Hazards on/off. Off, a button still clicks but launches nothing. */
   hazards?: boolean;
-  /** Centre obstacle chosen in the pre-match menu; independent of wall hazards. */
+  /** The selected arena determines both scenery and center obstacle. */
+  map?: GameMapId;
+  /** Internal physics override for tests; an explicit map takes precedence. */
   centerObstacle?: CenterObstacleId;
   /** Override executer physics, for tuning and tests. */
   executerTuning?: Partial<ExecuterTuning>;
@@ -121,6 +124,7 @@ export class GameWorld {
   /** Bot vs bot: player 1's level (player 2's is game.level). */
   readonly p1Level: number;
   readonly hazards: boolean;
+  readonly mapId: GameMapId;
   private readonly executerTuning?: Partial<ExecuterTuning>;
   private readonly contactIterations: number;
   private readonly executerRandom: () => number;
@@ -138,6 +142,7 @@ export class GameWorld {
     this.singlePlayer = !this.botVsBot && (opts.singlePlayer ?? true);
     this.p1Level = opts.p1Level ?? opts.level ?? OPTIONS.currentLevel;
     this.hazards = opts.hazards ?? true;
+    this.mapId = opts.map !== undefined ? gameMap(opts.map).id : mapForObstacle(opts.centerObstacle);
     this.executerTuning = opts.executerTuning;
     this.contactIterations = opts.contactIterations ?? EXECUTER_ITERATIONS;
     this.executerRandom = seededRandom(opts.executerSeed ?? 0x2545f491);
@@ -152,7 +157,7 @@ export class GameWorld {
     // that the horizontal rails anchor to.
     const railAnchor = this.world.createBody({ type: 'static', position: Vec2(0, 0) });
 
-    this.ground = new Ground(this.world, opts.centerObstacle);
+    this.ground = new Ground(this.world, gameMap(this.mapId).obstacle);
     this.p1 = new Player(this.world, railAnchor, SPAWN_P1_PX.x, SPAWN_P1_PX.y, 1);
     this.p2 = new Player(this.world, railAnchor, SPAWN_P2_PX.x, SPAWN_P2_PX.y, 2);
     this.ball = new Ball(this.world);

@@ -17,7 +17,7 @@ import type { PointReason } from './sim/game';
 import type { PlayerId } from './sim/player';
 import { bodyTypeOf } from './sim/types';
 import { GameWorld } from './sim/world';
-import { CENTER_OBSTACLES, normalizeCenterObstacle } from './sim/centerObstacle';
+import { GAME_MAPS, MAP_STORAGE_KEY, gameMap, loadMapSelection } from './sim/maps';
 
 type Screen = 'menu' | 'playing' | 'paused' | 'over';
 
@@ -50,17 +50,12 @@ const music = new Music();
 const MUSIC_ENABLED = false;
 
 type Mode = '1p' | '2p' | 'cpu';
-const CENTER_OBSTACLE_KEY = 'rackdoll-center-obstacle';
-function loadCenterObstacle() {
-  try { return normalizeCenterObstacle(localStorage.getItem(CENTER_OBSTACLE_KEY)); }
-  catch { return normalizeCenterObstacle(null); }
-}
 let physicsStorage: PresetStorage | undefined;
 try { physicsStorage = localStorage; } catch { /* Tuning still works in memory. */ }
 const physicsLibrary = loadPhysicsLibrary(physicsStorage);
 const settings = {
   mode: '1p' as Mode,
-  centerObstacle: loadCenterObstacle(),
+  map: loadMapSelection(physicsStorage),
   weather: 'random' as WeatherChoice,
   level: OPTIONS.currentLevel as number,
   /** Bot vs bot: the left CPU's level. */
@@ -132,7 +127,7 @@ function createWorld(demo = false): GameWorld {
     level: settings.level,
     p1Level: settings.p1Level,
     hazards: settings.hazards,
-    centerObstacle: settings.centerObstacle,
+    map: settings.map,
     bindings: toKeyBindings(settings.bindings),
     physics: physicsLibrary.current,
     executerSeed: Math.floor(Math.random() * 0x100000000),
@@ -161,9 +156,16 @@ function startMatch(): void {
   applyMute(muted);            // keep mute state consistent when starting a fresh match
   gw = createWorld();
   renderer.startMatch(gw, settings.weather);
-  canvas.setAttribute('aria-label', `Ragdoll volleyball court. Weather: ${WEATHER_OPTIONS.find(option => option.id === renderer.weatherId)!.label}.`);
+  describeCourt();
   message = null;
   setScreen('playing');
+}
+
+function describeCourt(): void {
+  const map = gameMap(settings.map);
+  const atmosphere = map.id === 'graveyard'
+    ? WEATHER_OPTIONS.find(option => option.id === renderer.weatherId)!.label : map.atmosphere;
+  canvas.setAttribute('aria-label', `${map.label} volleyball court. ${map.obstacleLabel}. ${atmosphere}.`);
 }
 
 // ---------------------------------------------------------------------------
@@ -473,25 +475,43 @@ function wireMenu(): void {
     const caption = document.createElement('span'); caption.className = 'mode-cap'; caption.textContent = option.caption;
     button.append(label, caption); $('weather-options').append(button);
   }
-  const obstacleIcons = {
-    sharp: '<path d="M12 3L8 21h8z"/>',
-    blower: '<path d="M11 5h2v16h-2zM7 9H2m2-2L2 9l2 2M17 9h5m-2-2l2 2-2 2M7 16H2m2-2l-2 2 2 2M17 16h5m-2-2l2 2-2 2"/>',
-    rubber: '<path d="M8 21c0-8 11-10 7-18M5 21h6M10 17l3 2m0-7l3 2m0-7l3 1"/>',
-  };
-  for (const option of CENTER_OBSTACLES) {
+  const mapPreviews: HTMLCanvasElement[] = [];
+  for (const [index, option] of GAME_MAPS.entries()) {
     const button = document.createElement('button');
-    button.type = 'button'; button.className = 'mode obstacle-option';
-    button.dataset.centerObstacle = option.id;
-    button.setAttribute('aria-pressed', String(option.id === settings.centerObstacle));
-    button.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${obstacleIcons[option.id]}</svg>`;
+    button.type = 'button'; button.className = 'mode map-option';
+    button.dataset.map = option.id;
+    button.setAttribute('aria-pressed', String(option.id === settings.map));
+    button.setAttribute('aria-label', `${option.label}. ${option.obstacleLabel}. ${option.caption}.`);
+    const preview = document.createElement('canvas');
+    preview.width = 320; preview.height = 192; preview.className = 'map-preview';
+    preview.setAttribute('aria-hidden', 'true');
+    const marker = document.createElement('span'); marker.className = 'map-selected';
+    marker.textContent = '✓'; marker.setAttribute('aria-hidden', 'true');
     const label = document.createElement('span'); label.className = 'mode-title'; label.textContent = option.label;
-    const caption = document.createElement('span'); caption.className = 'mode-cap'; caption.textContent = option.caption;
-    button.append(label, caption); $('center-obstacles').append(button);
+    const caption = document.createElement('span'); caption.className = 'mode-cap'; caption.textContent = option.obstacleLabel;
+    button.append(preview, marker, label, caption); $('map-options').append(button);
+    mapPreviews.push(preview);
+    button.addEventListener('keydown', event => {
+      const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+      if (!step && event.key !== 'Home' && event.key !== 'End') return;
+      event.preventDefault();
+      const target = event.key === 'Home' ? 0 : event.key === 'End' ? GAME_MAPS.length - 1
+        : (index + step + GAME_MAPS.length) % GAME_MAPS.length;
+      const next = $('map-options').querySelectorAll<HTMLButtonElement>('button')[target];
+      next.click(); next.focus();
+    });
   }
-  const syncObstacleDescription = () => {
-    $('center-obstacle-description').textContent = CENTER_OBSTACLES.find(option => option.id === settings.centerObstacle)!.description;
+  void renderer.ready.then(() => {
+    for (const [index, preview] of mapPreviews.entries()) renderer.drawMapPreview(preview, GAME_MAPS[index].id);
+  });
+  const syncMapDescription = () => {
+    const map = gameMap(settings.map);
+    $('map-description').textContent = map.description;
+    $('selected-map-name').textContent = map.label;
+    $('weather-field').hidden = map.id !== 'graveyard';
+    describeCourt();
   };
-  syncObstacleDescription();
+  syncMapDescription();
   const group = (attr: string, apply: (v: string) => void) => {
     const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>(`[data-${attr}]`));
     for (const b of buttons) {
@@ -517,12 +537,13 @@ function wireMenu(): void {
     $('weather-description').textContent = settings.weather === 'random'
       ? 'A new random sky each match. Pick a weather to preview and test it.'
       : WEATHER_OPTIONS.find(option => option.id === settings.weather)!.description;
+    describeCourt();
   });
-  group('center-obstacle', value => {
-    settings.centerObstacle = normalizeCenterObstacle(value);
-    syncObstacleDescription();
-    try { localStorage.setItem(CENTER_OBSTACLE_KEY, settings.centerObstacle); } catch { /* Selection still works in memory. */ }
-    // The menu backdrop previews the same geometry that the next match uses.
+  group('map', value => {
+    settings.map = gameMap(value).id;
+    syncMapDescription();
+    try { physicsStorage?.setItem(MAP_STORAGE_KEY, settings.map); } catch { /* Selection still works in memory. */ }
+    // Preview the complete map and the same obstacle that the next match uses.
     gw = createWorld(true);
   });
   syncLevels();

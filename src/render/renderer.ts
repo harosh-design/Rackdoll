@@ -18,7 +18,10 @@ import type { Interpolator, Pose } from './interp';
 import { AmbientBackdrop } from './ambientBackdrop';
 import { drawHorrorBackground, drawHorrorPlayers, loadHorrorArt } from './horrorArt';
 import { PencilGrain } from './pencilGrain';
-import { AIR_HEATER, RUBBER_NET, SHARP_SPIKE } from '../sim/centerObstacle';
+import { RUBBER_NET, SHARP_SPIKE } from '../sim/centerObstacle';
+import { gameMap, type GameMapId } from '../sim/maps';
+import { MapScenery } from './mapScenery';
+import { drawSteamPipe, drawStitchedPole } from './mapObstacles';
 import { drawBallArt, loadBallArt, pickBallSkin, type BallSkin } from './ballArt';
 import { DEFAULT_GRAVE_SKINS, drawGraveArt, loadGraveArt, pickGraveSkins, type GraveSkins } from './graveArt';
 import { BallSquash, type BallDeformation } from './ballDeformation';
@@ -122,6 +125,7 @@ export class Renderer {
   private readonly reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   private readonly grain = new PencilGrain();
   private readonly backdrop: AmbientBackdrop | null;
+  private readonly mapScenery = new MapScenery();
   readonly ready: Promise<void>;
 
   constructor(canvas: HTMLCanvasElement, backdrop?: HTMLCanvasElement) {
@@ -129,7 +133,7 @@ export class Renderer {
     this.ctx = canvas.getContext('2d', { alpha: false })!;
     this.backdrop = backdrop ? new AmbientBackdrop(backdrop) : null;
     this.resize();
-    this.ready = Promise.all([loadHorrorArt(), loadBallArt(), loadGraveArt(), loadChameleonArt()]).then(() => {});
+    this.ready = Promise.all([loadHorrorArt(), loadBallArt(), loadGraveArt(), loadChameleonArt(), this.mapScenery.load()]).then(() => {});
   }
 
   /** Called only for a new match; rounds and pauses retain their skins and weather. */
@@ -146,6 +150,10 @@ export class Renderer {
   }
 
   get weatherId(): WeatherId { return this.weather.id; }
+
+  drawMapPreview(canvas: HTMLCanvasElement, id: GameMapId): void {
+    this.mapScenery.drawPreview(canvas, id);
+  }
 
   /** Menu previews replace only the decorative weather, without restarting physics. */
   previewWeather(choice: WeatherChoice): void {
@@ -214,17 +222,22 @@ export class Renderer {
   // drawn at the fixed arena scale each frame.
   // -------------------------------------------------------------------------
 
-  private paintCourt(ctx: CanvasRenderingContext2D): void {
-    this.backdrop?.draw(this.scenerySeconds);
+  private paintCourt(ctx: CanvasRenderingContext2D, gw: GameWorld): void {
+    this.backdrop?.draw(this.scenerySeconds, gameMap(gw.mapId).surround);
     this.stageSpace(ctx);
     const floorY = this.toStage(0, SOLES_PX).y;
     const weatherSeconds = this.scenerySeconds - this.weatherStartedAt;
-    drawHorrorBackground(ctx, VIEW.stageW, VIEW.stageH, floorY, this.scenerySeconds,
-      this.weather, weatherSeconds, this.reducedMotion.matches);
-    this.weather.drawCourt(ctx, VIEW.stageW, VIEW.stageH, floorY, weatherSeconds, this.reducedMotion.matches);
+    if (gw.mapId === 'graveyard') {
+      drawHorrorBackground(ctx, VIEW.stageW, VIEW.stageH, floorY, this.scenerySeconds,
+        this.weather, weatherSeconds, this.reducedMotion.matches);
+      this.weather.drawCourt(ctx, VIEW.stageW, VIEW.stageH, floorY, weatherSeconds, this.reducedMotion.matches);
+    } else {
+      this.mapScenery.draw(ctx, gw.mapId, VIEW.stageW, VIEW.stageH, floorY,
+        this.scenerySeconds, this.reducedMotion.matches);
+    }
     this.worldSpace(ctx);
     const ground = COURT.ground;
-    ctx.fillStyle = '#cfb3cb';
+    ctx.fillStyle = gw.mapId === 'graveyard' ? '#cfb3cb' : gw.mapId === 'crematorium' ? '#a28587' : '#b08783';
     ctx.fillRect(ground.x - ground.hw, SOLES_PX, ground.hw * 2, 1.2);
     for (const wall of [COURT.leftWall, COURT.rightWall]) {
       const left = wall === COURT.leftWall;
@@ -256,18 +269,7 @@ export class Renderer {
       ctx.save(); ctx.clip(); hatch(ctx, x - 6, top, 7, FLOOR_TOP_PX - top, 7); ctx.restore();
       ctx.strokeStyle = COMIC.plum; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.moveTo(x, top + 10); ctx.lineTo(x + 1, FLOOR_TOP_PX); ctx.stroke();
     } else if (obstacle.id === 'blower') {
-      ctx.strokeStyle = COMIC.mint; ctx.lineWidth = 1;
-      for (const side of [-1, 1]) for (let i = 0; i < 7; i++) {
-        const travel = ((this.scenerySeconds * 22 + i * 9) % AIR_HEATER.rangePx);
-        const ax = x + side * (AIR_HEATER.halfWidthPx + travel), y = top + 10 + i * 20;
-        ctx.globalAlpha = 0.65 * (1 - travel / AIR_HEATER.rangePx);
-        ctx.beginPath(); ctx.moveTo(ax - side * 8, y + 2); ctx.quadraticCurveTo(ax - side * 4, y - 3, ax, y);
-        ctx.lineTo(ax - side * 3, y - 2); ctx.moveTo(ax, y); ctx.lineTo(ax - side * 3, y + 2); ctx.stroke();
-      }
-      ctx.globalAlpha = 1; ctx.fillStyle = COMIC.ochre; ctx.strokeStyle = COMIC.ink;
-      inkRect(ctx, x - AIR_HEATER.halfWidthPx, top, AIR_HEATER.halfWidthPx * 2, FLOOR_TOP_PX - top, 1); ctx.fill(); ctx.stroke();
-      ctx.lineWidth = 0.8;
-      for (let y = top + 7; y < FLOOR_TOP_PX - 4; y += 6) { ctx.beginPath(); ctx.moveTo(x - 2, y); ctx.lineTo(x + 2, y - 1); ctx.stroke(); }
+      drawSteamPipe(ctx, x, top, FLOOR_TOP_PX, this.reducedMotion.matches ? 0.6 : this.scenerySeconds);
     } else {
       const halfHeight = (RUBBER_NET.basePx - top) / RUBBER_NET.segments / 2;
       const points: Array<{ x: number; y: number }> = [{ x, y: RUBBER_NET.basePx }];
@@ -275,18 +277,10 @@ export class Renderer {
         const pose = interp.pose(body, alpha);
         points.push({ x: pose.x + Math.sin(pose.a) * halfHeight, y: pose.y - Math.cos(pose.a) * halfHeight });
       }
-      ctx.lineJoin = ctx.lineCap = 'round';
-      for (const [width, color] of [[9, COMIC.ink], [6, COMIC.plum], [1.2, COMIC.paper]] as const) {
-        ctx.lineWidth = width; ctx.strokeStyle = color;
-        ctx.setLineDash(width < 2 ? [2, 4] : []);
-        ctx.beginPath(); ctx.moveTo(points[0].x, points[0].y);
-        for (let i = 1; i < points.length - 1; i++) ctx.quadraticCurveTo(points[i].x, points[i].y, (points[i].x + points[i + 1].x) / 2, (points[i].y + points[i + 1].y) / 2);
-        const tip = points[points.length - 1]; ctx.lineTo(tip.x, tip.y); ctx.stroke();
-      }
-      ctx.setLineDash([]);
+      drawStitchedPole(ctx, points);
     }
     drawSpikeBlood(ctx, obstacle, SOLES_PX, alpha);
-    comicPanel(ctx, x - 9, FLOOR_TOP_PX, 18, SOLES_PX - FLOOR_TOP_PX + 3, COMIC.plum);
+    if (obstacle.id !== 'blower') comicPanel(ctx, x - 9, FLOOR_TOP_PX, 18, SOLES_PX - FLOOR_TOP_PX + 3, COMIC.plum);
     ctx.restore();
   }
 
@@ -299,7 +293,7 @@ export class Renderer {
     this.sceneryAt = sceneryAt;
     const interp = closedPoses(frames, alpha, [gw.p1, gw.p2], gw.ball.body);
     const now = gw.frame - 1 + alpha;
-    this.paintCourt(ctx);
+    this.paintCourt(ctx, gw);
     drawFeatherAirflow(ctx, gw, now);
     this.drawShadows(gw, interp, alpha);
     this.worldSpace(ctx);
@@ -318,7 +312,7 @@ export class Renderer {
     for (const e of gw.executers) if (!e.dead) this.drawExecuter(ctx, e, interp, alpha);
     this.drawChargeMeters(ctx, gw, interp, alpha);
     this.stageSpace(ctx);
-    this.weather.drawForeground(ctx, VIEW.stageW, VIEW.stageH, this.toStage(0, SOLES_PX).y,
+    if (gw.mapId === 'graveyard') this.weather.drawForeground(ctx, VIEW.stageW, VIEW.stageH, this.toStage(0, SOLES_PX).y,
       this.scenerySeconds - this.weatherStartedAt, this.reducedMotion.matches);
     this.grain.draw(ctx, this.canvas.width, this.canvas.height, this.scenerySeconds, this.grainPixelRatio);
     this.stageSpace(ctx);

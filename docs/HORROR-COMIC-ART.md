@@ -1,11 +1,40 @@
 # Pencil horror-comic art
 
-The moonlit court is the game's sole current background/player direction.
+The game shares one pencil horror-comic direction across three selectable maps.
 Player 1 wears an ochre hat and coat, violet clothes, and an ink-patterned face covering.
-Player 2 has exposed cream bones, a skull, and plum shorts. The scene contains
+Player 2 has exposed cream bones, a skull, and plum shorts. Graveyard contains
 blue pencil-colored sky, a cream moon, bare branches at the edges, a solid black
-forest skyline with small crosses, and a violet ground plane. There are no hotel
-buildings or resort scenery.
+forest skyline with small crosses, and a violet ground plane.
+
+Crematorium restores the concept's domed brick furnaces, iron doors, valves,
+corner arches and pipework, concentrated at the outer sides of a quiet steel-blue
+wall. Small vector flames sit inside the painted firebox openings, wisps rise
+beside the pipes, and two vector lamps sway gently from fixed ceiling anchors.
+Its narrow central iron steam pipe pushes nearby players away; animated steam
+stays inside the physical field's reach.
+
+Dead Circus restores the striped roof, low distant benches, drums, a wagon wheel
+and a crate around an open muted mauve backdrop. The side curtains are entirely
+vector artwork: stripes, hatching, folds, torn hems, tie cords and tassels follow
+the same slowly moving fabric shape. A sagging vector garland carries attached
+bulbs and small pennants above the main play area. Its flexible center divider
+is stitched plum fabric with patches; seams follow its six physical segments.
+
+Both maps balance the concept illustrations with gameplay readability. Detailed
+raster architecture and props frame the perimeter; the broad center behind the
+players and the ball remains an even, subdued pencil field. Moving elements use
+Canvas paths in `interiorMotion.ts`, with no animated bitmap frames or sprite
+scenery. They share the scenery clock, freeze on pause and remain still with
+reduced motion. Menu previews use the same scene at a fixed decorative pose.
+Ash is limited to twelve faint motes, and dust to eight, to preserve ball visibility. Outdoor
+weather and moon scenery appear only on Graveyard. Indoor particles and steam
+freeze with the scenery clock on pause and remain still with reduced motion.
+
+The menu's three Map cards render miniature views of the actual backgrounds and
+their dividers. Selecting a card previews the complete court and fixes its
+obstacle for every mode, restart and rematch. The browser remembers the map;
+legacy center-obstacle choices migrate to the matching map. CPU difficulty
+remains a separate setting.
 
 ## Assets and rig
 
@@ -18,6 +47,15 @@ in earlier Git commits.
   plate from the requested gameplay reference, packaged at 2560 by 1600.
   Its generated source is 1586 by 992; packaging registers and resamples it to
   the larger production size. Scenery is independently drawn at device resolution.
+- `public/art/horror/background-crematorium.webp` and
+  `background-dead-circus.webp`: illustrated static plates made with built-in
+  ImageGen from the original concepts and the quiet gameplay color fields.
+  Architecture and props are concentrated at the sides, with calm central walls.
+  Lamps, flames, steam, hanging curtains, garlands and pennants are omitted from
+  the raster art and rendered separately as vectors.
+  Both source floor boundaries are registered at 84%, aligning the painted floor
+  with the existing court geometry. Current prompts and raw plates are kept under
+  ignored `output/map-concepts/balanced/`; previous versions remain in its parent.
 - `public/art/horror/masked.webp`: thirteen masked-player cutouts in a 4-by-4 atlas.
 - `public/art/horror/skeleton.webp`: thirteen skeleton cutouts with transparent rib gaps.
 - `public/art/horror/props/*.webp`: eleven transparent comic prop cutouts for
@@ -154,8 +192,8 @@ original flight path, collectible center/radius, size variations, ownership
 and pickup timing remain intact. Tiny-power labels retain a minimum readable
 size. Pause fixes the entire carrier; reduced motion fixes wing flapping.
 
-All four center obstacles retain their geometry and motion, with scratched
-bone, mint, ochre and stitched-plum treatments. Menus, controls, instructions,
+All three map dividers retain their existing geometry and motion, with scratched
+bone, iron-and-steam, and stitched-plum treatments. Menus, controls, instructions,
 pause, results and debug controls use printed paper, ink borders, offset hard
 shadows, condensed titles and typewriter labels from `src/styles/horror.css`.
 The comic palette stays consistent in both system color schemes. Keyboard
@@ -175,8 +213,9 @@ play, and grain remains fixed at 16%.
 
 ## Scope and validation
 
-People/Shaders and Arena/Beach/Rooftop controls are removed, including the HUD
-location button. Their old storage keys are ignored, and the old player and
+People/Shaders and the old Arena/Beach/Rooftop controls are removed, including the HUD
+location button. The new Map selector replaces the independent center-obstacle
+selector. Old player and location storage keys are ignored, and the old player and
 background modules and their assets have been removed from the working tree.
 Earlier source art and studies remain available in Git history. The active update
 covers the full visual presentation. Physics, audio and game rules remain
@@ -185,7 +224,7 @@ outside its scope.
 Run `npm run build` for TypeScript and production-build checks and `npm test`
 for the simulation and input regression suite. Visual checks should cover line
 boil, fixed sky/ground, grain, pause and reduced motion, jump-serve, size powers,
-detached limbs, all three obstacles and all nine prop loads. Check the start menu
+detached limbs, all three maps and all nine prop loads. Check the start menu
 at desktop and mobile widths, including remapping, mode badges and start/pause
 transitions. Save any new screenshots or validation reports under the ignored
 `output/` directory.

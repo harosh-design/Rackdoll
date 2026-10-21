@@ -7,14 +7,20 @@ which were read out of the original's own AS3 bytecode.
 All project code and documentation must be written in English. See
 [`AGENTS.md`](AGENTS.md) for the project language policy.
 
-The game now uses a single [pencil horror-comic art direction](docs/HORROR-COMIC-ART.md):
-a masked player in an ochre coat, a skeleton in plum shorts, and a sparse
-moonlit court with small distant crosses. The moon moves smoothly across the
+The game uses a shared [pencil horror-comic art direction](docs/HORROR-COMIC-ART.md):
+a masked player in an ochre coat, a skeleton in plum shorts, and three maps:
+Graveyard, Crematorium, and Dead Circus. On Graveyard, the moon moves smoothly across the
 sky along the upper half of an ellipse, taking five minutes to cross and
 easing into each return pass. It and the black silhouettes use subtle
 line-boil animation; coarse cached procedural paper grain overlays the
-artwork at a fixed 16% intensity. The previous People, Shaders, and location selectors
-have been removed. Old saved selections no longer affect rendering.
+artwork at a fixed 16% intensity. The Map selector previews each court and its
+fixed center obstacle. Old People, Shaders, and location preferences are ignored.
+All three maps use a quiet pencil field with low dark silhouettes and scenery
+restricted to the edges, keeping the ball clear of detailed background artwork.
+Crematorium and Dead Circus combine illustrated static architecture and props
+with vector flames, swaying lamps, steam, striped curtain hems and hanging lights.
+Decorative motion stays around the perimeter, freezes on pause and respects
+reduced motion.
 
 The comic direction also covers hazards, power-carrying bats,
 three illustrated ball skins, motion marks, obstacles, scoreboards, menus, pause
@@ -30,15 +36,17 @@ The start menu sits over a blurred view of the court. Both players' current
 controls stay visible beside match setup, with character portraits and small
 comic stickers. The guide updates immediately when keys are remapped.
 
-Each match also picks one of three decorative weather presets: light rain with
+On Graveyard, each match also picks one of three decorative weather presets: light rain with
 occasional distant lightning, drifting snowfall, or a starry autumn night with
 passing leaves. Random weather avoids consecutive repeats and stays fixed across
 rounds and pauses. Distant particles pass behind the scenery, middle particles
 behind the players, and a few larger flakes or leaves cross the foreground.
 The start menu's **Weather** selector previews and forces a preset for testing;
 **Random** restores automatic selection. This testing override lasts for the
-current page session. Weather freezes when paused, respects reduced motion,
-and does not affect physics or gameplay.
+current page session. Indoor maps replace outdoor weather with drifting ash in
+Crematorium and settling dust in Dead Circus; their weather selector is hidden.
+Weather and indoor particles freeze when paused, respect reduced motion,
+and do not affect physics or gameplay.
 The star field has soft, independent glints. Weather reuses bounded-size cached
 artwork, batches rain and snow by depth, and reduces particle density after a
 sustained frame-rate drop. All three depth layers remain visible at every
@@ -128,11 +136,12 @@ original.
 
 ## How to play it
 
-Choose a **Centre obstacle** in the start menu. The selection is remembered in
-this browser, previews on the court and applies to all modes and rematches.
-Sharp spike is the default:
+Choose a **Map** in the start menu. Each card previews its court and unique
+divider. The selection is remembered in this browser and applies to all modes,
+restarts and rematches. Graveyard is the default. Existing saved obstacle choices
+migrate to the corresponding map. The divider is part of the map:
 
-- **Sharp spike** is a tapered spear. Its point acts only on a deep impalement;
+- **Graveyard — Impaling spike** is a tapered spear. Its point acts only on a deep impalement;
   grazes and touches are safe.
   An impaled part is physically pinned while the rest of the skeleton remains
   attached. It slides along the shaft and still turns freely on it. Hold
@@ -154,10 +163,10 @@ Sharp spike is the default:
   joining the separated body parts. Hinges next to the caught part become damped
   springs, with a rope limiting each gap to 48 world pixels at normal size.
   The cutouts follow the actual pinned poses; the next round restores the hinges.
-- **Air heater** pushes players away from its column in every direction within
+- **Crematorium — Steam pipe** pushes players away from its column in every direction within
   30% of the original player's height (32.7 world pixels). The range stays fixed
   through size powers. Air forces depend on body mass and distance; the ball is unaffected.
-- **Rubber net** has six physical segments connected by spring-driven hinges.
+- **Dead Circus — Stitched pole** has six physical segments connected by spring-driven hinges.
   Players and the ball can bend it into the opposing half; it returns when released.
 
 Each round releases impaled parts, straightens the rubber net and restores

@@ -173,7 +173,28 @@ button:disabled { opacity: 0.45; cursor: default; }
 .mode .mode-puppet { transform: rotate(8deg); width: 30px; }
 .menu-settings .mode-title { font-size: 13px; }
 .menu-settings .mode-cap { color: #65515e; font-size: 10.5px; }
-.menu-settings .obstacle-option { padding: 10px; }
+.map-group { gap: 9px; }
+.menu-settings .map-option { position: relative; min-width: 0; padding: 0 0 9px; overflow: hidden; gap: 4px; }
+.map-preview { display: block; width: 100%; height: auto; aspect-ratio: 5 / 3; background: #302636; border-bottom: 2px solid #18121f; }
+.menu-settings .map-option .mode-title { padding: 3px 8px 0; font: 18px/1.05 Impact, 'Arial Narrow', sans-serif; text-transform: uppercase; letter-spacing: 0.025em; }
+.menu-settings .map-option .mode-cap { display: block; padding: 0 8px; font-size: 10px; line-height: 1.3; }
+.map-selected { position: absolute; top: 5px; right: 5px; display: none; width: 20px; height: 20px; place-items: center; background: #c9d9bb; border: 1px solid #18121f; color: #293b30; font: 700 15px/1 'Courier New', monospace; box-shadow: 1px 2px 0 #18121f; }
+.map-option[aria-pressed='true'] .map-selected { display: grid; }
+.menu-settings .map-option[aria-pressed='true'] { box-shadow: 2px 3px 0 #11101a, inset 0 0 0 2px #657b66; }
+.menu-settings .map-field > .hint { min-height: 4.35em; }
+@media (max-width: 400px) {
+  .map-group { gap: 6px; }
+  .menu-settings .map-option .mode-title { font-size: 15px; padding-inline: 5px; }
+  .menu-settings .map-option .mode-cap { font-size: 9px; padding-inline: 5px; }
+  .map-selected { width: 16px; height: 16px; font-size: 12px; top: 3px; right: 3px; }
+}
+@media (max-width: 360px) {
+  .map-group { grid-template-columns: minmax(0, 1fr); }
+  .menu-settings .map-option { display: grid; grid-template-columns: 35% minmax(0, 1fr); grid-template-rows: 1fr 1fr; column-gap: 10px; padding: 0; }
+  .map-preview { grid-row: span 2; height: 64px; border-bottom: 0; border-right: 2px solid #18121f; }
+  .menu-settings .map-option .mode-title { align-self: end; font-size: 18px; padding: 8px 18px 0 0; }
+  .menu-settings .map-option .mode-cap { align-self: start; font-size: 10px; padding: 0 18px 8px 0; }
+}
 .weather-group { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
 .menu-settings .weather-option { padding: 10px 4px 9px; gap: 4px; }
 .menu-settings .weather-option svg { width: 24px; height: 24px; margin-bottom: 3px; }

@@ -21,9 +21,9 @@ export class AmbientBackdrop {
     }
   }
 
-  draw(seconds: number): void {
+  draw(seconds: number, color = '#191b35'): void {
     const { width, height } = this.canvas;
-    this.ctx.fillStyle = '#191b35';
+    this.ctx.fillStyle = color;
     this.ctx.fillRect(0, 0, width, height);
     this.grain.draw(this.ctx, width, height, seconds, this.grainPixelRatio);
   }
