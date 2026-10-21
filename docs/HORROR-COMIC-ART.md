@@ -35,6 +35,9 @@ coordinates. The hat and coat tails have expanded visual bounds; this never
 changes collision shapes. All thirteen parts use the existing closed-joint
 poses, individual rotations, size powers, and detached-part scales. No opaque
 skin undercoat or human silhouette mask is used behind skeleton bones.
+The masked forearms are centered on their elbow pivots and extend 2.5 pixels
+under the upper sleeves while keeping their wrist registration. Rounded elbow
+ends reuse each sleeve's cloth texture to conceal the atlas's open black cuffs.
 
 ## Animation and paper texture
 

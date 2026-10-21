@@ -71,4 +71,18 @@ function drawPart(ctx: CanvasRenderingContext2D, name: PartName, id: 1 | 2): voi
   const cellW = image.naturalWidth / 4, cellH = image.naturalHeight / 4;
   // Preserve hat brims and transparent rib gaps; no human silhouette/undercoat.
   ctx.drawImage(image, uv.col * cellW, uv.row * cellH, cellW, cellH, uv.x, uv.y, uv.w, uv.h);
+  if (id === 1 && (name === 'ArmLeft' || name === 'ArmRight')) {
+    // The atlas has an open sleeve mouth at the elbow. Cover it with cloth
+    // sampled farther up that same sleeve, so the forearm rotates under a
+    // rounded fabric end instead of appearing to hang off a black cut edge.
+    const side = name === 'ArmLeft' ? -1 : 1;
+    const x = side * 9;
+    const y = 0.3;
+    const radius = 3.3;
+    ctx.save();
+    ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.clip();
+    ctx.drawImage(image, uv.col * cellW, uv.row * cellH, cellW, cellH,
+      uv.x + side * 4, uv.y, uv.w, uv.h);
+    ctx.restore();
+  }
 }
