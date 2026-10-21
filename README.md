@@ -32,17 +32,21 @@ The two wall buttons use five side-view gravestone designs without crosses or
 pedestals. Each side gets a different random design per match, with no immediate
 repeat on that side. The carvings face inward and retain press, flash and active
 lifetime feedback.
-The start menu sits over a blurred view of the court. Both players' current
-controls stay visible beside match setup, with character portraits and small
-comic stickers. The guide updates immediately when keys are remapped.
+The fullscreen start menu places The Mask and its controls on the left and
+Bones and its controls on the right. Map, mode and weather choices sit between
+them, above a centered **Start match** button. Illustrated graveyard scenery,
+paper control cards and the game's own character cutouts match the court art.
+The start animation sends the players outward and reveals the arena; simulation
+and the serve clock begin only after the transition finishes. Reduced motion
+skips the animation. Compact screens keep Start visible while setup scrolls.
 
 On Graveyard, each match also picks one of three decorative weather presets: light rain with
 occasional distant lightning, drifting snowfall, or a starry autumn night with
 passing leaves. Random weather avoids consecutive repeats and stays fixed across
 rounds and pauses. Distant particles pass behind the scenery, middle particles
 behind the players, and a few larger flakes or leaves cross the foreground.
-The start menu's **Weather** selector previews and forces a preset for testing;
-**Random** restores automatic selection. This testing override lasts for the
+The start menu's **Weather** selector chooses the next match's weather;
+**Random** restores automatic selection. This override lasts for the
 current page session. Indoor maps replace outdoor weather with drifting ash in
 Crematorium and settling dust in Dead Circus; their weather selector is hidden.
 Weather and indoor particles freeze when paused, respect reduced motion,
@@ -170,7 +174,7 @@ migrate to the corresponding map. The divider is part of the map:
   Players and the ball can bend it into the opposing half; it returns when released.
 
 Each round releases impaled parts, straightens the rubber net and restores
-both players' full bodies. Wall-button hazards remain an independent setting.
+both players' full bodies. Wall-button hazards are always enabled.
 The sharp spike collects red bloodstains after a tear or a new impalement,
 with a brief spray and streaks running down the blade. Blood clears next round.
 
@@ -183,12 +187,10 @@ remaining body; serving uses another attached hand or the surviving body if both
 arms are gone. Lost parts cannot strike or count as ball touches. Injuries heal
 before every new round. Shield protects against impalement.
 
-The main menu shows both players' controls immediately. Choose **Remap keys**
-or **Edit keys**, then click a key to reassign that action for either player.
-Press Esc to cancel, or **Reset to defaults** to restore the original layout.
-Assignments are saved in this browser and reflected in the start-screen guide.
-P and Esc remain pause shortcuts; a key already assigned to another action
-cannot be assigned again.
+The main menu shows both players' fixed controls immediately: arrow keys and
+Space on the left, WASD and R on the right. Key remapping is removed, and legacy
+custom bindings are ignored. P and Esc remain pause shortcuts. **How to play**
+opens the complete instructions without leaving match setup.
 
 **Serve in the air.** The held ball hangs at your feet. Tap Space (or R for
 player 2) to serve with a fixed underhand flick. Jump first to clear the net.

@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" fill="none">
+  <defs>
+    <linearGradient id="fade" x1="6" y1="6" x2="66" y2="66" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#b9a57c" stop-opacity=".5"/>
+      <stop offset="1" stop-color="#b9a57c" stop-opacity="0"/>
+    </linearGradient>
+    <pattern id="tooth" width="6" height="6" patternUnits="userSpaceOnUse">
+      <path d="M0 3 3 0M3 6 6 3" stroke="#cbb68e" stroke-opacity=".1" stroke-width=".65"/>
+    </pattern>
+  </defs>
+  <path d="M0 0H91V4H35C15 4 4 15 4 35V91H0Z" fill="#10101b" fill-opacity=".55"/>
+  <path d="M4 76V34C4 14 14 4 34 4H76V9H35C18 9 9 18 9 35V76Z" fill="url(#tooth)"/>
+  <g stroke="url(#fade)" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M10 88V35C10 19 19 10 35 10H88" stroke-width="1.2"/>
+    <path d="M16 70V36C16 23 23 16 36 16H70" stroke-width=".65"/>
+    <path d="M22 51V37C22 27 27 22 37 22H51" stroke-width=".65" stroke-dasharray="1 4"/>
+    <path d="m23 23 7 2 2 7-7-2Z" fill="#b9a57c" fill-opacity=".07" stroke-width=".9"/>
+    <path d="M32 32c7-1 13 2 15 8-6 0-10-3-10-7M32 32c-1 7 2 13 8 15 0-6-3-10-7-10" stroke-width=".8"/>
+    <path d="m42 42 8 8M54 10h12M10 54v12" stroke-width=".65"/>
+    <circle cx="50" cy="50" r="1.5" stroke-width=".7"/>
+    <circle cx="75" cy="10" r="1.6" fill="#c6af7c" fill-opacity=".14" stroke-width=".65"/>
+    <circle cx="10" cy="75" r="1.6" fill="#c6af7c" fill-opacity=".14" stroke-width=".65"/>
+  </g>
+</svg>

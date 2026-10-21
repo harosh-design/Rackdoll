@@ -2,16 +2,15 @@ import { wirePhysicsPanel } from './debug/physicsPanel';
 import { loadPhysicsLibrary, type PresetStorage } from './debug/physicsPresets';
 import { Music } from './audio/music';
 import { Sfx } from './audio/sfx';
-import {
-  ACTIONS, PLAYERS, bindingOwner, defaultBindings, isAssignableCode, keyLabel,
-  loadBindings, normalizeCode, saveBindings, toKeyBindings,
-} from './input/bindings';
+import { defaultBindings, keyLabel, toKeyBindings } from './input/bindings';
 import { bindKeyboard } from './input/keyboard';
 import { Interpolator } from './render/interp';
+import { drawMenuCharacter } from './render/menuArt';
+import { animateMatchStart } from './ui/matchTransition';
 import { HUD_BAR, Renderer } from './render/renderer';
 import { WEATHER_OPTIONS, type WeatherChoice } from './render/weather';
 import { BEE_FLIGHT } from './sim/bees';
-import { BALL, BODYTYPE, FPS, ITERATIONS, OPTIONS } from './sim/constants';
+import { BALL, BODYTYPE, FPS, OPTIONS } from './sim/constants';
 import type { ControlAction } from './sim/control';
 import type { PointReason } from './sim/game';
 import type { PlayerId } from './sim/player';
@@ -19,17 +18,14 @@ import { bodyTypeOf } from './sim/types';
 import { GameWorld } from './sim/world';
 import { GAME_MAPS, MAP_STORAGE_KEY, gameMap, loadMapSelection } from './sim/maps';
 
-type Screen = 'menu' | 'playing' | 'paused' | 'over';
+type Screen = 'menu' | 'starting' | 'playing' | 'paused' | 'over';
 
 /** One simulation frame per 1/30 s of wall clock, exactly like the SWF. */
 const FRAME = 1 / FPS;
-/** §3 — the menu ran the world at 0.04, never used in play. */
-const MENU_TIME_STEP = 0.04;
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const canvas = $('game') as HTMLCanvasElement;
 const overlays = { menu: $('menu'), pause: $('pause'), over: $('over') };
-const tabs = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
 
 /** What each CPU level is like, for the menu. Follows BOT_LEVELS. */
 const LEVELS: Record<number, { name: string; blurb: string }> = {
@@ -60,11 +56,9 @@ const settings = {
   level: OPTIONS.currentLevel as number,
   /** Bot vs bot: the left CPU's level. */
   p1Level: OPTIONS.championLevel as number,
-  hazards: true,
-  bindings: loadBindings(),
+  bindings: defaultBindings(),
 };
 let screen: Screen = 'menu';
-let capturing: { player: PlayerId; action: ControlAction } | null = null;
 let gw = createWorld(true);
 let message: string | null = null;
 /** Whose point the banner announces: their jersey colours it. */
@@ -126,7 +120,7 @@ function createWorld(demo = false): GameWorld {
     botVsBot: !demo && settings.mode === 'cpu',
     level: settings.level,
     p1Level: settings.p1Level,
-    hazards: settings.hazards,
+    hazards: true,
     map: settings.map,
     bindings: toKeyBindings(settings.bindings),
     physics: physicsLibrary.current,
@@ -148,17 +142,32 @@ function* allBodies(w: GameWorld) {
 }
 
 function startMatch(): void {
+  if (screen === 'starting') return;
+  const fromMenu = screen === 'menu';
   sfx.unlock();
   if (MUSIC_ENABLED) {
     music.unlock();
-    music.pickNext();           // new game → a fresh, non-repeating random track
+    music.pickNext();
   }
-  applyMute(muted);            // keep mute state consistent when starting a fresh match
+  applyMute(muted);
+  physicsPanel.close();
   gw = createWorld();
   renderer.startMatch(gw, settings.weather);
   describeCourt();
   message = null;
-  setScreen('playing');
+  pendingHit = null;
+  acc = 0;
+  setScreen('starting');
+  $('match-status').textContent = 'Starting match.';
+  const transition = animateMatchStart(fromMenu);
+  void transition.finished.then(() => {
+    // No simulation or serve-clock time elapses behind the opening animation.
+    acc = 0;
+    last = performance.now();
+    setScreen(document.hidden ? 'paused' : 'playing');
+    transition.cancel();
+    $('match-status').textContent = document.hidden ? 'Match paused.' : 'Match ready.';
+  });
 }
 
 function describeCourt(): void {
@@ -258,30 +267,27 @@ function onMatchOver(winner: PlayerId): void {
 // ---------------------------------------------------------------------------
 
 function setScreen(s: Screen): void {
-  if (s !== 'menu') {
-    capturing = null;
-    renderBindings();
-  } else {
-    selectTab($('tab-play'));
-    $('menu').querySelector<HTMLElement>('.menu-workspace')!.scrollTop = 0;
-    $('menu').querySelector<HTMLElement>('.panels')!.scrollTop = 0;
-  }
+  const leavingMenu = s === 'starting' && screen === 'menu';
+  if (s === 'menu') $('menu').scrollTop = 0;
   screen = s;
   document.body.dataset.screen = s;
-  overlays.menu.classList.toggle('show', s === 'menu');
+  overlays.menu.classList.toggle('show', s === 'menu' || leavingMenu);
   overlays.pause.classList.toggle('show', s === 'paused');
   overlays.over.classList.toggle('show', s === 'over');
-  // Only the open overlay can take focus or be read out.
+  // Keep departing controls inert while the arena is being revealed.
   for (const [name, el] of Object.entries(overlays)) {
     el.inert = name !== (s === 'paused' ? 'pause' : s);
   }
+  $('stage').inert = s !== 'playing';
+  $('menu').setAttribute('aria-busy', String(s === 'starting'));
   gw.control.clear();
   if (s === 'playing') focusGame();
+  if (s === 'starting') (document.activeElement as HTMLElement | null)?.blur();
   const focusTarget = s === 'menu' ? $('play')
     : s === 'paused' ? $('resume')
     : s === 'over' ? ($('over-next').hidden ? $('over-again') : $('over-next'))
     : null;
-  focusTarget?.focus();
+  focusTarget?.focus({ preventScroll: true });
 }
 
 /** Keep keys going to the game, never to a button that was last clicked. */
@@ -299,21 +305,6 @@ const actionNames: Record<ControlAction, string> = {
   left: 'Move left', right: 'Move right', jump: 'Jump', down: 'Down',
   serve: 'Serve / flip',
 };
-
-function selectTab(tab: HTMLElement, focus = false): void {
-  for (const t of tabs) {
-    const on = t === tab;
-    t.setAttribute('aria-selected', String(on));
-    t.tabIndex = on ? 0 : -1;
-    $(t.getAttribute('aria-controls')!).hidden = !on;
-  }
-  if (capturing) {
-    capturing = null;
-    $('binding-status').textContent = 'Click a key to change it.';
-    renderBindings();
-  }
-  if (focus) tab.focus();
-}
 
 /** The level pickers, their names and blurbs, from the settings. */
 function syncLevels(): void {
@@ -344,19 +335,12 @@ function renderBindings(): void {
     key.title = `Player ${player}, ${actionNames[action]}: ${label}`;
     key.setAttribute('aria-label', key.title);
   });
-  document.querySelectorAll<HTMLButtonElement>('[data-binding-player]').forEach((button) => {
-    const player = Number(button.dataset.bindingPlayer) as PlayerId;
-    const action = button.dataset.bindingAction as ControlAction;
-    const waiting = capturing?.player === player && capturing.action === action;
-    const label = keyLabel(settings.bindings[player][action]);
-    button.textContent = waiting ? 'Press a key…' : label;
-    button.classList.toggle('capturing', waiting);
-    button.setAttribute('aria-label', `Player ${player}, ${actionNames[action]}: ${label}. Click to change.`);
-  });
-  document.querySelectorAll<HTMLElement>('[data-bind-card]').forEach((card) => {
-    const cpu = isCpuSide(Number(card.dataset.bindCard) as PlayerId);
+  document.querySelectorAll<HTMLElement>('[data-bind-card]').forEach(card => {
+    const player = Number(card.dataset.bindCard) as PlayerId;
+    const cpu = isCpuSide(player);
     card.classList.toggle('is-cpu', cpu);
-    card.querySelector<HTMLElement>('.badge')!.hidden = !cpu;
+    card.querySelector<HTMLElement>('.badge')!.textContent = cpu ? 'CPU'
+      : settings.mode === '1p' ? 'YOU' : `PLAYER ${player}`;
   });
   // Player 1's keys, wherever the help text names them.
   document.querySelectorAll<HTMLElement>('[data-keyof]').forEach((el) => {
@@ -364,100 +348,8 @@ function renderBindings(): void {
   });
 }
 
-function wireBindings(): void {
-  const grid = $('binding-grid');
-  const status = $('binding-status');
-  for (const player of PLAYERS) {
-    const card = document.createElement('div');
-    card.className = 'bind-card';
-    card.dataset.bindCard = String(player);
-    card.style.setProperty('--pc', `var(--p${player})`);
-    const head = document.createElement('div');
-    head.className = 'bind-head';
-    const dot = document.createElement('span');
-    dot.className = 'dot';
-    const heading = document.createElement('strong');
-    heading.textContent = `Player ${player}`;
-    const badge = document.createElement('span');
-    badge.className = 'badge';
-    badge.textContent = 'CPU';
-    badge.title = 'The CPU plays this side in the chosen mode.';
-    head.append(dot, heading, badge);
-    card.append(head);
-    for (const action of ACTIONS) {
-      const row = document.createElement('div');
-      row.className = 'bind-row';
-      const label = document.createElement('span');
-      label.textContent = actionNames[action];
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'keycap';
-      button.dataset.bindingPlayer = String(player);
-      button.dataset.bindingAction = action;
-      button.addEventListener('click', () => {
-        capturing = { player, action };
-        status.textContent = `Press a key for Player ${player} · ${actionNames[action]}. Esc cancels.`;
-        renderBindings();
-      });
-      button.addEventListener('focusout', () => {
-        if (capturing?.player === player && capturing.action === action) {
-          capturing = null;
-          status.textContent = 'Click a key to change it.';
-          renderBindings();
-        }
-      });
-      row.append(label, button);
-      card.append(row);
-    }
-    grid.append(card);
-  }
-  renderBindings();
-
-  $('reset-bindings').addEventListener('click', () => {
-    capturing = null;
-    settings.bindings = defaultBindings();
-    saveBindings(settings.bindings);
-    status.textContent = 'Default keys restored.';
-    renderBindings();
-  });
-
-  window.addEventListener('keydown', (e) => {
-    if (!capturing || e.repeat) return;
-    e.preventDefault();
-    e.stopImmediatePropagation();
-    if (e.code === 'Escape') {
-      capturing = null;
-      status.textContent = 'Key change cancelled.';
-      renderBindings();
-      return;
-    }
-    if (e.altKey || e.ctrlKey || e.metaKey || !isAssignableCode(e.code)) {
-      status.textContent = 'Choose a letter, number, arrow or common key. P and M are game shortcuts.';
-      return;
-    }
-    const code = normalizeCode(e.code);
-    const owner = bindingOwner(settings.bindings, code);
-    if (owner && (owner.player !== capturing.player || owner.action !== capturing.action)) {
-      status.textContent = `${keyLabel(code)} is used by Player ${owner.player} · ${actionNames[owner.action]}. Choose another key.`;
-      return;
-    }
-    settings.bindings[capturing.player][capturing.action] = code;
-    saveBindings(settings.bindings);
-    status.textContent = `Player ${capturing.player} · ${actionNames[capturing.action]}: ${keyLabel(code)}.`;
-    capturing = null;
-    renderBindings();
-  }, true);
-  window.addEventListener('blur', () => {
-    if (capturing) {
-      capturing = null;
-      status.textContent = '';
-      renderBindings();
-    }
-  });
-}
-
 function wireMenu(): void {
-  wireBindings();
+  renderBindings();
   const weatherIcons: Record<WeatherChoice, string> = {
     random: '<path d="M3 6h3c5 0 7 12 12 12h3m-4-4 4 4-4 4M3 18h3c2 0 3-2 4-4m4-4c1-2 2-4 4-4h3m-4-4 4 4-4 4"/>',
     rain: '<path d="M5 13a4 4 0 0 1 1-8 6 6 0 0 1 11-1 4.5 4.5 0 0 1 1 9M7 16l-1 3m6-3-1 3m6-3-1 3"/>',
@@ -503,6 +395,13 @@ function wireMenu(): void {
   }
   void renderer.ready.then(() => {
     for (const [index, preview] of mapPreviews.entries()) renderer.drawMapPreview(preview, GAME_MAPS[index].id);
+    const drawCharacters = () => {
+      for (const player of [gw.p1, gw.p2]) {
+        drawMenuCharacter(document.querySelector<HTMLCanvasElement>(`[data-menu-player="${player.id}"]`)!, player);
+      }
+    };
+    drawCharacters();
+    new ResizeObserver(drawCharacters).observe($('menu'));
   });
   const syncMapDescription = () => {
     const map = gameMap(settings.map);
@@ -516,6 +415,7 @@ function wireMenu(): void {
     const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>(`[data-${attr}]`));
     for (const b of buttons) {
       b.addEventListener('click', () => {
+        if (screen !== 'menu') return;
         for (const o of buttons) o.setAttribute('aria-pressed', String(o === b));
         apply(b.getAttribute(`data-${attr}`)!);
       });
@@ -525,8 +425,6 @@ function wireMenu(): void {
     settings.mode = v as Mode;
     $('level-field').hidden = v === '2p';
     $('p1-level-field').hidden = v !== 'cpu';
-    $('levels').classList.toggle('two', v === 'cpu');
-    $('level-label').textContent = v === 'cpu' ? 'Right CPU' : 'Opponent';
     renderBindings();
   });
   group('level', (v) => { settings.level = Number(v); syncLevels(); });
@@ -548,23 +446,14 @@ function wireMenu(): void {
   });
   syncLevels();
 
-  const hazards = $('hazards');
-  hazards.addEventListener('click', () => {
-    settings.hazards = !settings.hazards;
-    hazards.setAttribute('aria-checked', String(settings.hazards));
+  const help = $<HTMLDialogElement>('help-panel');
+  $('show-help').addEventListener('click', () => help.showModal());
+  $('close-help').addEventListener('click', () => help.close());
+  help.addEventListener('click', event => {
+    if (event.target !== help) return;
+    const rect = help.getBoundingClientRect();
+    if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) help.close();
   });
-
-  tabs.forEach((tab, i) => {
-    tab.addEventListener('click', () => selectTab(tab));
-    tab.addEventListener('keydown', (e) => {
-      const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
-      if (!step) return;
-      e.preventDefault();
-      selectTab(tabs[(i + step + tabs.length) % tabs.length], true);
-    });
-  });
-
-  $('show-key-editor').addEventListener('click', () => selectTab($('tab-controls'), true));
 
   $('play').addEventListener('click', startMatch);
   $('resume').addEventListener('click', () => setScreen('playing'));
@@ -573,6 +462,7 @@ function wireMenu(): void {
   $('over-again').addEventListener('click', startMatch);
   $('over-menu').addEventListener('click', () => { gw = createWorld(true); setScreen('menu'); });
   $('over-next').addEventListener('click', () => {
+    if (screen === 'starting') return;
     settings.level = Math.min(OPTIONS.maxLevel, settings.level + 1);
     syncLevels();
     startMatch();
@@ -608,7 +498,7 @@ function wireMenu(): void {
   });
 
   window.addEventListener('keydown', (e) => {
-    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    if (e.altKey || e.ctrlKey || e.metaKey || help.open || e.repeat) return;
     if (e.code === 'Escape' && physicsPanel.open) {
       e.preventDefault();
       physicsPanel.close();
@@ -691,26 +581,20 @@ function simFrame(): void {
   }
 }
 
-/** The menu backdrop: the physics at the menu time step, no rules running. */
-function menuFrame(): void {
-  gw.applyAir();
-  gw.centerObstacle.beforeStep([gw.p1, gw.p2]);
-  const iterations = gw.centerObstacle.id === 'rubber' ? 30 : ITERATIONS;
-  gw.world.step(MENU_TIME_STEP, iterations, iterations);
-  interp.commit(allBodies(gw));
-}
-
 function tick(now: number): void {
   const dt = Math.min(0.25, (now - last) / 1000);
   last = now;
 
-  const running = screen === 'playing' || screen === 'menu';
+  if (screen === 'menu') {
+    requestAnimationFrame(tick);
+    return;
+  }
+  const running = screen === 'playing';
   if (running) {
     acc += dt;
     let n = 0;
     while (acc >= FRAME && n < 5) {
-      if (screen === 'playing') simFrame();
-      else menuFrame();
+      simFrame();
       acc -= FRAME;
       n++;
     }
@@ -741,14 +625,7 @@ bindKeyboard(
 );
 
 wireMenu();
-$('debug-launch').addEventListener('click', () => {
-  gw.control.clear();
-  if (capturing) {
-    capturing = null;
-    $('binding-status').textContent = 'Key change cancelled.';
-    renderBindings();
-  }
-});
+$('debug-launch').addEventListener('click', () => gw.control.clear());
 const physicsPanel = wirePhysicsPanel(physicsLibrary, physicsStorage, settings => {
   gw.setPhysics(settings);
   gw.control.clear();

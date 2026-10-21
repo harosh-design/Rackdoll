@@ -124,6 +124,21 @@ The shared scenery clock stops while paused. Reduced motion fixes both the
 line-boil frame and the moving grain pass. The same texture provides a
 quiet matte surround outside the game canvas.
 
+On viewports at least 1000 CSS pixels wide, `AmbientBackdrop` adds a vignetted,
+crosshatched wall in the selected map's surround color. Spare side or letterbox
+margins reveal narrow gothic iron panels, engraved edge strokes, ring-and-diamond
+seals and tarnished brass rivets. Ornament fades in as each margin grows beyond
+72 pixels; compact layouts retain the plain paper surround. The static artwork
+is cached and rebuilt only after a resize or map color change, then composited
+under the existing grain. A fine brass rim and broad shadow separate the court
+from the decorative wall without changing its size or input area.
+
+The court frame has responsive rounded corners, from 16 to 28 CSS pixels.
+Four mirrored `corner-etching.svg` ornaments follow the inside of that frame:
+fine brass arcs, small diamond flourishes and faint diagonal engraving. They
+scale with the court, remain outside the central playing area and ignore pointer
+events. The frame clips the canvas and ornaments together at the rounded edge.
+
 ## Remaining game elements
 
 `comicStyle.ts` supplies shared cream, ochre, mint, plum and rust spot colors,
@@ -197,19 +212,31 @@ bone, iron-and-steam, and stitched-plum treatments. Menus, controls, instruction
 pause, results and debug controls use printed paper, ink borders, offset hard
 shadows, condensed titles and typewriter labels from `src/styles/horror.css`.
 The comic palette stays consistent in both system color schemes. Keyboard
-focus, custom bindings, settings persistence and every control remain available.
+focus, map persistence and the default player controls remain available.
 
-The start menu uses a translucent midnight shell over the actual court, with
-a 14-pixel backdrop blur and a lighter tint in place of the earlier opaque
-scrim. Tilted control cards, the existing player-head atlas cells, a bat,
-cloth fist, talisman and fire-skull stickers add the comic collage treatment
-without generating or loading another illustration set. Match setup stays
-alongside a persistent quick-controls guide on desktop; compact screens show
-the guide first, with Start outside the scrolling area. Both players' five
-bindings are visible on entry. `renderBindings` keeps these readouts and CPU
-badges synchronized with the selected mode and key editor. Returning to the
-menu resets scroll so the guide is visible again. The blur disappears during
-play, and grain remains fixed at 16%.
+The fullscreen start menu in `src/styles/menu.css` uses the generated
+`public/art/horror/menu-graveyard.webp` illustration behind a responsive live
+interface. Player 1 and its arrow/Space controls stay on the left; Player 2 and
+its WASD/R controls stay on the right. `menuArt.ts` poses the existing character
+atlases with closed joints, without changing the simulation or loading new
+character art. Map previews retain their actual scenery and divider. Map,
+mode and weather choices sit above a horizontally centered Start Match button.
+On narrow screens, the two players remain side by side, setup scrolls below
+them and Start stays fixed at the bottom. CPU levels belong to their respective
+sides. How to Play opens a keyboard-accessible dialog. Key remapping and the
+hazards toggle are removed; every match enables hazards and uses default keys.
+
+`matchTransition.ts` uses the Web Animations API to lift the title, move the
+player panels outward, fade the setup and reveal the arena in under a second.
+The `starting` screen freezes simulation and the serve clock, makes controls
+inert and prevents duplicate starts. Focus moves to the game only when the
+animation finishes. Restart and rematch use a shorter arena fade. Reduced
+motion skips these animations, and a hidden page finishes into pause. The
+hidden game canvas is not redrawn while the static fullscreen menu is open.
+
+The background was generated with built-in ImageGen from the approved menu
+concept. Its prompt is saved in `output/start-menu-concept/background-prompt.md`;
+responsive screenshots and browser verification live in `output/fullscreen-menu/`.
 
 ## Scope and validation
 
@@ -225,6 +252,6 @@ Run `npm run build` for TypeScript and production-build checks and `npm test`
 for the simulation and input regression suite. Visual checks should cover line
 boil, fixed sky/ground, grain, pause and reduced motion, jump-serve, size powers,
 detached limbs, all three maps and all nine prop loads. Check the start menu
-at desktop and mobile widths, including remapping, mode badges and start/pause
-transitions. Save any new screenshots or validation reports under the ignored
-`output/` directory.
+at desktop and mobile widths, including fixed keys, mode badges, CPU levels,
+keyboard start, reduced motion and start/pause transitions. Save any new
+screenshots or validation reports under the ignored `output/` directory.
