@@ -363,7 +363,7 @@ export class Player {
 
   /** Cut the hit part's branch away from the surviving rail-mounted body. */
   sever(name: PartName): boolean {
-    if (this.power === 'shield' || !this.isAttached(name) || this.bodies.length === 1) return false;
+    if (!this.isAttached(name) || this.bodies.length === 1) return false;
     if (this.diving) this.endFlip();
     this.releaseImpalement();
     const hit = this.part(name);
@@ -694,11 +694,10 @@ export class Player {
    * so the whole doll is thrown with nothing in it stretched; `jolt` is an
    * extra change to the part it landed on, so a leg is swept or the head
    * snaps back. Both in m/s. Steering is locked for `frames` so the throw
-   * carries (turn() would zero it); jump and swing stay free. The shield
-   * ignores it. Returns whether it landed.
+   * carries (turn() would zero it); jump and swing stay free.
+   * Returns whether it landed.
    */
   knock(dv: Vec2Value, frames: number, part?: Body, jolt?: Vec2Value): boolean {
-    if (this.power === 'shield') return false;
     for (const b of [...this.bodies, this.prismBody]) {
       const m = b.getMass();
       b.applyLinearImpulse(Vec2(dv.x * m, dv.y * m), b.getWorldCenter(), true);
@@ -717,7 +716,7 @@ export class Player {
   }
 
   stun(): void {
-    if (this.power !== 'shield') this.stunFrames = STUN.frames;
+    this.stunFrames = STUN.frames;
   }
 
   tickStun(): void {

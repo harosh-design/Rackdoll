@@ -548,7 +548,7 @@ export const EXECUTER = {
  */
 export const MAGNET = {
   /** Reach of the field, px from its centre to the doll's centre of mass. */
-  fieldPx: 240,
+  fieldPx: 168,
   /**
    * Sideways pull on the whole doll at point blank, m/s², fading linearly to
    * zero at the edge. Every part gets the same acceleration, so the field

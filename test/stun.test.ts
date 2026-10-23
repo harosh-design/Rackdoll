@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { ACTIONS, BODYTYPE, CHARGE, FLIP, STUN } from '../src/sim/constants';
 import { installContactListener, type ContactFlags } from '../src/sim/contacts';
 import type { PlayerId } from '../src/sim/player';
+import { POWERS } from '../src/sim/powerUps';
 import { hazardWorld, run, untilOpponentHit, world } from './helpers';
 
 describe('head-hit stun', () => {
@@ -73,27 +74,15 @@ describe('head-hit stun', () => {
     expect(defender.stunFrames).toBe(STUN.frames - 5);
   });
 
-  it('keeps the shield immune to both the kick and a direct head hit', () => {
+  it.each(POWERS)('collecting %s still allows a direct head hit to stun the player', (kind) => {
     const gw = hazardWorld({ hazards: false });
-    gw.p1.standPlayer(210, 256);
-    gw.p2.standPlayer(420, 256);
-    gw.powerUps.activate(2, 'shield', gw.frame);
-    gw.flip(gw.p1);
-    run(gw, FLIP.maxFrames);
-    expect(gw.p2.stunFrames).toBe(0);
-    expect(gw.opponentHitEffects[2].frame).toBe(-100);
-    gw.game.newRound();
-    // newRound holds the ball; release it before the direct swing.
-    const grip = gw.p1.holdingJoint ?? gw.p2.holdingJoint;
-    if (grip) gw.world.destroyJoint(grip);
-    gw.p1.forgetBallJoint();
-    gw.p2.forgetBallJoint();
-    gw.ball.ballOfPlayer = 0;
+    gw.powerUps.activate(2, kind, gw.frame);
     gw.flip(gw.p1);
     gw.flags.playerHeadHits!.push({ attackerId: 1, part: 'FootLeft' });
+    const hitFrame = gw.frame;
     gw.step();
-    expect(gw.p2.stunFrames).toBe(0);
-    expect(gw.opponentHitEffects[2].frame).toBe(-100);
+    expect(gw.p2.stunFrames).toBe(STUN.frames);
+    expect(gw.opponentHitEffects[2].frame).toBe(hitFrame);
   });
 
   it('freezes with pause, refreshes to three seconds, and clears on round/match reset', () => {

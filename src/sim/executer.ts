@@ -124,7 +124,7 @@ const unit = (x: number, y: number): Vec2 => {
  * - the spring uses gravity and redirects only on contact; other flyers hover;
  * - every blow it deals goes through Player.knock(): a shove shared between
  *   the rail-mounted head and the hips, which moves the doll without tearing
- *   it, and which the shield ignores.
+ *   it.
  */
 export class Executer {
   readonly body: Body;
@@ -440,7 +440,7 @@ export class Executer {
     const playerPart = this.target.activePart('Tors');
     if (this.phase === 'crawl') {
       if (--this.tongueCooldown > 0) return;
-      const choices = [this.target.power === 'shield' ? null : playerPart, ball]
+      const choices = [playerPart, ball]
         .filter((b): b is Body => b !== null && this.tongueCanReach(b));
       const mouth = this.tongueMouth();
       choices.sort((a, b) => Vec2.distance(mouth, a.getWorldCenter()) - Vec2.distance(mouth, b.getWorldCenter()));
@@ -458,7 +458,7 @@ export class Executer {
     }
     const caught = this.tongueTarget;
     const isPlayer = caught === playerPart;
-    if (!caught || (!isPlayer && caught !== ball) || (isPlayer && this.target.power === 'shield')) {
+    if (!caught || (!isPlayer && caught !== ball)) {
       this.releaseTongue();
       return;
     }
@@ -888,16 +888,7 @@ export class Executer {
         const hit = touching.find((b) => ud(b).part === this.aimPart)
           ?? touching.find((b) => GLUE_PARTS.has(ud(b).part!)) ?? touching[0];
         if (hit) {
-          if (this.target.power === 'shield') {
-            // The shield won't take glue: it splats off and tries again.
-            const c = this.body.getWorldCenter();
-            const p = hit.getWorldCenter();
-            const u = unit(c.x - p.x, c.y - p.y);
-            this.body.setLinearVelocity(Vec2(u.x * SLIME.peelSpeed, u.y * SLIME.peelSpeed));
-            this.setPhase('recover');
-          } else {
-            this.stick(hit);
-          }
+          this.stick(hit);
           return;
         }
         // Homing on its limb, bobbing across its path so it flaps in
@@ -942,10 +933,6 @@ export class Executer {
 
   /** While stuck: ride along, weigh the part down, keep its glue, reach for more. */
   private holdOn(dt: number): void {
-    if (this.target.power === 'shield') {
-      this.peel();
-      return;
-    }
     this.follow();
     const host = this.host!;
     host.applyLinearImpulse(Vec2(0, SLIME.weight * dt), host.getWorldPoint(this.hostAnchor), true);

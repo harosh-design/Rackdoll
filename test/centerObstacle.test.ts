@@ -1,8 +1,10 @@
-import { Vec2, type Body } from 'planck';
+import { Circle, Vec2, type Body } from 'planck';
 import { describe, expect, it } from 'vitest';
 import { AIR_HEATER, CENTER_OBSTACLES, ORIGINAL_PLAYER_HEIGHT_PX, SHARP_SPIKE, normalizeCenterObstacle } from '../src/sim/centerObstacle';
 import { NET_TOP_PX, NET_X_PX, PARTS, SPAWN_P1_PX, SPAWN_P2_PX, TIME_STEP, toM, toPx, type PartName } from '../src/sim/constants';
 import { KEYS } from '../src/sim/control';
+import { Executer } from '../src/sim/executer';
+import { EXECUTER_VARIANTS } from '../src/sim/executerVariants';
 import type { Player } from '../src/sim/player';
 import { ud } from '../src/sim/types';
 import type { GameWorld } from '../src/sim/world';
@@ -101,13 +103,9 @@ describe('sharp spike', () => {
     expect(gw.centerObstacle.bloodstains).toHaveLength(0);
   });
 
-  it('ignores shields and harmless contacts below the point', () => {
+  it('ignores harmless contacts below the point', () => {
     const gw = world({ centerObstacle: 'sharp' });
     const hand = gw.p1.part('FingerLeft');
-    gw.p1.power = 'shield';
-    hand.setTransform(Vec2(toM(NET_X_PX), toM(NET_TOP_PX - 10)), 0);
-    gw.centerObstacle.beforeStep([gw.p1]); gw.centerObstacle.afterStep([gw.p1]);
-    gw.p1.power = null;
     hand.setTransform(Vec2(toM(NET_X_PX), toM(NET_TOP_PX + 25)), 0);
     gw.centerObstacle.beforeStep([gw.p1]); gw.centerObstacle.afterStep([gw.p1]);
     expect(gw.centerObstacle.pins.size).toBe(0);
@@ -307,16 +305,82 @@ describe('air heater', () => {
     expect(airProbe(12, 40).body.getLinearVelocity().x).toBeGreaterThan(airProbe(30, 40).body.getLinearVelocity().x);
   });
 
-  it('leaves body parts attached and does not apply the air field to the ball', () => {
+  it('triples the previous side acceleration and makes lift exactly one third as strong', () => {
+    const gw = world({ map: 'crematorium', physics: { gravity: 0 } });
+    for (const mass of [0.1, 20]) {
+      for (const [dx, dy] of [[16, 40], [0, -16], [-16, 40]]) {
+        const body = gw.world.createBody({ type: 'dynamic', position: Vec2(toM(NET_X_PX + dx), toM(NET_TOP_PX + dy)) });
+        body.createFixture(Circle(toM(3)), { density: 1, isSensor: true });
+        body.setMassData({ mass, center: Vec2(0, 0), I: 1 });
+        gw.centerObstacle.beforeStep([gw.p1, gw.p2], true, undefined, 0.01);
+        gw.world.step(0.01);
+        const sideSpeed = 195 * 3 * (1 - 10 / AIR_HEATER.rangePx) * 0.01;
+        expect(body.getLinearVelocity().x).toBeCloseTo(dx === 0 ? 0 : Math.sign(dx) * sideSpeed, 6);
+        expect(body.getLinearVelocity().y).toBeCloseTo(dx === 0 ? -sideSpeed / 3 : 0, 6);
+        gw.world.destroyBody(body);
+      }
+    }
+    const diagonal = gw.centerObstacle.windAt(Vec2(toM(NET_X_PX + 20), toM(NET_TOP_PX - 20)));
+    expect(diagonal.x).toBeGreaterThan(0);
+    expect(diagonal.y / diagonal.x).toBeCloseTo(-1 / 3);
+  });
+
+  it('pushes the ball, detached limbs and unclassified new physical objects', () => {
     const gw = world({ centerObstacle: 'blower', physics: { gravity: 0 } });
     gw.serve(gw.p1);
-    gw.ball.body.setTransform(Vec2(toM(NET_X_PX + 20), toM(240)), 0);
+    gw.ball.body.setTransform(Vec2(toM(NET_X_PX + 24), toM(240)), 0);
     gw.ball.body.setLinearVelocity(Vec2(0, 0));
-    gw.p1.part('FingerLeft').setTransform(Vec2(toM(NET_X_PX), toM(NET_TOP_PX - 6)), 0);
+    const finger = gw.p1.part('FingerLeft');
+    gw.p1.sever('FingerLeft');
+    finger.setTransform(Vec2(toM(NET_X_PX - 20), toM(270)), 0);
+    finger.setLinearVelocity(Vec2(0, 0));
+    const item = gw.world.createBody({ type: 'dynamic', position: Vec2(toM(NET_X_PX + 18), toM(295)) });
+    item.createFixture(Circle(toM(3)), { density: 1 });
     gw.centerObstacle.beforeStep([gw.p1, gw.p2]);
-    gw.centerObstacle.afterStep([gw.p1, gw.p2]);
-    expect(gw.ball.velocity).toEqual(Vec2(0, 0));
-    expect(gw.p1.injured || gw.p2.injured).toBe(false);
+    gw.world.step(0.01);
+    expect(gw.ball.velocity.x).toBeGreaterThan(0);
+    expect(finger.getLinearVelocity().x).toBeLessThan(0);
+    expect(item.getLinearVelocity().x).toBeGreaterThan(0);
+  });
+
+  it.each(EXECUTER_VARIANTS)('pushes the $id executer, including sensors and kinematic bodies', variant => {
+    const gw = world({ map: 'crematorium', physics: { gravity: 0 } });
+    const origin = Vec2(toM(NET_X_PX + 28), toM(NET_TOP_PX + 40));
+    const executer = new Executer({ world: gw.world, timers: gw.timers, target: gw.p1, side: 1, variant, origin });
+    executer.body.setTransform(origin, 0);
+    executer.body.setLinearVelocity(Vec2(0, 0));
+    gw.centerObstacle.beforeStep([gw.p1, gw.p2], true, undefined, 0.01);
+    gw.world.step(0.01);
+    expect(executer.body.getLinearVelocity().x).toBeGreaterThan(0);
+    expect(executer.body.getPosition().x).toBeGreaterThan(origin.x);
+  });
+
+  it('has no wind outside play, beyond its reach or on the other maps', () => {
+    for (const map of ['graveyard', 'crematorium', 'dead-circus'] as const) {
+      const gw = world({ map, physics: { gravity: 0 } });
+      const body = gw.world.createBody({ type: 'dynamic', position: Vec2(toM(NET_X_PX + 20), toM(250)) });
+      body.createFixture(Circle(toM(2)), { density: 1, isSensor: true });
+      gw.centerObstacle.beforeStep([gw.p1, gw.p2], map !== 'crematorium');
+      gw.world.step(0.01);
+      expect(body.getLinearVelocity()).toEqual(Vec2(0, 0));
+      expect(gw.centerObstacle.windAt(Vec2(toM(NET_X_PX + 60), toM(250)), toM(2))).toEqual(Vec2(0, 0));
+    }
+  });
+
+  it.each([1, 2] as const)('cannot impale player %s even when deeply overlapping the former point', id => {
+    const gw = world({ map: 'crematorium' });
+    const player = id === 1 ? gw.p1 : gw.p2;
+    for (const def of PARTS) {
+      const body = player.part(def.name), original = body.getPosition().clone();
+      body.setTransform(Vec2(toM(NET_X_PX), toM(NET_TOP_PX - 10)), 0);
+      gw.centerObstacle.beforeStep([gw.p1, gw.p2], false);
+      gw.centerObstacle.afterStep([gw.p1, gw.p2]);
+      expect(gw.centerObstacle.blade.hits(player)).toEqual([]);
+      expect(gw.centerObstacle.pins.size).toBe(0);
+      expect(player.impaled || player.injured).toBe(false);
+      body.setTransform(original, 0);
+    }
+    expect(gw.centerObstacle.bloodstains).toHaveLength(0);
   });
 });
 

@@ -1,4 +1,4 @@
-import { BALL, BEES, VIEW, clamp01 } from './constants';
+import { BALL, BEES, VIEW, clamp01, toPx } from './constants';
 import type { PlayerId } from './player';
 import { POWERS, type PowerId, type PowerUps } from './powerUps';
 
@@ -26,8 +26,6 @@ export const BEE_FLIGHT: Record<PowerId, BeeFlight> = {
   tiny: { scale: 0.6, speed: 130, style: 'jitter', amp: 12, freq: 4 },
   feather: { scale: 1, speed: 85, style: 'bob', amp: 26, freq: 1.1 },
   speed: { scale: 1, speed: 210, style: 'bob', amp: 7, freq: 3 },
-  magnet: { scale: 1, speed: 115, style: 'bob', amp: 18, freq: 2.2 },
-  shield: { scale: 1, speed: 110, style: 'bob', amp: 18, freq: 2 },
 };
 
 export interface Bee {
@@ -41,7 +39,15 @@ export interface Bee {
   age: number;
   /** Its age a frame ago: the hit sweep and the renderer go from here to `age`. */
   prevAge: number;
+  /** Wind displacement in pixels, interpolated with the same frame as flight. */
+  drift: { x: number; y: number };
+  prevDrift: { x: number; y: number };
+  /** Residual wind velocity, px/s; flight drag damps it after leaving a jet. */
+  driftVelocity: { x: number; y: number };
 }
+
+/** Takes a pixel position and radius; returns the shared field's acceleration in m/s². */
+export type BeeWind = (point: { xPx: number; yPx: number }, radiusPx: number) => { x: number; y: number };
 
 export interface BeePop {
   kind: PowerId;
@@ -59,7 +65,7 @@ export const BEE_LANES = {
   right: (VIEW.stageW - VIEW.offsetX) / VIEW.scale + BEES.edgeMarginPx,
 } as const;
 
-/** The flight is a closed form of age, so it can be swept and interpolated. */
+/** Closed-form flight plus interpolated wind drift, shared by drawing and hit sweeps. */
 export function beePosition(bee: Bee, age = bee.age): { xPx: number; yPx: number } {
   const f = BEE_FLIGHT[bee.kind];
   const w = f.freq * age + bee.phase;
@@ -70,7 +76,11 @@ export function beePosition(bee: Bee, age = bee.age): { xPx: number; yPx: number
     case 'jitter': dy = f.amp * Math.sin(w) + 0.4 * f.amp * Math.sin(3.7 * w + 1); break;
     default: dy = f.amp * Math.sin(w) + 0.3 * f.amp * Math.sin(2.3 * w + 0.7);
   }
-  return { xPx: bee.startXPx + bee.dir * f.speed * age, yPx: bee.baseYPx + dy };
+  const alpha = bee.age === bee.prevAge ? 1 : clamp01((age - bee.prevAge) / (bee.age - bee.prevAge));
+  return {
+    xPx: bee.startXPx + bee.dir * f.speed * age + bee.prevDrift.x + (bee.drift.x - bee.prevDrift.x) * alpha,
+    yPx: bee.baseYPx + dy + bee.prevDrift.y + (bee.drift.y - bee.prevDrift.y) * alpha,
+  };
 }
 
 /**
@@ -102,7 +112,10 @@ export class Bees {
    * One frame, after the rules. `dt` is the frame's physics step, `ball` the
    * ball's centre, and `owner` whoever holds it or touched it last.
    */
-  update(dt: number, frame: number, inPlay: boolean, ball: { xPx: number; yPx: number }, owner: PlayerId | null): void {
+  update(
+    dt: number, frame: number, inPlay: boolean, ball: { xPx: number; yPx: number }, owner: PlayerId | null,
+    wind?: BeeWind,
+  ): void {
     while (this.pops.length > 0 && frame - this.pops[0].frame >= BEES.popFrames) this.pops.shift();
 
     if (inPlay && this.autoLaunch) {
@@ -116,10 +129,17 @@ export class Bees {
 
     for (let i = this.bees.length - 1; i >= 0; i--) {
       const bee = this.bees[i];
+      const acceleration = inPlay ? wind?.(beePosition(bee), beeRadiusPx(bee.kind)) : undefined;
       bee.prevAge = bee.age;
+      bee.prevDrift = { ...bee.drift };
       bee.age += dt;
+      const drag = Math.exp(-2 * dt);
+      bee.driftVelocity.x = bee.driftVelocity.x * drag + toPx(acceleration?.x ?? 0) * dt;
+      bee.driftVelocity.y = bee.driftVelocity.y * drag + toPx(acceleration?.y ?? 0) * dt;
+      bee.drift.x += bee.driftVelocity.x * dt;
+      bee.drift.y += bee.driftVelocity.y * dt;
       const { xPx } = beePosition(bee);
-      if (bee.dir === 1 ? xPx > BEE_LANES.right : xPx < BEE_LANES.left) this.bees.splice(i, 1);
+      if (xPx > BEE_LANES.right || xPx < BEE_LANES.left) this.bees.splice(i, 1);
     }
 
     let from = this.lastBall ?? ball;
@@ -150,6 +170,9 @@ export class Bees {
       phase: this.random() * Math.PI * 2,
       age: 0,
       prevAge: 0,
+      drift: { x: 0, y: 0 },
+      prevDrift: { x: 0, y: 0 },
+      driftVelocity: { x: 0, y: 0 },
     };
     this.bees.push(bee);
     this.launches += 1;
@@ -186,7 +209,7 @@ export class Bees {
     return (rx + s * dx) ** 2 + (ry + s * dy) ** 2 <= reach * reach;
   }
 
-  /** Every power once per run of seven, in a fresh order, never twice in a row. */
+  /** Every power once per shuffled set, never twice in a row. */
   private nextKind(): PowerId {
     if (this.order?.length) return this.order[this.cursor++ % this.order.length];
     if (this.upcoming.length === 0) {

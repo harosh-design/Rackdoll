@@ -1119,20 +1119,7 @@ describe('hazards (reworked §13)', () => {
     }
   });
 
-  it('the shield won’t take the slime’s glue, and a new round shakes it off', () => {
-    const gw = hazardWorld({ executerOrder: ['slime'] });
-    gw.powerUps.activate(2, 'shield', gw.frame);
-    fireAtButton(gw, 2);
-    const e = gw.executers[0];
-    let splats = 0;
-    for (let f = 0; f < 30 * 8; f++) {
-      const was = e.phase;
-      gw.step();
-      expect(e.phase).not.toBe('stuck');
-      if (was === 'fly' && e.phase === 'recover') splats++;
-    }
-    expect(splats).toBeGreaterThan(0);
-
+  it('a new round shakes off the slime and its glue', () => {
     const { gw: next, e: stuck } = stuckSlime(2);
     run(next, 60);
     next.game.newRound();

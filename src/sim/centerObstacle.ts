@@ -1,4 +1,4 @@
-import { Box, Polygon, RevoluteJoint, Vec2, type Body, type Vec2Value, type World } from 'planck';
+import { Box, DistanceProxy, Polygon, RevoluteJoint, Vec2, type Body, type Vec2Value, type World } from 'planck';
 import { BODYTYPE, COURT, FLOOR_TOP_PX, NET_SPIKE, NET_TOP_PX, NET_X_PX, PARTS, TIME_STEP, toM, toPx, type PartName } from './constants';
 import { NetSpike, type SpikeHit } from './netSpike';
 import type { Player } from './player';
@@ -6,7 +6,7 @@ import type { BodyUserData } from './types';
 
 export const CENTER_OBSTACLES = [
   { id: 'sharp', label: 'Sharp spike', caption: 'Impales and holds', description: 'A tapered spear impales body parts that sink onto its point. Hold jump to pull free; holding down or taking a blow drives them deeper. Struggle against a strong pull and a caught arm or leg tears off.' },
-  { id: 'blower', label: 'Air heater', caption: 'Blows players away', description: 'A thin heater pushes players away in every direction within 30% of their original height.' },
+  { id: 'blower', label: 'Blast fan', caption: 'Blows everything away', description: 'A blunt fan repels players, the ball, hazards and bats. Its upward draft is three times gentler than its side jets. It cannot impale.' },
   { id: 'rubber', label: 'Rubber net', caption: 'Bends under pressure', description: 'Lean on the flexible rubber net to bend it into your opponent’s half. It springs back when released.' },
 ] as const;
 export type CenterObstacleId = typeof CENTER_OBSTACLES[number]['id'];
@@ -16,7 +16,30 @@ export const normalizeCenterObstacle = (value: unknown): CenterObstacleId =>
 const partExtent = (part: typeof PARTS[number]): number => part.shape.kind === 'circle' ? part.shape.r : part.shape.hh;
 export const ORIGINAL_PLAYER_HEIGHT_PX = Math.max(...PARTS.map(part => part.dy + partExtent(part)))
   - Math.min(...PARTS.map(part => part.dy - partExtent(part)));
-export const AIR_HEATER = { halfWidthPx: 3, rangePx: ORIGINAL_PLAYER_HEIGHT_PX * 0.3, acceleration: 195 } as const;
+export const AIR_HEATER = {
+  halfWidthPx: 3, rangePx: ORIGINAL_PLAYER_HEIGHT_PX * 0.3,
+  acceleration: 585, upwardRatio: 1 / 3,
+} as const;
+
+/** Offset from the nearest point on the fan's vertical outlet, in metres. */
+function fanOffset(point: Vec2Value): Vec2 {
+  return Vec2(point.x - toM(NET_X_PX), point.y - Math.max(toM(NET_TOP_PX), Math.min(toM(FLOOR_TOP_PX), point.y)));
+}
+
+/** Actual shape support toward the fan, including rotated and detached parts. */
+function bodyWindRadius(body: Body, direction: Vec2Value): number {
+  const toward = body.getLocalVector(Vec2.neg(direction));
+  const center = body.getLocalCenter(), proxy = new DistanceProxy();
+  let radius = 0;
+  for (let fixture = body.getFixtureList(); fixture; fixture = fixture.getNext()) {
+    const shape = fixture.getShape();
+    for (let child = 0; child < shape.getChildCount(); child++) {
+      proxy.set(shape, child);
+      radius = Math.max(radius, Vec2.dot(Vec2.sub(proxy.getSupportVertex(toward), center), toward) + shape.getRadius());
+    }
+  }
+  return radius;
+}
 export const SHARP_SPIKE = {
   halfWidthPx: 6, topPx: NET_TOP_PX - NET_SPIKE.heightPx,
   /** A caught part can be driven this far down the shaft, px below the point. */
@@ -161,7 +184,8 @@ export class CenterObstacle {
     players: readonly Player[], active = true,
     steer?: (player: Player) => Vec2Value | null, dt: number = TIME_STEP,
   ): void {
-    this.blade.capture(players);
+    // The capped fan and the rubber divider never sample the spear's blade.
+    this.blade.capture(this.id === 'sharp' ? players : []);
     for (const stain of this.bloodstains) stain.age = Math.min(180, stain.age + 1);
     for (const pin of this.pins.values()) this.driveRider(pin, active ? steer?.(pin.player) ?? null : null, dt);
     // Blows count once, on the step after they land.
@@ -169,22 +193,27 @@ export class CenterObstacle {
     this.lastDt = dt;
     for (const joint of this.springs) joint.setMotorSpeed(Math.max(-2, Math.min(2, -2 * joint.getJointAngle())));
     if (this.id !== 'blower' || !active) return;
-    const range = toM(AIR_HEATER.rangePx);
-    for (const player of players) for (const part of PARTS) {
-      if (!player.isAttached(part.name)) continue;
-      const body = player.part(part.name);
+    for (let body = this.world.getBodyList(); body; body = body.getNext()) {
+      // Rails are invisible control machinery, not gameplay objects.
+      if (body.isStatic() || !body.getFixtureList() || players.some(player => body === player.prismBody)) continue;
       const point = body.getWorldCenter();
-      const nearest = Vec2(toM(NET_X_PX), Math.max(toM(NET_TOP_PX), Math.min(toM(FLOOR_TOP_PX), point.y)));
-      const delta = Vec2.sub(point, nearest);
-      const distance = delta.length();
-      const direction = distance > 0.0001 ? Vec2.mul(delta, 1 / distance) : Vec2(player.id === 1 ? -1 : 1, 0);
-      const local = body.getLocalVector(direction);
-      const radius = toM(player.sizeScale * (part.shape.kind === 'circle' ? part.shape.r
-        : part.shape.hw * Math.abs(local.x) + part.shape.hh * Math.abs(local.y)));
-      const clearance = Math.max(0, distance - toM(AIR_HEATER.halfWidthPx) - radius);
-      if (clearance >= range) continue;
-      body.applyForceToCenter(Vec2.mul(direction, body.getMass() * AIR_HEATER.acceleration * (1 - clearance / range)), true);
+      const direction = fanOffset(point);
+      if (direction.normalize() < 0.0001) direction.set(1, 0);
+      const acceleration = this.windAt(point, bodyWindRadius(body, direction));
+      if (acceleration.lengthSquared() === 0) continue;
+      if (body.isDynamic()) body.applyForceToCenter(Vec2.mul(acceleration, body.getMass()), true);
+      else body.setLinearVelocity(Vec2.add(body.getLinearVelocity(), Vec2.mul(acceleration, dt)));
     }
+  }
+
+  /** Shared by physical objects and flying familiars. Inputs are metres, output m/s². */
+  windAt(point: Vec2Value, radius = 0): Vec2 {
+    if (this.id !== 'blower') return Vec2(0, 0);
+    const direction = fanOffset(point), distance = direction.normalize();
+    if (distance < 0.0001) direction.set(1, 0);
+    const clearance = Math.max(0, distance - toM(AIR_HEATER.halfWidthPx) - radius);
+    const strength = AIR_HEATER.acceleration * Math.max(0, 1 - clearance / toM(AIR_HEATER.rangePx));
+    return Vec2(direction.x * strength, direction.y * strength * (direction.y < 0 ? AIR_HEATER.upwardRatio : 1));
   }
 
   /** Run after the solver: joints cannot be created or destroyed while it is locked. */

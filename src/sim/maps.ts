@@ -9,9 +9,9 @@ export const GAME_MAPS = [
     atmosphere: 'Moonlit sky', surround: '#191b35',
   },
   {
-    id: 'crematorium', label: 'Crematorium', obstacle: 'blower', obstacleLabel: 'Steam pipe',
+    id: 'crematorium', label: 'Crematorium', obstacle: 'blower', obstacleLabel: 'Blast fan',
     caption: 'Keep your distance',
-    description: 'Brick furnaces, iron pipes and sparse ash frame a quiet blue hall. The central steam pipe pushes nearby players away, while the ball flies freely.',
+    description: 'Brick furnaces and drifting ash frame a blunt blast fan. Strong side jets repel players, the ball, hazards and bats; the upward draft is three times gentler. No impalement.',
     atmosphere: 'Drifting ash', surround: '#20232b',
   },
   {

@@ -1,12 +1,12 @@
 import { POWER } from './constants';
 import type { Player, PlayerId } from './player';
 
-export const POWERS = ['giant', 'tiny', 'feather', 'speed', 'magnet', 'shield'] as const;
+export const POWERS = ['giant', 'tiny', 'feather', 'speed'] as const;
 export type PowerId = typeof POWERS[number];
 
 export const POWER_LABELS: Record<PowerId, string> = {
   giant: 'GIANT', tiny: 'TINY', feather: 'UPDRAFT',
-  speed: 'SPEED', magnet: 'MAGNET', shield: 'SHIELD',
+  speed: 'SPEED',
 };
 
 /** Body size per power; every other power plays at normal size. */
@@ -22,8 +22,8 @@ export interface ActivePower {
  * Match-owned, frame-based lifecycle for powers collected from bees.
  *
  * A power is only ever `player.power` plus a target size. Updraft's jump and
- * slow fall, speed, shield and magnet all read `player.power` live, so swapping one
- * power for another leaves nothing behind to stack.
+ * slow fall and Speed's movement boost read `player.power` live, so swapping
+ * one power for another leaves nothing behind to stack.
  */
 export class PowerUps {
   readonly active: Record<PlayerId, ActivePower | null> = { 1: null, 2: null };

@@ -1,6 +1,6 @@
 import { Vec2 } from 'planck';
 import { describe, expect, it } from 'vitest';
-import { BEES, FEATHER, FPS, VIEW, toM, toPx } from '../src/sim/constants';
+import { BALL, BEES, FEATHER, FPS, NET_TOP_PX, NET_X_PX, VIEW, toM, toPx } from '../src/sim/constants';
 import { BEE_FLIGHT, BEE_LANES, beePosition, beeRadiusPx, type Bee } from '../src/sim/bees';
 import { POWERS, type PowerId } from '../src/sim/powerUps';
 import type { GameWorld } from '../src/sim/world';
@@ -30,6 +30,72 @@ function freeBallAt(gw: GameWorld, xPx: number, yPx: number): void {
 
 const screenLeft = -VIEW.offsetX / VIEW.scale;
 const screenRight = (VIEW.stageW - VIEW.offsetX) / VIEW.scale;
+
+/** Put a freshly launched bat at a precise field sample, preserving its ordinary flight. */
+function batAt(gw: GameWorld, x: number, y: number): Bee {
+  const bee = gw.bees.spawn('speed', 1, y);
+  Object.assign(bee, { startXPx: x, phase: 0, baseYPx: y - BEE_FLIGHT.speed.amp * 0.3 * Math.sin(0.7) });
+  return bee;
+}
+
+describe('Crematorium bat airflow', () => {
+  it('uses the same outward field as physical objects and interpolates the resulting displacement', () => {
+    const gw = playWorld({ map: 'crematorium', physics: { gravity: 0 } });
+    const bee = batAt(gw, NET_X_PX + 20, NET_TOP_PX + 30);
+    const before = beePosition(bee), dt = gw.game.timeStep;
+    const wind = gw.centerObstacle.windAt(Vec2(toM(before.xPx), toM(before.yPx)), toM(beeRadiusPx(bee.kind)));
+    gw.step();
+    expect(bee.drift.x).toBeCloseTo(toPx(wind.x) * dt * dt);
+    expect(bee.drift.y).toBe(0);
+    expect(beePosition(bee, bee.prevAge)).toEqual(before);
+    const half = beePosition(bee, (bee.prevAge + bee.age) / 2);
+    expect(half.xPx).toBeCloseTo(before.xPx + BEE_FLIGHT.speed.speed * dt / 2 + bee.drift.x / 2);
+    const frozen = { ...beePosition(bee) };
+    gw.paused = true;
+    run(gw, 10);
+    expect(beePosition(bee)).toEqual(frozen);
+  });
+
+  it('lifts bats with one third of the side acceleration and retains smooth drift after leaving the fan', () => {
+    const side = playWorld({ map: 'crematorium' }), up = playWorld({ map: 'crematorium' });
+    const sideways = batAt(side, NET_X_PX + 25, NET_TOP_PX + 30);
+    const lifted = batAt(up, NET_X_PX, NET_TOP_PX - 25);
+    side.step(); up.step();
+    expect(lifted.driftVelocity.y).toBeCloseTo(-sideways.driftVelocity.x / 3);
+    expect(lifted.drift.x).toBe(0);
+    const velocity = sideways.driftVelocity.x, displacement = sideways.drift.x;
+    Object.assign(sideways, { startXPx: NET_X_PX + 200 });
+    side.step();
+    expect(sideways.drift.x).toBeGreaterThan(displacement);
+    expect(sideways.driftVelocity.x).toBeGreaterThan(0);
+    expect(sideways.driftVelocity.x).toBeLessThan(velocity);
+  });
+
+  it('sweeps the wind-displaced flight when collecting a power', () => {
+    const gw = playWorld({ map: 'crematorium' });
+    const bee = batAt(gw, NET_X_PX + 20, NET_TOP_PX + 30);
+    const dt = gw.game.timeStep, at = beePosition(bee);
+    const wind = gw.centerObstacle.windAt(Vec2(toM(at.xPx), toM(at.yPx)), toM(beeRadiusPx(bee.kind)));
+    // The actual flight crosses the ball; the ordinary unblown flight misses it.
+    const reach = BALL.radiusPx + beeRadiusPx(bee.kind);
+    const ball = { xPx: at.xPx + BEE_FLIGHT.speed.speed * dt + toPx(wind.x) * dt * dt + reach - 4, yPx: at.yPx };
+    expect(ball.xPx - at.xPx - BEE_FLIGHT.speed.speed * dt).toBeGreaterThan(reach);
+    gw.bees.update(dt, gw.frame, true, ball, 1,
+      (point, radius) => gw.centerObstacle.windAt(Vec2(toM(point.xPx), toM(point.yPx)), toM(radius)));
+    expect(gw.bees.bees).toHaveLength(0);
+    expect(gw.powerUps.active[1]?.kind).toBe('speed');
+  });
+
+  it('leaves bat flight unchanged on other maps and adds no wind during a goal replay', () => {
+    for (const map of ['graveyard', 'dead-circus', 'crematorium'] as const) {
+      const gw = playWorld({ map });
+      const bee = batAt(gw, NET_X_PX + 20, NET_TOP_PX + 30);
+      if (map === 'crematorium') gw.game.phase = 'goal';
+      gw.step();
+      expect(bee.drift).toEqual({ x: 0, y: 0 });
+    }
+  });
+});
 
 describe('bee gifts', () => {
   it('fly in from beyond either screen edge every 12–20 s of play and leave by the other', () => {
@@ -83,6 +149,7 @@ describe('bee gifts', () => {
     const bees = gw.bees as unknown as { nextKind(): PowerId };
     const count = POWERS.length;
     for (let i = 0; i < count * 10; i++) kinds.push(bees.nextKind());
+    expect(new Set(kinds)).toEqual(new Set(['giant', 'tiny', 'feather', 'speed']));
     for (let batch = 0; batch < 10; batch++) {
       expect(new Set(kinds.slice(batch * count, (batch + 1) * count))).toEqual(new Set(POWERS));
     }
@@ -133,7 +200,7 @@ describe('bee gifts', () => {
     expect(held.powerUps.active[1]?.kind).toBe('tiny');
 
     const nobody = playWorld();
-    const stray = nobody.bees.spawn('shield', -1, 60);
+    const stray = nobody.bees.spawn('feather', -1, 60);
     run(nobody, 60);
     const at = beePosition(stray);
     freeBallAt(nobody, at.xPx, at.yPx);
@@ -168,7 +235,7 @@ describe('bee gifts', () => {
 
   it('a bee that only nears the ball is left alone, and none are hit outside play', () => {
     const near = playWorld();
-    const bee = near.bees.spawn('magnet', 1, 60);
+    const bee = near.bees.spawn('feather', 1, 60);
     run(near, 60);
     const at = beePosition(bee);
     const clear = BEES.radiusPx + 15 + 25;

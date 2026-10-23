@@ -106,7 +106,7 @@ describe('bee powers without floor gifts', () => {
       return { bodies, fixtures, joints };
     };
     const before = counts();
-    const sequence: PowerId[] = ['giant', 'feather', 'tiny', 'giant', 'feather', 'shield', 'tiny', 'speed', 'magnet'];
+    const sequence: PowerId[] = ['giant', 'feather', 'tiny', 'giant', 'feather', 'speed', 'tiny', 'speed', 'feather'];
     for (const kind of sequence) {
       gw.powerUps.activate(1, kind, gw.frame);
       // Swap again before the resize has finished, as well as after.
@@ -116,7 +116,7 @@ describe('bee powers without floor gifts', () => {
       expect(gw.p1.targetScale).toBe(kind === 'giant' ? 1.5 : kind === 'tiny' ? 1 / 1.5 : 1);
       expect(counts()).toEqual(before);
     }
-    // The last swap (tiny → speed → magnet) must have settled back to full size.
+    // The last swap (tiny → speed → Updraft) must have settled back to full size.
     expect(gw.p1.sizeScale).toBe(1);
     expect(gw.p1.bodies.map((b) => b.getMass())).toEqual(baseMass.map((m) => expect.closeTo(m, 9)));
 
@@ -185,11 +185,11 @@ describe('bee powers without floor gifts', () => {
     }
   });
 
-  it('shield blocks a hazard’s knock', () => {
+  it.each(POWERS)('collecting %s still allows a hazard to knock the player back', (kind) => {
     const powered = world();
-    powered.powerUps.activate(2, 'shield', 0);
-    expect(powered.p2.knock(Vec2(2, -1), 10)).toBe(false);
-    expect(powered.p2.recoilFrames).toBe(0);
+    powered.powerUps.activate(2, kind, 0);
+    expect(powered.p2.knock(Vec2(2, -1), 10)).toBe(true);
+    expect(powered.p2.recoilFrames).toBe(10);
   });
 
   it.each([1, 2] as const)('Updraft boosts player %i\'s jump only until it is replaced or expires', (owner) => {
@@ -222,7 +222,7 @@ describe('bee powers without floor gifts', () => {
     expect(jumpLift('expired')).toBeCloseTo(normal, 6);
   });
 
-  it('magnet hands pull a nearby free ball', () => {
+  it.each(POWERS)('collecting %s does not pull a nearby free ball toward the hands', (kind) => {
     const gw = world();
     const grip = gw.p1.holdingJoint!;
     gw.world.destroyJoint(grip);
@@ -230,9 +230,9 @@ describe('bee powers without floor gifts', () => {
     gw.ball.ballOfPlayer = 0;
     gw.ball.body.setTransform(Vec2(toM(215), toM(280)), 0);
     gw.ball.body.setLinearVelocity(Vec2(0, 0));
-    gw.powerUps.activate(1, 'magnet', gw.frame);
+    gw.powerUps.activate(1, kind, gw.frame);
     gw.step();
-    expect(gw.ball.velocity.x).toBeLessThan(0);
+    expect(gw.ball.velocity.x).toBeCloseTo(0, 9);
   });
 
   it('a shrunken doll stands on the floor and its jump peaks as high as a full-size one', () => {

@@ -2,6 +2,7 @@ import { Vec2, type Body } from 'planck';
 import { describe, expect, it } from 'vitest';
 import { BODYTYPE, NET_SPIKE, NET_TOP_PX, NET_X_PX, PARTS, SPAWN_P1_PX, toM } from '../src/sim/constants';
 import { NetSpike } from '../src/sim/netSpike';
+import { POWERS } from '../src/sim/powerUps';
 import { ud } from '../src/sim/types';
 import { closedPoses } from '../src/render/dollPose';
 import { Interpolator } from '../src/render/interp';
@@ -106,15 +107,12 @@ describe('net blade collision', () => {
     expect(blade.hits(gw.p1)).toEqual([]);
   });
 
-  it('respects shield protection and ignores detached parts', () => {
+  it.each(POWERS)('impales a player with %s active and ignores detached parts', (kind) => {
     const gw = world();
     const blade = new NetSpike();
     gw.p1.part('FingerLeft').setTransform(impaledHandPosition, 0);
-    gw.p1.power = 'shield';
+    gw.powerUps.activate(1, kind, gw.frame);
     blade.capture([gw.p1]);
-    expect(blade.hits(gw.p1)).toEqual([]);
-    expect(gw.p1.sever('FingerLeft')).toBe(false);
-    gw.p1.power = null;
     expect(blade.hits(gw.p1)).toContain('FingerLeft');
     expect(gw.p1.sever('FingerLeft')).toBe(true);
     expect(blade.hits(gw.p1)).toEqual([]);

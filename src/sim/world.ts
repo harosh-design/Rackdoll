@@ -361,10 +361,12 @@ export class GameWorld {
     this.game.update();
     this.updateBallTint();
     this.powerUps.tick(this.frame);
-    this.applyMagnetPower();
     // A ball meeting a bee gives its power to whoever holds it or touched it last.
     this.bees.update(dt, this.frame, this.game.phase === 'play',
-      { xPx: toPx(this.ball.position.x), yPx: toPx(this.ball.position.y) }, this.game.ballOwner);
+      { xPx: toPx(this.ball.position.x), yPx: toPx(this.ball.position.y) }, this.game.ballOwner,
+      this.centerObstacle.id === 'blower'
+        ? (point, radius) => this.centerObstacle.windAt(Vec2(toM(point.xPx), toM(point.yPx)), toM(radius))
+        : undefined);
 
     // 5. AI, on every CPU side.
     for (const id of [1, 2] as const) {
@@ -587,7 +589,6 @@ export class GameWorld {
 
   private applyOpponentHit(attackerId: PlayerId, power: number, strength: number, headHit: boolean): void {
     const defender = attackerId === 1 ? this.p2 : this.p1;
-    if (defender.power === 'shield') return;
     const sign = attackerId === 1 ? 1 : -1;
     const impulse = Vec2(sign * SWING.opponentImpulseX * strength, SWING.opponentImpulseY * strength);
     defender.head.applyLinearImpulse(impulse, defender.head.getWorldCenter(), true);
@@ -630,24 +631,6 @@ export class GameWorld {
   get featherSide(): PlayerId | null {
     if (this.ball.body.getGravityScale() === 1) return null;
     return this.ball.position.x < LANDING_CENTRE_M ? 1 : 2;
-  }
-
-  /** The magnet pulls a free ball toward the player's hands within 140 px. */
-  private applyMagnetPower(): void {
-    if (this.game.phase !== 'play' || this.ball.held || this.ball.ballOfPlayer !== 0) return;
-    const radius = toM(140);
-    for (const player of [this.p1, this.p2]) {
-      if (player.power !== 'magnet') continue;
-      const ballPos = this.ball.position;
-      const left = player.activePart('FingerLeft').getWorldCenter();
-      const right = player.activePart('FingerRight').getWorldCenter();
-      const target = Vec2.distance(left, ballPos) < Vec2.distance(right, ballPos) ? left : right;
-      const delta = Vec2.sub(target, ballPos);
-      const distance = delta.length();
-      if (distance < 0.01 || distance >= radius) continue;
-      const strength = 0.028 * (1 - distance / radius) / distance;
-      this.ball.body.applyLinearImpulse(Vec2.mul(delta, strength), ballPos, true);
-    }
   }
 
   /**

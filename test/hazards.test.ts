@@ -35,7 +35,6 @@ describe('fire skull', () => {
       const gw = hazardWorld({ executerOrder: ['comet'] });
       fireAtButton(gw, 1);
       const e = gw.executers[0];
-      if (miss) gw.p1.power = 'shield';
       let sawDash = false;
       for (let f = 0; f < 180 && e.phase !== 'loop'; f++) {
         gw.step();
@@ -287,20 +286,23 @@ describe('wall chameleon', () => {
 
   it('ignores held and out-of-play balls and freezes its descent and tongue while paused', () => {
     const { gw, e, player } = setup(1, -300);
-    player.power = 'shield';
     player.takeBall(gw.ball.body);
     gw.ball.ballOfPlayer = player.id;
     gw.game.phase = 'play';
-    run(gw, 150);
-    expect(e.hits).toBe(0);
+    for (let f = 0; f < 150; f++) {
+      run(gw, 1);
+      expect(e.tongueTarget).not.toBe(gw.ball.body);
+    }
     gw.world.destroyJoint(player.holdingJoint!);
     player.forgetBallJoint();
     gw.ball.ballOfPlayer = 0;
     gw.game.phase = 'goal';
     const p = e.body.getPosition();
     gw.ball.body.setTransform(Vec2(p.x + toM(70), p.y), 0);
-    run(gw, 100);
-    expect(e.hits).toBe(0);
+    for (let f = 0; f < 100; f++) {
+      run(gw, 1);
+      expect(e.tongueTarget).not.toBe(gw.ball.body);
+    }
     const age = e.age;
     const position = e.body.getPosition().clone();
     gw.paused = true;
@@ -323,7 +325,8 @@ describe('wall chameleon', () => {
     untilPhase(e, 'tongue-retract', ball);
     expect(e.hits).toBe(0);
     expect(e.tongueTarget).toBeNull();
-    gw.p1.power = 'shield';
+    // Keep the player across the net as well, so neither target is eligible.
+    gw.p1.standPlayer(500, 256);
     ball.setTransform(Vec2(toM(330), p.y), 0);
     for (let f = 0; f < 200; f++) e.update(TIME_STEP, ball);
     expect(e.phase).toBe('crawl');
@@ -331,17 +334,8 @@ describe('wall chameleon', () => {
     expect(e.hits).toBe(0);
   });
 
-  it('respects shields, lets go before a round reset, and a swing interrupts the tongue', () => {
-    const { gw, e, player } = setup();
-    player.power = 'shield';
-    for (let f = 0; f < 150; f++) e.update(TIME_STEP);
-    expect(e.hits).toBe(0);
-    player.power = null;
-    untilPhase(e, 'tongue-pull');
-    player.power = 'shield';
-    e.update(TIME_STEP);
-    expect(e.tongueTarget).toBeNull();
-    player.power = null;
+  it('lets go before a round reset, and a swing interrupts the tongue', () => {
+    const { gw, e } = setup();
     untilPhase(e, 'tongue-pull');
     const y = e.body.getPosition().y;
     e.hitByPlayer(Vec2(100, -100));

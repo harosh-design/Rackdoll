@@ -26,7 +26,6 @@ export class NetSpike {
 
   /** The spike catches parts only on deep insertion. */
   impacts(player: Player): SpikeHit[] {
-    if (player.power === 'shield') return [];
     const hits: SpikeHit[] = [];
     for (const def of PARTS) {
       if (!player.isAttached(def.name)) continue;

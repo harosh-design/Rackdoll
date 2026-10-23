@@ -167,9 +167,15 @@ migrate to the corresponding map. The divider is part of the map:
   joining the separated body parts. Hinges next to the caught part become damped
   springs, with a rope limiting each gap to 48 world pixels at normal size.
   The cutouts follow the actual pinned poses; the next round restores the hinges.
-- **Crematorium — Steam pipe** pushes players away from its column in every direction within
+- **Crematorium — Blast fan** repels every movable gameplay object from its column within
   30% of the original player's height (32.7 world pixels). The range stays fixed
-  through size powers. Air forces depend on body mass and distance; the ball is unaffected.
+  through size powers. Side jets accelerate nearby objects at up to 585 m/s², three times
+  the previous strength; upward acceleration is one third as strong (up to 195 m/s²).
+  The field fades with surface clearance and applies equally per unit mass to players,
+  the ball, detached limbs and executers, including moving sensors. Flying bat familiars
+  sample the same field, with damped drift included in rendering and pickup sweeps.
+  The capped divider cannot impale. Fast lateral streaks, diagonal wisps and slower,
+  thinner upward trails show the outlets and their relative strengths.
 - **Dead Circus — Stitched pole** has six physical segments connected by spring-driven hinges.
   Players and the ball can bend it into the opposing half; it returns when released.
 
@@ -185,7 +191,7 @@ even during a fast crossing. Torn-off pieces fall and collide
 with the court independently. You can keep moving, jumping and serving with the
 remaining body; serving uses another attached hand or the surviving body if both
 arms are gone. Lost parts cannot strike or count as ball touches. Injuries heal
-before every new round. Shield protects against impalement.
+before every new round.
 
 The main menu shows editable controls directly on both player cards. Defaults
 are arrow keys and Space on the left, WASD and R on the right. Click any key,
@@ -216,8 +222,8 @@ where the flip took off and knocks an opponent back, with force set by the
 charge. A kick at head height or a leg meeting the head stuns them for three
 seconds: movement, jumping, crouching, serving and the tuck work at 20%
 strength, and charging is five times slower. Stars and a draining bar above
-the head show the stun. Body hits only knock back; a shield blocks both
-knockback and stun. Pausing freezes the stun, and a new round clears it.
+the head show the stun. Body hits only knock back. Pausing freezes the stun,
+and a new round clears it.
 Nearly simultaneous flips by the net trap the ball briefly before the
 stronger side sends it across.
 
@@ -261,9 +267,8 @@ to each world independently and do not modify the reference constants.
 Powers come from talismans carried by bats.
 Hitting a talisman with the ball grants its ability for 30 seconds: 1.5× body size,
 ⅔ body size, Updraft (1.5× jump height and a free ball
-over your half falling at 40% gravity), faster movement, a nearby-ball
-magnet, or protection against knockback from the opponent and the hazards. The player then returns to normal. The HUD shows the ability and its
-remaining time.
+over your half falling at 40% gravity), or faster movement. The player then
+returns to normal. The HUD shows the ability and its remaining time.
 
 Updraft combines the higher jump and slower ball in a single power. Its slow
 fall applies only over the half belonging to the player who collected it,
@@ -288,21 +293,19 @@ grounded checks scale with the doll as well.
 ## Bat familiars
 
 Power talismans fly in from either screen edge every 12–20 seconds, with at most
-two active. They carry one of six abilities. Hit the talisman with a ball you
+two active. They carry one of four abilities. Hit the talisman with a ball you
 last touched to collect its 30-second power. A new pickup replaces the current
 ability. The ball continues its flight. During goal replays the delivery slows
 with the simulation.
 
 Talisman glyphs identify the power: plus for Giant, minus for Tiny, a wave for
-Updraft, chevrons for Speed, an arch for Magnet,
-and a diamond for Shield. The short label beneath each talisman names the effect.
+Updraft, and chevrons for Speed. The short label beneath each talisman names the effect.
 Giant and Tiny deliveries retain their different sizes and flight styles.
-Magnet and Shield talismans float on their own, without a bat or suspension cords.
 
 The collectible hit sweep and trajectories still use the legacy `Bees`
 simulation API. The renderer centers each power seal on that hit region and
-adds an inked bat with hinged wings for Giant, Tiny, Updraft, and Speed. This preserves deterministic
-pickup behavior and the existing physics tests.
+adds an inked bat with hinged wings for Giant, Tiny, Updraft, and Speed. This
+preserves deterministic pickup behavior and the existing physics tests.
 
 ## Fidelity notes
 
@@ -376,7 +379,7 @@ changes that on purpose:
   shuffles a fresh order. A flipping player's legs knock flying hazards
   away and interrupt any hazard's attack.
 - **Magnet.** The slowest hunter (~1.4 m/s), with a strong field out to
-  240 px. A mint dashed circle marks that exact radius, with a faint field tint
+  168 px. A mint dashed circle marks that exact radius, with a faint field tint
   and inward-moving waves behind the players and ball. The field dims while
   emerging or knocked back; reduced-motion mode keeps the boundary and tint
   without the waves. Its player is dragged toward it — the same sideways acceleration on
@@ -424,8 +427,7 @@ changes that on purpose:
     the slime grabs again a second later: a doll hopping every 1.3 s still
     spends about half its slimed time glued.
   - *Getting it off:* flip, and the spin throws it away and frees everything
-    it glued. The shield won't take its
-    glue, and a new round shakes it off, since re-standing the doll would
+    it glued. A new round also shakes it off, since re-standing the doll would
     yank glued parts back together across the court.
 - **Chameleon.** Wears the approved moss-green fern-and-lichen skin, with a
   curled tail and golden eye. It emerges from a gravestone over 0.8 s and crawls
@@ -438,13 +440,13 @@ changes that on purpose:
   dodge the shot or break free by leaving reach. The tongue pulls the whole
   player toward the mouth at 6.4 m/s² and a free ball at 12 m/s², twice its
   previous strength. Upward acceleration is capped at 25% of gravity for
-  the player and 45% for the ball, so neither can be held aloft. Shields block
-  player grabs, a flip interrupts the tongue, and a round reset releases it.
+  the player and 45% for the ball, so neither can be held aloft. A flip
+  interrupts the tongue, and a round reset releases it.
   Its body remains a kinematic sensor, so it cannot pin a doll against the wall.
 - **Knocks.** Every blow is a change of velocity given to every part of the
   doll alike, plus a jolt to the part struck, and locks steering for a few
   frames so it carries. Shoving only the head and hips, as the opponent's
-  flip does, tore the doll at hazard strength. The shield ignores them all.
+  flip does, tore the doll at hazard strength.
 - **No more tearing through the doll.** Measured on scripted play (standing,
   pacing, hopping, crouching), the spec's executer stretched the ragdoll's
   joints 55–134 px (p99), with tears lasting up to 9 s. That was the break-apart

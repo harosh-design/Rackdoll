@@ -8,10 +8,10 @@ import { COMIC, COMIC_TEXT, burstPath } from './comicStyle';
 
 const POWER_INK: Record<PowerId, string> = {
   giant: COMIC.ochre, tiny: COMIC.plum, feather: COMIC.paper,
-  speed: COMIC.rust, magnet: COMIC.ochre, shield: COMIC.mint,
+  speed: COMIC.rust,
 };
 const GLYPHS: Record<PowerId, string> = {
-  giant: '+', tiny: '−', feather: '≈', speed: '»', magnet: '∩', shield: '◇',
+  giant: '+', tiny: '−', feather: '≈', speed: '»',
 };
 
 /** Power seals follow the original collectible flight and hit circle. */
@@ -21,10 +21,8 @@ export function drawFamiliars(ctx: CanvasRenderingContext2D, gw: GameWorld, now:
     const flight = BEE_FLIGHT[familiar.kind], point = beePosition(familiar, age);
     ctx.save(); ctx.translate(point.xPx, point.yPx); ctx.scale(flight.scale, flight.scale);
     ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 1.2;
-    if (familiar.kind !== 'magnet' && familiar.kind !== 'shield') {
-      ctx.beginPath(); ctx.moveTo(-3, -21); ctx.lineTo(-4, -10); ctx.moveTo(3, -21); ctx.lineTo(4, -10); ctx.stroke();
-      ctx.save(); ctx.translate(0, -29); drawHorrorBat(ctx, now / 30); ctx.restore();
-    }
+    ctx.beginPath(); ctx.moveTo(-3, -21); ctx.lineTo(-4, -10); ctx.moveTo(3, -21); ctx.lineTo(4, -10); ctx.stroke();
+    ctx.save(); ctx.translate(0, -29); drawHorrorBat(ctx, now / 30); ctx.restore();
     drawHorrorProp(ctx, 'talisman', 0, 0, 32, 34);
     ctx.fillStyle = COMIC.ink; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.font = 'bold 12px ' + COMIC_TEXT; ctx.fillText(GLYPHS[familiar.kind], 0, -3.5);
