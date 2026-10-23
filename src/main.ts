@@ -307,7 +307,7 @@ function togglePause(): void {
 
 const actionNames: Record<ControlAction, string> = {
   left: 'Move left', right: 'Move right', jump: 'Jump', down: 'Crouch',
-  serve: 'Serve / flip / dive',
+  serve: 'Serve / attack',
 };
 
 /** The level pickers, their names and blurbs, from the settings. */

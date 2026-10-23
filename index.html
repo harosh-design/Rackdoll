@@ -646,7 +646,7 @@
                 <div><dt>Move</dt><dd><button class="keycap" type="button" data-binding-player="1" data-binding-action="left" aria-describedby="binding-status-1">←</button><button class="keycap" type="button" data-binding-player="1" data-binding-action="right" aria-describedby="binding-status-1">→</button></dd></div>
                 <div><dt>Jump</dt><dd><button class="keycap" type="button" data-binding-player="1" data-binding-action="jump" aria-describedby="binding-status-1">↑</button></dd></div>
                 <div><dt>Crouch</dt><dd><button class="keycap" type="button" data-binding-player="1" data-binding-action="down" aria-describedby="binding-status-1">↓</button></dd></div>
-                <div><dt>Serve / flip / dive</dt><dd><button class="keycap" type="button" data-binding-player="1" data-binding-action="serve" aria-describedby="binding-status-1">Space</button></dd></div>
+                <div><dt>Serve / attack</dt><dd><button class="keycap" type="button" data-binding-player="1" data-binding-action="serve" aria-describedby="binding-status-1">Space</button></dd></div>
               </dl>
               <p class="binding-hint" id="binding-status-1" role="status" aria-live="polite">Click a key to change it.</p>
             </div>
@@ -682,7 +682,7 @@
               <div class="mode-group weather-group" id="weather-options" role="group" aria-labelledby="weather-title" aria-describedby="weather-description"></div>
               <p class="sr-only" id="weather-description" aria-live="polite">A new random sky each match.</p>
             </div>
-            <p class="lobby-tip"><img src="/art/horror/props/talisman.webp" alt="" width="38" height="44" aria-hidden="true"><span><b>Jump first. Then tap to serve.</b><span>Hold down + attack to dive on the ground or in the air; hold and release attack to flip.</span></span></p>
+            <p class="lobby-tip"><img src="/art/horror/props/talisman.webp" alt="" width="38" height="44" aria-hidden="true"><span><b>Jump first. Then tap to serve.</b><span>Down + attack: dive. Left/right + attack: slide. Both have no cooldown.</span></span></p>
             <footer class="lobby-foot">
               <button class="btn btn-primary btn-xl" id="play" type="button"><svg width="22" height="22" aria-hidden="true"><use href="#i-play" /></svg><span>Start match</span><kbd>Enter</kbd></button>
               <p class="lobby-ticket"><span id="selected-map-name">Graveyard</span><span aria-hidden="true">·</span> First to 10</p>
@@ -698,7 +698,7 @@
                 <div><dt>Move</dt><dd><button class="keycap" type="button" data-binding-player="2" data-binding-action="left" aria-describedby="binding-status-2">A</button><button class="keycap" type="button" data-binding-player="2" data-binding-action="right" aria-describedby="binding-status-2">D</button></dd></div>
                 <div><dt>Jump</dt><dd><button class="keycap" type="button" data-binding-player="2" data-binding-action="jump" aria-describedby="binding-status-2">W</button></dd></div>
                 <div><dt>Crouch</dt><dd><button class="keycap" type="button" data-binding-player="2" data-binding-action="down" aria-describedby="binding-status-2">S</button></dd></div>
-                <div><dt>Serve / flip / dive</dt><dd><button class="keycap" type="button" data-binding-player="2" data-binding-action="serve" aria-describedby="binding-status-2">R</button></dd></div>
+                <div><dt>Serve / attack</dt><dd><button class="keycap" type="button" data-binding-player="2" data-binding-action="serve" aria-describedby="binding-status-2">R</button></dd></div>
               </dl>
               <p class="binding-hint" id="binding-status-2" role="status" aria-live="polite">Click a key to change it.</p>
             </div>
@@ -732,15 +732,17 @@
                 </ul>
               </section>
               <section>
-                <h3><span class="num">2</span>Flips and dives</h3>
+                <h3><span class="num">2</span>Flips, dives and slides</h3>
                 <ul>
                   <li><b>Hold <kbd data-keyof="down">↓</kbd> + <kbd data-keyof="serve">Space</kbd> together on the ground or in the air</b> to dive toward the ball with outstretched arms. Either key can be pressed first.</li>
+                  <li><b>Hold <kbd data-keyof="left">←</kbd> or <kbd data-keyof="right">→</kbd> + <kbd data-keyof="serve">Space</kbd></b> for a football slide in that direction, feet first. Down takes priority if it is held too.</li>
+                  <li>Dives and slides have <b>no cooldown</b>, including during flip recovery. Release and press attack again to repeat once the current move finishes.</li>
                   <li><b>Hold the attack key alone during a rally</b>: the doll tucks, play briefly slows and a nearby ball is drawn in front of you.</li>
                   <li><b>Release to front-flip</b> toward the net. The feet come over the top to kick the ball over, or strike the opponent or a hazard they meet.</li>
                   <li>More charge kicks harder and knocks back a nearby opponent.</li>
                   <li>A kick to the head <b>stuns for three seconds</b>: controls drop to 20% strength and charging slows. Stars show the stun.</li>
                   <li>Two flips at the net at once clash and redirect the ball.</li>
-                  <li>Flips and dives share a <b>45-second cooldown</b> that resets every round. Serving is always available.</li>
+                  <li>Flips have a <b>45-second cooldown</b> that resets every round. Serving is always available.</li>
                 </ul>
               </section>
               <section>

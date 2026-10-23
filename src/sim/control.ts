@@ -19,15 +19,15 @@ export interface ChargeInfo {
 
 /**
  * Controls run once per frame after the world step. A press while holding the
- * ball serves at fixed power immediately. During a rally, holding down and
- * the attack key together starts a dive on the ground or in the air. The attack key alone
- * charges a flip, which fires on release.
+ * ball serves at fixed power immediately. Down plus attack dives; left or
+ * right plus attack slides in that direction. Down takes priority over a
+ * sideways direction. The attack key alone charges a flip that fires on release.
  */
 export class Control {
   private readonly down = new Map<ControlKey, boolean>();
   /** Physically held keys. Unlike `down`, a consumed jump press stays held. */
   private readonly held = new Set<ControlKey>();
-  private readonly active = new Map<PlayerId, { kind: 'serve' | 'swing' | 'dive'; key: ControlKey }>();
+  private readonly active = new Map<PlayerId, { kind: 'serve' | 'swing' | 'dive' | 'slide'; key: ControlKey }>();
   private readonly chargeFrames = new Map<PlayerId, number>();
   private readonly keys: KeyBindings;
 
@@ -68,8 +68,12 @@ export class Control {
     serve: (p: Player) => void,
     swing: (p: Player, power: number, dive?: boolean) => void,
     canSwing: (p: Player) => boolean = () => true,
+    slide: (p: Player, direction: 1 | -1) => void = () => {},
+    canManeuver: (p: Player) => boolean = p => !p.performingAcrobatics,
   ): void {
     const k = this.keys[player.id];
+    const direction = Number(this.isDown(k.right)) - Number(this.isDown(k.left));
+    const maneuver = this.isDown(k.down) ? 'dive' : direction !== 0 ? 'slide' : null;
 
     if (this.isDown(k.jump)) {
       player.jump();
@@ -84,17 +88,18 @@ export class Control {
       if (player.holdingJoint != null) {
         this.active.set(player.id, { kind: 'serve', key: k.serve });
         serve(player);
-      } else if (canSwing(player)) {
+      } else if (canSwing(player) || (maneuver !== null && canManeuver(player))) {
         this.active.set(player.id, { kind: 'swing', key: k.serve });
       }
     }
     action = this.active.get(player.id);
     if (action == null) return;
 
-    if (action.kind === 'swing' && this.isDown(action.key) && this.isDown(k.down)) {
-      action.kind = 'dive';
+    if (action.kind === 'swing' && this.isDown(action.key) && maneuver !== null && canManeuver(player)) {
+      action.kind = maneuver;
       this.chargeFrames.delete(player.id);
-      swing(player, 0, true);
+      if (maneuver === 'dive') swing(player, 0, true);
+      else slide(player, direction > 0 ? 1 : -1);
     }
 
     if (this.isDown(action.key) && action.kind === 'swing') {

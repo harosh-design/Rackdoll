@@ -247,7 +247,8 @@ export const SERVE = {
 
 /**
  * The button serves immediately while the ball is held. During a rally,
- * holding down with it dives at any height; otherwise release fires a charged flip.
+ * holding down with it dives, and holding left or right slides in that direction.
+ * The attack key alone charges a flip that fires on release.
  */
 export const CHARGE = {
   /** Frames of hold to reach full power. 24 @ 30 fps ≈ 0.8 s. */
@@ -276,7 +277,7 @@ export const powerScale = (power: number): number =>
  * A fully charged flip hits hard; a tap is a light kick.
  */
 export const SWING = {
-  /** A shared 45-second recovery after each rally flip or dive. */
+  /** A 45-second recovery for flips. Dives and slides have no cooldown. */
   cooldownFrames: 45 * FPS,
   /** Frontal hit zone for the flip's kick, measured from the attacker's head. */
   opponentReachPx: 225,
@@ -357,6 +358,18 @@ export const DIVE = {
   /** Hold the outstretched pose, then turn upright before restoring the rail. */
   reachFrames: 13,
   maxFrames: 25,
+} as const;
+
+/** A football slide leads with the feet and keeps the body close to the floor. */
+export const SLIDE = {
+  ...DIVE,
+  forwardSpeed: 9,
+  lift: 0.4,
+  angle: Math.PI / 3,
+  maxSpin: 8,
+  poseTorque: 50,
+  reachFrames: 16,
+  maxFrames: 29,
 } as const;
 
 /**

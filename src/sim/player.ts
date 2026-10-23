@@ -5,7 +5,7 @@ import {
 import {
   ACTIONS, BODYTYPE, clamp01, DEG, DIVE, FLIP, FLOOR_TOP_PX, JOINTS, PARTS, PLAYER_FRICTION,
   PRISM_DENSITY, PRISM_FRICTION, PRISM_HALF_PX, PRISM_RESTITUTION, PRISM_Y_PX,
-  RAIL_H_LIMITS, RAIL_V_LIMITS, SERVE, SIZE, SPAWN_P1_PX, SPAWN_P2_PX, STAND_POSE,
+  RAIL_H_LIMITS, RAIL_V_LIMITS, SERVE, SIZE, SPAWN_P1_PX, SPAWN_P2_PX, STAND_POSE, SLIDE,
   STUN, toM, toPx, type JointDef, type PartName, WINDUP,
 } from './constants';
 import { bodyTypeOf, ud, type BodyUserData } from './types';
@@ -111,7 +111,7 @@ export class Player {
   private ballJoint: RevoluteJointT | null = null;
   /** The flip in progress: the wheel joint standing in for railV, and how far round. */
   private flipState: { joint: WheelJoint; startAngle: number; dir: 1 | -1; frames: number } | null = null;
-  private diveState: { joint: WheelJoint; dir: 1 | -1; frames: number } | null = null;
+  private mobilityState: { kind: 'dive' | 'slide'; joint: WheelJoint; dir: 1 | -1; frames: number } | null = null;
   /** railV's frame, kept so the rail can be rebuilt exactly after a flip. */
   private readonly railAnchorA: Vec2;
   private railAnchorB: Vec2;
@@ -364,7 +364,7 @@ export class Player {
   /** Cut the hit part's branch away from the surviving rail-mounted body. */
   sever(name: PartName): boolean {
     if (!this.isAttached(name) || this.bodies.length === 1) return false;
-    if (this.diving) this.endFlip();
+    if (this.mobilityState) this.endFlip();
     this.releaseImpalement();
     const hit = this.part(name);
     if (hit === this.head) {
@@ -505,7 +505,7 @@ export class Player {
     });
   }
 
-  get performingAcrobatics(): boolean { return this.flipping || this.diving; }
+  get performingAcrobatics(): boolean { return this.flipping || this.mobilityState !== null; }
 
   /**
    * Set the size the doll grows or shrinks toward. `immediate` snaps instead,
@@ -667,7 +667,7 @@ export class Player {
   }
 
   turnDown(): void {
-    if (this.diving) return;
+    if (this.mobilityState) return;
     const fl = this.activePart('FootLeft');
     const fr = this.activePart('FootRight');
     const impulse = ACTIONS.turnDownImpulse * this.massFactor * this.controlScale;
@@ -809,11 +809,12 @@ export class Player {
   }
 
   // -------------------------------------------------------------------------
-  // Flips and dives — not in the original
+  // Flips, dives and slides — not in the original
   // -------------------------------------------------------------------------
 
   get flipping(): boolean { return this.flipState !== null; }
-  get diving(): boolean { return this.diveState !== null; }
+  get diving(): boolean { return this.mobilityState?.kind === 'dive'; }
+  get sliding(): boolean { return this.mobilityState?.kind === 'slide'; }
 
   /** Release the head's rotation while retaining both players' court boundaries. */
   private releaseRotation(speed: number, torque: number = FLIP.maxMotorTorque): WheelJoint {
@@ -833,52 +834,65 @@ export class Player {
 
   /** Launch toward the ball with both arms reaching forward and the legs trailing. */
   dive(target: Vec2Value): boolean {
-    if (this.performingAcrobatics) return false;
     const dx = target.x - this.head.getWorldCenter().x;
     const dir: 1 | -1 = dx === 0 ? (this.id === 1 ? 1 : -1) : dx > 0 ? 1 : -1;
-    const joint = this.releaseRotation(dir * DIVE.maxSpin, DIVE.maxMotorTorque);
-    this.diveState = { joint, dir, frames: 0 };
-    const vx = dir * DIVE.forwardSpeed * Math.sqrt(this.sizeScale) * this.controlScale * this.movementSpeed;
-    const vy = -DIVE.lift * Math.sqrt(this.sizeScale) * this.controlScale;
+    return this.startMobility('dive', dir);
+  }
+
+  /** Lead with the feet in the requested direction, with the torso leaning back. */
+  slide(direction: 1 | -1): boolean {
+    return this.startMobility('slide', direction);
+  }
+
+  private startMobility(kind: 'dive' | 'slide', dir: 1 | -1): boolean {
+    if (this.performingAcrobatics) return false;
+    const tuning = kind === 'dive' ? DIVE : SLIDE;
+    const spin = dir * tuning.maxSpin * (kind === 'slide' ? -1 : 1);
+    const joint = this.releaseRotation(spin, tuning.maxMotorTorque);
+    this.mobilityState = { kind, joint, dir, frames: 0 };
+    const vx = dir * tuning.forwardSpeed * Math.sqrt(this.sizeScale) * this.controlScale * this.movementSpeed;
+    const vy = -tuning.lift * Math.sqrt(this.sizeScale) * this.controlScale;
     const center = Vec2(0, 0);
     const mass = this.mass;
     for (const body of this.bodies) center.add(Vec2.mul(body.getWorldCenter(), body.getMass() / mass));
-    const spin = dir * DIVE.maxSpin;
     for (const body of this.bodies) {
       const position = body.getWorldCenter();
       body.setLinearVelocity(Vec2(vx - spin * (position.y - center.y), vy + spin * (position.x - center.x)));
       body.setAngularVelocity(spin);
     }
     this.prismBody.setLinearVelocity(Vec2(vx, 0));
-    this.poseDive();
+    this.poseMobility();
     return true;
   }
 
-  private poseDive(): void {
+  private poseMobility(): void {
+    const tuning = this.sliding ? SLIDE : DIVE;
     for (const joint of this.revolutes) {
       const arm = ud(joint.getBodyA()).part;
       const shoulder = ud(joint.getBodyB()).part === 'Tors';
       const target = shoulder && arm === 'ArmRight' ? joint.getUpperLimit()
         : shoulder && arm === 'ArmLeft' ? joint.getLowerLimit() : 0;
       joint.enableMotor(true);
-      joint.setMaxMotorTorque(DIVE.poseTorque * this.massFactor * this.massFactor);
-      joint.setMotorSpeed(Math.max(-DIVE.maxSpin, Math.min(DIVE.maxSpin,
-        (target - joint.getJointAngle()) * DIVE.turnGain)));
+      joint.setMaxMotorTorque(tuning.poseTorque * this.massFactor * this.massFactor);
+      joint.setMotorSpeed(Math.max(-tuning.maxSpin, Math.min(tuning.maxSpin,
+        (target - joint.getJointAngle()) * tuning.turnGain)));
     }
   }
 
-  private tickDive(): void {
-    const dive = this.diveState!;
-    dive.frames++;
-    const recovering = dive.frames > DIVE.reachFrames;
-    const target = this.railReference + (recovering ? 0 : dive.dir * DIVE.angle);
+  private tickMobility(): void {
+    const movement = this.mobilityState!;
+    const tuning = movement.kind === 'dive' ? DIVE : SLIDE;
+    movement.frames++;
+    const recovering = movement.frames > tuning.reachFrames;
+    const lean = movement.dir * tuning.angle * (movement.kind === 'slide' ? -1 : 1);
+    const target = this.railReference + (recovering ? 0 : lean);
     const error = target - (this.head.getAngle() - this.prismBody.getAngle());
-    if (dive.frames >= DIVE.maxFrames || (recovering && Math.abs(error) < FLIP.settleRad)) {
+    if (movement.frames >= tuning.maxFrames || (recovering && Math.abs(error) < FLIP.settleRad)) {
       this.endFlip();
       return;
     }
-    dive.joint.setMotorSpeed(Math.max(-DIVE.maxSpin, Math.min(DIVE.maxSpin, error * DIVE.turnGain)));
-    this.poseDive();
+    movement.joint.setMotorSpeed(Math.max(-tuning.maxSpin, Math.min(tuning.maxSpin, error * tuning.turnGain)));
+    this.poseMobility();
   }
 
   /** How far round the flip is, 0..1, or 0 when not flipping. */
@@ -947,10 +961,10 @@ export class Player {
     return (this.head.getAngle() - this.prismBody.getAngle() - f.startAngle) * f.dir;
   }
 
-  /** Once per frame: finish the current flip or dive, then lock the rail. */
+  /** Once per frame: finish the current move, then lock the rail. */
   tickFlip(): void {
-    if (this.diveState) {
-      this.tickDive();
+    if (this.mobilityState) {
+      this.tickMobility();
       return;
     }
     const f = this.flipState;
@@ -970,13 +984,13 @@ export class Player {
    * rebuilt rail sees an upright head and only trims what is left over.
    */
   endFlip(): void {
-    const wasDiving = this.diving;
-    const f = this.flipState ?? this.diveState;
+    const wasMobilityMove = this.mobilityState !== null;
+    const f = this.flipState ?? this.mobilityState;
     if (!f) return;
     this.world.destroyJoint(f.joint);
     this.flipState = null;
-    this.diveState = null;
-    if (wasDiving) for (const joint of this.revolutes) {
+    this.mobilityState = null;
+    if (wasMobilityMove) for (const joint of this.revolutes) {
       joint.enableMotor(false);
       joint.setMotorSpeed(0);
       joint.setMaxMotorTorque(0);
@@ -997,7 +1011,7 @@ export class Player {
       const dy = p.y - pivot.y;
       b.setTransform(Vec2(pivot.x + c * dx - sn * dy, pivot.y + sn * dx + c * dy), b.getAngle() - turns * TURN - residual);
     }
-    if (wasDiving) {
+    if (wasMobilityMove) {
       // Recovery must not place a trailing leg through the floor.
       let bottom = -Infinity;
       for (const body of this.bodies) {

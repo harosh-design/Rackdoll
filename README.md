@@ -208,14 +208,19 @@ to immediately launch a volleyball dive toward the ball, on the ground or
 in the air, even when the ball is behind the player.
 Either key can be pressed first, and custom down and attack bindings work
 the same way. Both arms reach forward and the legs trail behind; the doll
-then returns upright. Hold the attack key alone to tuck and release to front-flip toward
+then returns upright. Hold Left or Right + Space (or A or D + R for player 2)
+to perform a football slide in that direction, feet first with the torso
+leaning back. Down takes priority when both down and a sideways direction
+are held. Dives and slides have no cooldown and remain available while the
+flip is recovering; release and press the attack key again to repeat a move
+after its animation finishes. Hold the attack key alone to tuck and release to front-flip toward
 the opponent. The doll lunges at the net and turns one full circle, feet
 coming over the top and down in front of it. The head normally rides a rail
 that forbids it to rotate; for the flip that rail becomes a wheel joint on the same line,
 whose motor keeps the spin going until the doll is back upright, when the
 rail locks again. The tuck briefly slows the physics and gently draws a
 nearby free ball to where the feet will pass. Legs that meet the ball kick
-it toward the opponent, harder with more charge. Flips and dives share a 45-second
+it toward the opponent, harder with more charge. Flips have a 45-second
 cooldown, which resets at the start of every round; serving remains
 available. Once the legs come round, the kick reaches 225 px forward from
 where the flip took off and knocks an opponent back, with force set by the

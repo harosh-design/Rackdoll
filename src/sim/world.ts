@@ -3,7 +3,7 @@ import { AI } from './ai';
 import { Ball } from './ball';
 import { Bees } from './bees';
 import {
-  BODYTYPE, CHARGE, DIVE, EXECUTER, EXECUTER_ITERATIONS, FEATHER, FLIP, ITERATIONS, LANDING_CENTRE_M,
+  BODYTYPE, CHARGE, DIVE, EXECUTER, EXECUTER_ITERATIONS, FEATHER, FLIP, ITERATIONS, LANDING_CENTRE_M, SLIDE,
   MS_PER_FRAME, OPTIONS, PRIZE_ANIM, NET_X_PX, powerScale,
   SERVE_CENTRE_M, SPAWN_P1_PX, SPAWN_P2_PX, SWING, toM, toPx,
 } from './constants';
@@ -282,14 +282,19 @@ export class GameWorld {
 
   canSwing = (player: Player): boolean => this.swingCooldownFramesLeft(player.id) === 0 && !player.performingAcrobatics;
 
+  /** Dives and slides remain available while the flip is cooling down. */
+  canManeuver = (player: Player): boolean => !player.performingAcrobatics &&
+    this.game.phase === 'play' && this.ball.ballOfPlayer === 0;
+
   /** Down plus the rally button requests a dive at any height; other attacks flip. */
   swing = (player: Player, power = 1, dive = false): boolean => {
     if (!dive) return this.flip(player, power);
-    if (!this.canSwing(player) || this.game.phase !== 'play' || this.ball.ballOfPlayer !== 0) return false;
-    if (!player.dive(this.ball.position)) return false;
-    this.nextSwingFrame[player.id] = this.frame + SWING.cooldownFrames;
-    return true;
+    return this.canManeuver(player) && player.dive(this.ball.position);
   };
+
+  /** A football slide in the requested direction, independent of flip recovery. */
+  slide = (player: Player, direction: 1 | -1): boolean =>
+    this.canManeuver(player) && player.slide(direction);
 
   /** Execute an explicit flip, also used by the CPU's existing flip plans. */
   flip = (player: Player, power = 1): boolean => {
@@ -329,7 +334,8 @@ export class GameWorld {
     // contact chains stable. The classic court retains the original solver.
     const it = Math.max(this.executerNearDoll() ? this.contactIterations : ITERATIONS,
       this.centerObstacle.id === 'rubber' ? 30 : ITERATIONS,
-      this.p1.diving || this.p2.diving ? DIVE.solverIterations : ITERATIONS);
+      this.p1.diving || this.p2.diving ? DIVE.solverIterations : ITERATIONS,
+      this.p1.sliding || this.p2.sliding ? SLIDE.solverIterations : ITERATIONS);
     this.centerObstacle.beforeStep([this.p1, this.p2], this.game.phase === 'play',
       (p) => this.isCpu(p.id) ? null : this.control.heldDirection(p.id), dt);
     this.world.step(dt, it, it);
@@ -351,7 +357,7 @@ export class GameWorld {
 
     // 3. Controls, for each human player.
     for (const p of [this.p1, this.p2]) {
-      if (!this.isCpu(p.id)) this.control.update(p, this.serve, this.swing, this.canSwing);
+      if (!this.isCpu(p.id)) this.control.update(p, this.serve, this.swing, this.canSwing, this.slide, this.canManeuver);
     }
     this.resolveStrikes();
     this.advanceCounter();

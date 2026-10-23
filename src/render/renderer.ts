@@ -1124,7 +1124,7 @@ export class Renderer {
         status(POWER_LABELS[power.kind] + ' · ' + Math.ceil(remaining / FPS) + 's', remaining / (power.expiresAt - power.startedAt), ink, y); y += 14;
       }
       const cooldown = gw.swingCooldownFramesLeft(id);
-      if (cooldown > 0) status('FLIP / DIVE · ' + Math.ceil(cooldown / FPS) + 's', 0, COMIC.muted, y);
+      if (cooldown > 0) status('FLIP · ' + Math.ceil(cooldown / FPS) + 's', 0, COMIC.muted, y);
     }
     const top = this.drawTopBar(ctx, gw, now);
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';

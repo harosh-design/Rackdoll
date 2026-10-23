@@ -1,6 +1,6 @@
 import { Vec2, World } from 'planck';
 import { describe, expect, it } from 'vitest';
-import { DIVE, FLOOR_TOP_PX, PARTS, SWING, toM } from '../src/sim/constants';
+import { DIVE, FLIP, FLOOR_TOP_PX, PARTS, SWING, toM } from '../src/sim/constants';
 import { Ground } from '../src/sim/ground';
 import { Player } from '../src/sim/player';
 import { KEYS } from '../src/sim/control';
@@ -61,7 +61,7 @@ describe('volleyball dive', () => {
       expect(player.diving).toBe(true);
       expect(player.flipping).toBe(false);
       expect(player.ass.getLinearVelocity().x * direction).toBeGreaterThan(0);
-      expect(gw.swingCooldownFramesLeft(id)).toBe(SWING.cooldownFrames);
+      expect(gw.swingCooldownFramesLeft(id)).toBe(0);
       expect(gw.swing(player, 0, true)).toBe(false);
       let largestAngle = 0;
       let reached = false;
@@ -233,7 +233,7 @@ describe('volleyball dive', () => {
     expect(gw.swing(player, 0, true)).toBe(true);
     expect(player.diving).toBe(true);
     expect(player.flipping).toBe(false);
-    expect(gw.swingCooldownFramesLeft(id)).toBe(SWING.cooldownFrames);
+    expect(gw.swingCooldownFramesLeft(id)).toBe(0);
     run(gw, DIVE.maxFrames + 10);
     expect(player.performingAcrobatics).toBe(false);
     expect(player.railV.getBodyB()).toBe(player.head);
@@ -241,7 +241,7 @@ describe('volleyball dive', () => {
     expect(player.bodies.every(body => Number.isFinite(body.getPosition().y))).toBe(true);
   });
 
-  it('freezes during pause and clears the dive and cooldown on a new round', () => {
+  it('freezes during pause and clears the dive on a new round', () => {
     const gw = hazardWorld({ hazards: false });
     gw.swing(gw.p1, 0, true);
     run(gw, 3);
@@ -256,5 +256,42 @@ describe('volleyball dive', () => {
     expect(gw.p1.diving).toBe(false);
     expect(gw.p1.revolutes.every(joint => !joint.isMotorEnabled())).toBe(true);
     expect(gw.swingCooldownFramesLeft(1)).toBe(0);
+  });
+
+  it('can dive repeatedly without starting a flip cooldown', () => {
+    const gw = hazardWorld({ hazards: false });
+    gw.control.press(40);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      gw.control.press(32);
+      gw.step();
+      expect(gw.p1.diving).toBe(true);
+      expect(gw.control.chargeLevel(1)).toBeNull();
+      expect(gw.swingCooldownFramesLeft(1)).toBe(0);
+      gw.control.release(32);
+      run(gw, DIVE.maxFrames + 1);
+      expect(gw.p1.performingAcrobatics).toBe(false);
+    }
+  });
+
+  it('can dive during the flip cooldown even when down is pressed after attack', () => {
+    const gw = hazardWorld({ hazards: false });
+    gw.flip(gw.p1);
+    run(gw, FLIP.maxFrames + 1);
+    expect(gw.canSwing(gw.p1)).toBe(false);
+    expect(gw.swingCooldownFramesLeft(1)).toBeGreaterThan(0);
+    gw.control.press(32);
+    gw.step();
+    expect(gw.control.chargeLevel(1)).toBeNull();
+    gw.control.press(40);
+    const remaining = gw.swingCooldownFramesLeft(1);
+    gw.step();
+    expect(gw.p1.diving).toBe(true);
+    expect(gw.swingCooldownFramesLeft(1)).toBe(remaining - 1);
+    gw.control.release(32);
+    run(gw, DIVE.maxFrames + 1);
+    gw.control.press(32);
+    gw.step();
+    expect(gw.p1.diving).toBe(true);
+    expect(gw.swingCooldownFramesLeft(1)).toBeLessThan(SWING.cooldownFrames);
   });
 });
