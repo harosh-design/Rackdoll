@@ -1,5 +1,5 @@
 import {
-  BALL, BALL_TINT, BOXER, CHAMELEON, CHARGE, COURT, FLIP, EXECUTER, FLOOR_TOP_PX, FPS, MAX_TOUCHES, OPTIONS, PARTS, PRIZE_ANIM,
+  BALL, BALL_TINT, BOXER, CHAMELEON, CHARGE, COURT, FLIP, EXECUTER, FLOOR_TOP_PX, FPS, MAGNET, MAX_TOUCHES, OPTIONS, PARTS, PRIZE_ANIM,
   PRIZE_BUTTONS, SLIME, SPRING, STUN, SWING, VIEW, toPx, type PartName,
 } from '../sim/constants';
 import type { Body, Vec2Value } from 'planck';
@@ -297,6 +297,9 @@ export class Renderer {
     drawFeatherAirflow(ctx, gw, now);
     this.drawShadows(gw, interp, alpha);
     this.worldSpace(ctx);
+    for (const e of gw.executers) {
+      if (!e.dead && e.variant.id === 'magnet') this.drawMagnetField(ctx, e, interp, alpha);
+    }
     this.drawCenterObstacle(ctx, gw, interp, alpha);
     this.drawPrizeButtons(ctx, gw, now);
     this.drawFootMotion(ctx, gw, interp, now);
@@ -681,6 +684,45 @@ export class Renderer {
       ctx.globalCompositeOperation = 'multiply';
       ctx.globalAlpha *= tint.alpha * 0.3;
       ctx.fillStyle = 'rgb(' + tint.rgb + ')'; ctx.fillRect(-r, -r, r * 2, r * 2);
+    }
+    ctx.restore();
+  }
+
+  /** The fixed boundary shares the simulation's reach; only the inner waves move. */
+  private drawMagnetField(ctx: CanvasRenderingContext2D, e: Executer, interp: PoseSource, alpha: number): void {
+    const pose = interp.pose(e.body, alpha);
+    const radius = MAGNET.fieldPx;
+    const active = e.solid && e.knockbackFrames === 0;
+    const left = COURT.leftWall.x + COURT.leftWall.hw;
+    const right = COURT.rightWall.x - COURT.rightWall.hw;
+    ctx.save();
+    // Keep the field inside the visible court, behind players and the ball.
+    ctx.beginPath(); ctx.rect(left, -4000, right - left, SOLES_PX + 4000); ctx.clip();
+    ctx.translate(pose.x, pose.y);
+    ctx.globalAlpha = active ? 1 : 0.25;
+    const glow = ctx.createRadialGradient(0, 0, EXECUTER.radiusPx, 0, 0, radius);
+    glow.addColorStop(0, 'rgba(159,198,173,0.14)');
+    glow.addColorStop(0.7, 'rgba(159,198,173,0.06)');
+    glow.addColorStop(1, 'rgba(159,198,173,0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(0, 0, radius, 0, Math.PI * 2); ctx.fill();
+
+    ctx.setLineDash([9, 7]);
+    ctx.strokeStyle = 'rgba(17,16,26,0.5)'; ctx.lineWidth = 4;
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(159,198,173,0.75)'; ctx.lineWidth = 1.8;
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    if (active && !this.reducedMotion.matches) {
+      const t = (e.age + alpha) / (FPS * 2.4);
+      for (let i = 0; i < 3; i++) {
+        const progress = (t + i / 3) % 1;
+        const waveRadius = EXECUTER.radiusPx + (radius - EXECUTER.radiusPx) * (1 - progress);
+        ctx.strokeStyle = `rgba(159,198,173,${0.2 * Math.sin(progress * Math.PI)})`;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.arc(0, 0, waveRadius, 0, Math.PI * 2); ctx.stroke();
+      }
     }
     ctx.restore();
   }
@@ -1082,7 +1124,7 @@ export class Renderer {
         status(POWER_LABELS[power.kind] + ' · ' + Math.ceil(remaining / FPS) + 's', remaining / (power.expiresAt - power.startedAt), ink, y); y += 14;
       }
       const cooldown = gw.swingCooldownFramesLeft(id);
-      if (cooldown > 0) status('FLIP · ' + Math.ceil(cooldown / FPS) + 's', 0, COMIC.muted, y);
+      if (cooldown > 0) status('FLIP / DIVE · ' + Math.ceil(cooldown / FPS) + 's', 0, COMIC.muted, y);
     }
     const top = this.drawTopBar(ctx, gw, now);
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';

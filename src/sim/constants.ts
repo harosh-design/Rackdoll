@@ -246,8 +246,8 @@ export const SERVE = {
 } as const;
 
 /**
- * The button serves immediately while the ball is held. During a rally, a
- * held button winds up an arm swing; release fires it.
+ * The button serves immediately while the ball is held. During a rally it
+ * dives on floor contact, or charges an airborne flip that fires on release.
  */
 export const CHARGE = {
   /** Frames of hold to reach full power. 24 @ 30 fps ≈ 0.8 s. */
@@ -276,7 +276,7 @@ export const powerScale = (power: number): number =>
  * A fully charged flip hits hard; a tap is a light kick.
  */
 export const SWING = {
-  /** A 45-second recovery after each rally flip. */
+  /** A shared 45-second recovery after each rally flip or dive. */
   cooldownFrames: 45 * FPS,
   /** Frontal hit zone for the flip's kick, measured from the attacker's head. */
   opponentReachPx: 225,
@@ -341,6 +341,22 @@ export const FLIP = {
   kickSpeedY: -9,
   /** The opponent counts as hit once the legs have come over the top (rad). */
   opponentFromRad: Math.PI * 1.1,
+} as const;
+
+/** A grounded attack stretches the doll into a low volleyball dive at the ball. */
+export const DIVE = {
+  forwardSpeed: 8,
+  lift: 2.8,
+  angle: Math.PI / 2,
+  turnGain: 14,
+  maxSpin: 12,
+  maxMotorTorque: 300,
+  poseTorque: 18,
+  /** Keep the motor-driven neck, shoulders and hips together during the dive. */
+  solverIterations: 30,
+  /** Hold the outstretched pose, then turn upright before restoring the rail. */
+  reachFrames: 13,
+  maxFrames: 25,
 } as const;
 
 /**
@@ -743,10 +759,10 @@ export const CHAMELEON = {
   pullFrames: 12,
   retractFrames: 8,
   /** Acceleration toward the mouth while attached, m/s², shared by the whole player. */
-  playerPull: 3.2,
+  playerPull: 6.4,
   /** The upward tug stays well below gravity, so it cannot suspend a player. */
   playerLiftMax: 0.25,
-  ballPull: 6,
+  ballPull: 12,
   ballLiftMax: 0.45,
   /** A fleeing target can break the tongue before or during the tug. */
   catchRadiusPx: 28,

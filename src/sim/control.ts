@@ -19,14 +19,15 @@ export interface ChargeInfo {
 
 /**
  * Controls run once per frame after the world step. A press while holding the
- * ball serves at fixed power immediately. A press during a rally begins a
- * flip charge, and releasing it flips.
+ * ball serves at fixed power immediately. A press during a rally starts a
+ * dive when touching the floor; otherwise it begins a flip
+ * charge, and releasing it flips.
  */
 export class Control {
   private readonly down = new Map<ControlKey, boolean>();
   /** Physically held keys. Unlike `down`, a consumed jump press stays held. */
   private readonly held = new Set<ControlKey>();
-  private readonly active = new Map<PlayerId, { kind: 'serve' | 'swing'; key: ControlKey }>();
+  private readonly active = new Map<PlayerId, { kind: 'serve' | 'swing' | 'dive'; key: ControlKey }>();
   private readonly chargeFrames = new Map<PlayerId, number>();
   private readonly keys: KeyBindings;
 
@@ -84,7 +85,12 @@ export class Control {
         this.active.set(player.id, { kind: 'serve', key: k.serve });
         serve(player);
       } else if (canSwing(player)) {
-        this.active.set(player.id, { kind: 'swing', key: k.serve });
+        if (player.touchingGround) {
+          this.active.set(player.id, { kind: 'dive', key: k.serve });
+          swing(player, 0);
+        } else {
+          this.active.set(player.id, { kind: 'swing', key: k.serve });
+        }
       }
     }
     action = this.active.get(player.id);

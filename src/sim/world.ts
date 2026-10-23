@@ -3,7 +3,7 @@ import { AI } from './ai';
 import { Ball } from './ball';
 import { Bees } from './bees';
 import {
-  BODYTYPE, CHARGE, EXECUTER, EXECUTER_ITERATIONS, FEATHER, FLIP, ITERATIONS, LANDING_CENTRE_M,
+  BODYTYPE, CHARGE, DIVE, EXECUTER, EXECUTER_ITERATIONS, FEATHER, FLIP, ITERATIONS, LANDING_CENTRE_M,
   MS_PER_FRAME, OPTIONS, PRIZE_ANIM, NET_X_PX, powerScale,
   SERVE_CENTRE_M, SPAWN_P1_PX, SPAWN_P2_PX, SWING, toM, toPx,
 } from './constants';
@@ -213,7 +213,7 @@ export class GameWorld {
 
     const aiSeed = opts.aiSeed ?? 0x51f15e;
     const bot = (p: Player) => new AI(p, this.ball,
-      (q) => this.serve(q), (q, power) => this.swing(q, power), this.canSwing,
+      (q) => this.serve(q), (q, power) => this.flip(q, power), this.canSwing,
       p === this.p1 ? this.p2 : this.p1, seededRandom(aiSeed ^ Math.imul(p.id, 0x9e3779b9)));
     this.ais = {
       1: this.botVsBot ? bot(this.p1) : null,
@@ -280,10 +280,19 @@ export class GameWorld {
     return Math.max(0, this.nextSwingFrame[id] - this.frame);
   }
 
-  canSwing = (player: Player): boolean => this.swingCooldownFramesLeft(player.id) === 0;
+  canSwing = (player: Player): boolean => this.swingCooldownFramesLeft(player.id) === 0 && !player.performingAcrobatics;
 
-  /** Not in the original: the rally flip, routed the same way as serve(). */
+  /** The shared rally button dives from any floor contact, and flips in the air. */
   swing = (player: Player, power = 1): boolean => {
+    if (!player.touchingGround) return this.flip(player, power);
+    if (!this.canSwing(player) || this.game.phase !== 'play' || this.ball.ballOfPlayer !== 0) return false;
+    if (!player.dive(this.ball.position)) return false;
+    this.nextSwingFrame[player.id] = this.frame + SWING.cooldownFrames;
+    return true;
+  };
+
+  /** Execute an explicit flip, also used by the CPU's existing flip plans. */
+  flip = (player: Player, power = 1): boolean => {
     if (!this.canSwing(player) || this.game.phase !== 'play' || this.ball.ballOfPlayer !== 0) return false;
     if (!player.flip()) return false;
     this.swingEffects[player.id] = { frame: this.frame, power };
@@ -319,7 +328,8 @@ export class GameWorld {
     // Heavy hazards and the flexible net need extra iterations to keep their
     // contact chains stable. The classic court retains the original solver.
     const it = Math.max(this.executerNearDoll() ? this.contactIterations : ITERATIONS,
-      this.centerObstacle.id === 'rubber' ? 30 : ITERATIONS);
+      this.centerObstacle.id === 'rubber' ? 30 : ITERATIONS,
+      this.p1.diving || this.p2.diving ? DIVE.solverIterations : ITERATIONS);
     this.centerObstacle.beforeStep([this.p1, this.p2], this.game.phase === 'play',
       (p) => this.isCpu(p.id) ? null : this.control.heldDirection(p.id), dt);
     this.world.step(dt, it, it);
@@ -549,7 +559,7 @@ export class GameWorld {
     }
     const humanStrike = this.strikes[humanId];
     if (humanStrike?.frame === this.frame && this.aiCounterWindupFrames[id] >= 4) {
-      this.swing(cpu, Math.min(0.8, this.aiCounterWindupFrames[id] / CHARGE.maxFrames));
+      this.flip(cpu, Math.min(0.8, this.aiCounterWindupFrames[id] / CHARGE.maxFrames));
     }
     this.aiCounterWindupFrames[id] = 0;
   }

@@ -187,21 +187,29 @@ remaining body; serving uses another attached hand or the surviving body if both
 arms are gone. Lost parts cannot strike or count as ball touches. Injuries heal
 before every new round. Shield protects against impalement.
 
-The main menu shows both players' fixed controls immediately: arrow keys and
-Space on the left, WASD and R on the right. Key remapping is removed, and legacy
-custom bindings are ignored. P and Esc remain pause shortcuts. **How to play**
-opens the complete instructions without leaving match setup.
+The main menu shows editable controls directly on both player cards. Defaults
+are arrow keys and Space on the left, WASD and R on the right. Click any key,
+then press its replacement; Esc cancels. Duplicate keys and reserved shortcuts
+are rejected. Custom bindings are saved in this browser and restored on reload,
+including previously saved configurations. **Reset controls** restores both
+players' defaults. P and Esc remain pause shortcuts. **How to play** opens the
+complete instructions without leaving match setup.
 
 **Serve in the air.** The held ball hangs at your feet. Tap Space (or R for
 player 2) to serve with a fixed underhand flick. Jump first to clear the net.
-Once the ball is free, the same key is the one attack: hold it to tuck and
-release to front-flip toward the opponent. The doll lunges at the net and
-turns one full circle, feet coming over the top and down in front of it. The head normally rides a rail that forbids it
-to rotate; for the flip that rail becomes a wheel joint on the same line,
+Once the ball is free, the same key chooses an attack from actual floor
+contact. If any attached body part touches the floor, pressing it immediately
+launches a low volleyball dive toward the ball, even when the ball is behind
+the player. Both arms reach forward and the legs trail behind; the doll then
+returns upright. Walls, sensors and detached limbs do not count as floor
+contact. In the air, hold the key to tuck and release to front-flip toward
+the opponent. The doll lunges at the net and turns one full circle, feet
+coming over the top and down in front of it. The head normally rides a rail
+that forbids it to rotate; for the flip that rail becomes a wheel joint on the same line,
 whose motor keeps the spin going until the doll is back upright, when the
 rail locks again. The tuck briefly slows the physics and gently draws a
 nearby free ball to where the feet will pass. Legs that meet the ball kick
-it toward the opponent, harder with more charge. A flip has a 45-second
+it toward the opponent, harder with more charge. Flips and dives share a 45-second
 cooldown, which resets at the start of every round; serving remains
 available. Once the legs come round, the kick reaches 225 px forward from
 where the flip took off and knocks an opponent back, with force set by the
@@ -279,7 +287,7 @@ grounded checks scale with the doll as well.
 
 ## Bat familiars
 
-Bat familiars fly in from either screen edge every 12–20 seconds, with at most
+Power talismans fly in from either screen edge every 12–20 seconds, with at most
 two active. They carry one of six abilities. Hit the talisman with a ball you
 last touched to collect its 30-second power. A new pickup replaces the current
 ability. The ball continues its flight. During goal replays the delivery slows
@@ -289,10 +297,11 @@ Talisman glyphs identify the power: plus for Giant, minus for Tiny, a wave for
 Updraft, chevrons for Speed, an arch for Magnet,
 and a diamond for Shield. The short label beneath each talisman names the effect.
 Giant and Tiny deliveries retain their different sizes and flight styles.
+Magnet and Shield talismans float on their own, without a bat or suspension cords.
 
 The collectible hit sweep and trajectories still use the legacy `Bees`
-simulation API. The renderer draws inked bats with hinged wings and
-a separate power seal centered on that hit region. This preserves deterministic
+simulation API. The renderer centers each power seal on that hit region and
+adds an inked bat with hinged wings for Giant, Tiny, Updraft, and Speed. This preserves deterministic
 pickup behavior and the existing physics tests.
 
 ## Fidelity notes
@@ -367,7 +376,10 @@ changes that on purpose:
   shuffles a fresh order. A flipping player's legs knock flying hazards
   away and interrupt any hazard's attack.
 - **Magnet.** The slowest hunter (~1.4 m/s), with a strong field out to
-  240 px. Its player is dragged toward it — the same sideways acceleration on
+  240 px. A mint dashed circle marks that exact radius, with a faint field tint
+  and inward-moving waves behind the players and ball. The field dims while
+  emerging or knocked back; reduced-motion mode keeps the boundary and tint
+  without the waves. Its player is dragged toward it — the same sideways acceleration on
   every part, up to 30 m/s², so the doll moves without stretching — and their
   arms reach for it. Walking away from one at close range is about 45% slower.
   It bends a free ball's flight too: sideways harder than gravity, but upward
@@ -423,9 +435,9 @@ changes that on purpose:
   after its previous tongue cycle, it aims at the nearest eligible target
   within 420 px: its player or a free ball in play on its half. The tongue
   shoots out over 0.2 s, tugs for 0.4 s and retracts. A moving target can
-  dodge the shot or break free by leaving reach. The player receives a gentle
-  pull toward the mouth shared by their whole body; the ball is pulled
-  toward the mouth too. Upward acceleration is capped at 25% of gravity for
+  dodge the shot or break free by leaving reach. The tongue pulls the whole
+  player toward the mouth at 6.4 m/s² and a free ball at 12 m/s², twice its
+  previous strength. Upward acceleration is capped at 25% of gravity for
   the player and 45% for the ball, so neither can be held aloft. Shields block
   player grabs, a flip interrupts the tongue, and a round reset releases it.
   Its body remains a kinematic sensor, so it cannot pin a doll against the wall.

@@ -50,6 +50,9 @@ describe('player keyboard settings', () => {
     gw.step();
     expect(gw.control.isDown('KeyF')).toBe(false);
 
+    gw.control.press(87);
+    for (let i = 0; i < 4; i++) gw.step();
+    gw.control.release(87);
     gw.control.press('KeyH');
     gw.step();
     expect(gw.control.chargeLevel(2)?.power).toBeGreaterThan(0);

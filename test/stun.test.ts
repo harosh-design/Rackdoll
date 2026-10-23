@@ -12,7 +12,7 @@ describe('head-hit stun', () => {
     gw.p2.standPlayer(420, 256);
     const defender = defenderId === 1 ? gw.p1 : gw.p2;
     const attacker = defenderId === 1 ? gw.p2 : gw.p1;
-    gw.swing(attacker);
+    gw.flip(attacker);
     expect(untilOpponentHit(gw, defenderId)).toBeGreaterThan(0);
     expect(defender.stunFrames).toBe(STUN.frames);
     expect(defender.controlScale).toBe(0.2);
@@ -28,12 +28,12 @@ describe('head-hit stun', () => {
     body.world.setGravity(Vec2(0, 0));
     body.p1.standPlayer(210, 190);
     body.p2.standPlayer(420, 256);
-    body.swing(body.p1);
+    body.flip(body.p1);
     expect(untilOpponentHit(body, 2)).toBeGreaterThan(0);
     expect(body.p2.stunFrames).toBe(0);
 
     const far = hazardWorld({ hazards: false });
-    far.swing(far.p1);
+    far.flip(far.p1);
     run(far, FLIP.maxFrames + 1);
     expect(far.opponentHitEffects[2].frame).toBe(-100);
     expect(far.p2.stunFrames).toBe(0);
@@ -62,7 +62,7 @@ describe('head-hit stun', () => {
     gw.flags.playerHeadHits!.push({ attackerId: id, part });
     gw.step();
     expect(defender.stunFrames).toBe(0);
-    gw.swing(attacker, 1);
+    gw.flip(attacker, 1);
     gw.flags.playerHeadHits!.push({ attackerId: id, part: 'HandLeft' });
     gw.step();
     expect(defender.stunFrames).toBe(0);
@@ -78,7 +78,7 @@ describe('head-hit stun', () => {
     gw.p1.standPlayer(210, 256);
     gw.p2.standPlayer(420, 256);
     gw.powerUps.activate(2, 'shield', gw.frame);
-    gw.swing(gw.p1);
+    gw.flip(gw.p1);
     run(gw, FLIP.maxFrames);
     expect(gw.p2.stunFrames).toBe(0);
     expect(gw.opponentHitEffects[2].frame).toBe(-100);
@@ -89,7 +89,7 @@ describe('head-hit stun', () => {
     gw.p1.forgetBallJoint();
     gw.p2.forgetBallJoint();
     gw.ball.ballOfPlayer = 0;
-    gw.swing(gw.p1);
+    gw.flip(gw.p1);
     gw.flags.playerHeadHits!.push({ attackerId: 1, part: 'FootLeft' });
     gw.step();
     expect(gw.p2.stunFrames).toBe(0);
@@ -160,6 +160,8 @@ describe('weakened controls while stunned', () => {
 
   it('charges five times slower and restores the normal rate after stun expires', () => {
     const gw = hazardWorld({ hazards: false });
+    gw.p1.jump();
+    run(gw, 4);
     gw.p1.stun();
     gw.control.press(32);
     run(gw, 10);
@@ -176,7 +178,7 @@ describe('weakened controls while stunned', () => {
       gw.p1.standPlayer(210, 256);
       gw.p2.standPlayer(420, 256);
       if (stunned) gw.p1.stun();
-      gw.swing(gw.p1);
+      gw.flip(gw.p1);
       run(gw, 3);
       return gw.p2.head.getLinearVelocity().x;
     };

@@ -16,7 +16,7 @@ export const normalizeCenterObstacle = (value: unknown): CenterObstacleId =>
 const partExtent = (part: typeof PARTS[number]): number => part.shape.kind === 'circle' ? part.shape.r : part.shape.hh;
 export const ORIGINAL_PLAYER_HEIGHT_PX = Math.max(...PARTS.map(part => part.dy + partExtent(part)))
   - Math.min(...PARTS.map(part => part.dy - partExtent(part)));
-export const AIR_HEATER = { halfWidthPx: 3, rangePx: ORIGINAL_PLAYER_HEIGHT_PX * 0.3, acceleration: 65 } as const;
+export const AIR_HEATER = { halfWidthPx: 3, rangePx: ORIGINAL_PLAYER_HEIGHT_PX * 0.3, acceleration: 195 } as const;
 export const SHARP_SPIKE = {
   halfWidthPx: 6, topPx: NET_TOP_PX - NET_SPIKE.heightPx,
   /** A caught part can be driven this far down the shaft, px below the point. */

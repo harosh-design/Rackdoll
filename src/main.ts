@@ -2,7 +2,10 @@ import { wirePhysicsPanel } from './debug/physicsPanel';
 import { loadPhysicsLibrary, type PresetStorage } from './debug/physicsPresets';
 import { Music } from './audio/music';
 import { Sfx } from './audio/sfx';
-import { defaultBindings, keyLabel, toKeyBindings } from './input/bindings';
+import {
+  bindingOwner, defaultBindings, isAssignableCode, keyLabel,
+  loadBindings, normalizeCode, saveBindings, toKeyBindings,
+} from './input/bindings';
 import { bindKeyboard } from './input/keyboard';
 import { Interpolator } from './render/interp';
 import { drawMenuCharacter } from './render/menuArt';
@@ -56,9 +59,10 @@ const settings = {
   level: OPTIONS.currentLevel as number,
   /** Bot vs bot: the left CPU's level. */
   p1Level: OPTIONS.championLevel as number,
-  bindings: defaultBindings(),
+  bindings: loadBindings(),
 };
 let screen: Screen = 'menu';
+let capturing: { player: PlayerId; action: ControlAction } | null = null;
 let gw = createWorld(true);
 let message: string | null = null;
 /** Whose point the banner announces: their jersey colours it. */
@@ -302,8 +306,8 @@ function togglePause(): void {
 }
 
 const actionNames: Record<ControlAction, string> = {
-  left: 'Move left', right: 'Move right', jump: 'Jump', down: 'Down',
-  serve: 'Serve / flip',
+  left: 'Move left', right: 'Move right', jump: 'Jump', down: 'Crouch',
+  serve: 'Serve / flip / dive',
 };
 
 /** The level pickers, their names and blurbs, from the settings. */
@@ -327,13 +331,17 @@ function isCpuSide(player: PlayerId): boolean {
 }
 
 function renderBindings(): void {
-  document.querySelectorAll<HTMLElement>('[data-quick-player]').forEach(key => {
-    const player = Number(key.dataset.quickPlayer) as PlayerId;
-    const action = key.dataset.quickAction as ControlAction;
+  document.querySelectorAll<HTMLButtonElement>('[data-binding-player]').forEach(button => {
+    const player = Number(button.dataset.bindingPlayer) as PlayerId;
+    const action = button.dataset.bindingAction as ControlAction;
+    const waiting = capturing?.player === player && capturing.action === action;
     const label = keyLabel(settings.bindings[player][action]);
-    key.textContent = label;
-    key.title = `Player ${player}, ${actionNames[action]}: ${label}`;
-    key.setAttribute('aria-label', key.title);
+    button.textContent = waiting ? '…' : label;
+    button.classList.toggle('capturing', waiting);
+    button.setAttribute('aria-pressed', String(waiting));
+    button.title = `Player ${player}, ${actionNames[action]}: ${label}. Click to change.`;
+    button.setAttribute('aria-label', waiting
+      ? `Player ${player}, ${actionNames[action]}: press a key. Escape cancels.` : button.title);
   });
   document.querySelectorAll<HTMLElement>('[data-bind-card]').forEach(card => {
     const player = Number(card.dataset.bindCard) as PlayerId;
@@ -348,8 +356,70 @@ function renderBindings(): void {
   });
 }
 
-function wireMenu(): void {
+function wireBindings(): void {
+  const hint = 'Click a key to change it.';
+  const status = (player: PlayerId, text: string) => {
+    $(`binding-status-${player}`).textContent = text;
+  };
+  const cancel = () => {
+    if (!capturing) return;
+    status(capturing.player, hint);
+    capturing = null;
+    renderBindings();
+  };
+  document.querySelectorAll<HTMLButtonElement>('[data-binding-player]').forEach(button => {
+    button.addEventListener('click', () => {
+      if (screen !== 'menu') return;
+      cancel();
+      const player = Number(button.dataset.bindingPlayer) as PlayerId;
+      const action = button.dataset.bindingAction as ControlAction;
+      capturing = { player, action };
+      status(player, `Press a key for ${actionNames[action].toLowerCase()}. Esc cancels.`);
+      renderBindings();
+    });
+    button.addEventListener('focusout', cancel);
+  });
+  $('reset-bindings').addEventListener('click', () => {
+    cancel();
+    settings.bindings = defaultBindings();
+    saveBindings(settings.bindings);
+    status(1, 'Default keys restored.');
+    status(2, 'Default keys restored.');
+    renderBindings();
+  });
+  window.addEventListener('keydown', event => {
+    if (!capturing || screen !== 'menu') return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (event.repeat) return;
+    const { player, action } = capturing;
+    if (event.code === 'Escape') {
+      cancel();
+      status(player, 'Key change cancelled.');
+      return;
+    }
+    if (event.altKey || event.ctrlKey || event.metaKey || !isAssignableCode(event.code)) {
+      status(player, 'Choose a letter, number, arrow or common key. P and M are reserved.');
+      return;
+    }
+    const code = normalizeCode(event.code);
+    const owner = bindingOwner(settings.bindings, code);
+    if (owner && (owner.player !== player || owner.action !== action)) {
+      status(player, `${keyLabel(code)} is used by Player ${owner.player} for ${actionNames[owner.action].toLowerCase()}. Try another key.`);
+      return;
+    }
+    settings.bindings[player][action] = code;
+    saveBindings(settings.bindings);
+    capturing = null;
+    status(player, `${actionNames[action]}: ${keyLabel(code)}. Saved.`);
+    renderBindings();
+  }, true);
+  window.addEventListener('blur', cancel);
   renderBindings();
+}
+
+function wireMenu(): void {
+  wireBindings();
   const weatherIcons: Record<WeatherChoice, string> = {
     random: '<path d="M3 6h3c5 0 7 12 12 12h3m-4-4 4 4-4 4M3 18h3c2 0 3-2 4-4m4-4c1-2 2-4 4-4h3m-4-4 4 4-4 4"/>',
     rain: '<path d="M5 13a4 4 0 0 1 1-8 6 6 0 0 1 11-1 4.5 4.5 0 0 1 1 9M7 16l-1 3m6-3-1 3m6-3-1 3"/>',

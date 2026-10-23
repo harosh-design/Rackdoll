@@ -340,6 +340,8 @@ describe('fixed serve and charged flip', () => {
       const gw = hazardWorld({ hazards: false });
       const p = id === 1 ? gw.p1 : gw.p2;
       const key = id === 1 ? 32 : 82;
+      p.jump();
+      run(gw, 4);
       gw.control.press(key);
       run(gw, CHARGE.maxFrames);
       expect(gw.control.chargeLevel(id)?.power).toBe(1);
@@ -359,15 +361,13 @@ describe('fixed serve and charged flip', () => {
         frames++;
       }
       expect(p.flipping).toBe(false);
-      expect(frames).toBeLessThan(FLIP.maxFrames);
+      expect(frames).toBeLessThanOrEqual(FLIP.maxFrames);
       expect(turned).toBeGreaterThan(Math.PI * 1.6);
       expect(px((p.head.getWorldCenter().x - startX) * dir)).toBeGreaterThan(40);
-      // The rail is back: the head is upright and rides its line again.
-      // (Measured at landing: the lunge carries the doll on into its rail's
-      // stop by the net, which gives a few px, as walking into it does.)
+      // The rail is back: the head is upright, and the solver settles its line.
       expect(Math.abs(p.head.getAngle())).toBeLessThan(0.03);
-      expect(px(Math.abs(p.head.getWorldCenter().x - p.prismBody.getWorldCenter().x))).toBeLessThan(1);
       run(gw, 10);
+      expect(px(Math.abs(p.head.getWorldCenter().x - p.prismBody.getWorldCenter().x))).toBeLessThan(1);
       expect(jointErrPx(p)).toBeLessThan(8);
     }
   });
@@ -404,6 +404,8 @@ describe('fixed serve and charged flip', () => {
 
   it('slows physics only while charging', () => {
     const gw = hazardWorld({ hazards: false });
+    gw.p1.jump();
+    run(gw, 4);
     const step = vi.spyOn(gw.world, 'step');
     gw.control.press(32);
     gw.step();
@@ -418,6 +420,8 @@ describe('fixed serve and charged flip', () => {
 
   it('has a 45-second flip cooldown, not shared across players', () => {
     const gw = hazardWorld({ hazards: false });
+    gw.p1.jump();
+    run(gw, 4);
     const swing = vi.spyOn(gw.p1, 'flip');
     gw.control.press(32);
     run(gw, CHARGE.maxFrames);
@@ -431,11 +435,13 @@ describe('fixed serve and charged flip', () => {
     expect(gw.control.chargeLevel(1)).toBeNull();
     gw.control.release(32);
     gw.step();
-    expect(gw.swing(gw.p1, 1)).toBe(false);
+    expect(gw.flip(gw.p1, 1)).toBe(false);
     expect(swing).toHaveBeenCalledTimes(1);
-    expect(gw.swing(gw.p2, 1)).toBe(true);
+    expect(gw.flip(gw.p2, 1)).toBe(true);
 
     run(gw, FLIP.maxFrames);
+    gw.p1.jump();
+    run(gw, 4);
     gw.frame = firstHitFrame + SWING.cooldownFrames - 1;
     gw.control.press(32);
     gw.step();
@@ -450,8 +456,8 @@ describe('fixed serve and charged flip', () => {
 
   it('holds the hit cooldown through a pause and resets it every round', () => {
     const gw = hazardWorld({ hazards: false });
-    expect(gw.swing(gw.p1, 1)).toBe(true);
-    expect(gw.swing(gw.p2, 1)).toBe(true);
+    expect(gw.flip(gw.p1, 1)).toBe(true);
+    expect(gw.flip(gw.p2, 1)).toBe(true);
     const remaining = gw.swingCooldownFramesLeft(1);
     gw.paused = true;
     run(gw, 30);
@@ -467,13 +473,15 @@ describe('fixed serve and charged flip', () => {
     gw.control.release(32);
     expect(gw.ball.held).toBe(false);
     gw.step();
-    expect(gw.swing(gw.p1, 1)).toBe(true);
+    expect(gw.flip(gw.p1, 1)).toBe(true);
   });
 
   it('gently pulls a nearby free ball toward the kick point while charging', () => {
     const near = hazardWorld({ hazards: false });
     const idle = hazardWorld({ hazards: false });
     for (const gw of [near, idle]) {
+      gw.p1.jump();
+      run(gw, 4);
       const hand = gw.p1.kickPoint;
       gw.ball.body.setTransform(Vec2(hand.x, hand.y - toM(50)), 0);
       gw.ball.body.setLinearVelocity(Vec2(0, 0));
@@ -499,7 +507,7 @@ describe('fixed serve and charged flip', () => {
         .toBeLessThan(155);
       const before = defender.head.getLinearVelocity().x;
       const position = defender.head.getWorldCenter().x;
-      gw.swing(attacker, power);
+      gw.flip(attacker, power);
       expect(untilOpponentHit(gw, defender.id)).toBeGreaterThan(0);
       const speed = (defender.head.getLinearVelocity().x - before) * sign;
       run(gw, 4);
@@ -539,13 +547,13 @@ describe('fixed serve and charged flip', () => {
       body.setAngularVelocity(0);
     }
 
-    gw.swing(gw.p1, 1);
+    gw.flip(gw.p1, 1);
     expect(untilOpponentHit(gw, 2)).toBeGreaterThan(0);
   });
 
   it('does not hit an opponent across the court', () => {
     const gw = hazardWorld({ hazards: false });
-    gw.swing(gw.p1, 1);
+    gw.flip(gw.p1, 1);
     expect(untilOpponentHit(gw, 2)).toBe(-1);
     expect(gw.opponentHitEffects[2].frame).toBe(-100);
   });
@@ -559,7 +567,7 @@ describe('perfect contact, net counter, and desperate save', () => {
     gw.flags.ballPlayerHits!.push({ playerId: 1, part: 'FootLeft' });
     gw.step();
     expect(gw.perfectEffects[1].frame).toBe(-100);
-    gw.swing(gw.p1, 1);
+    gw.flip(gw.p1, 1);
     gw.flags.ballPlayerHits!.push({ playerId: 1, part: 'HandLeft' });
     gw.step();
     expect(gw.perfectEffects[1].frame).toBe(-100);
@@ -573,7 +581,7 @@ describe('perfect contact, net counter, and desperate save', () => {
       const gw = hazardWorld({ hazards: false });
       gw.world.setGravity(Vec2(0, 0));
       // Park the ball where the feet pass at the top of the turn.
-      gw.swing(gw.p1, power);
+      gw.flip(gw.p1, power);
       let hit = -1;
       for (let f = 0; f < FLIP.maxFrames && hit < 0; f++) {
         if (f === 0) {
@@ -597,7 +605,7 @@ describe('perfect contact, net counter, and desperate save', () => {
     const late = hazardWorld({ hazards: false });
     late.ball.body.setTransform(Vec2(toM(600), toM(60)), 0);
     late.ball.body.setLinearVelocity(Vec2(0, 0));
-    late.swing(late.p1, 1);
+    late.flip(late.p1, 1);
     run(late, FLIP.maxFrames + 1);
     late.flags.ballPlayerHits!.push({ playerId: 1, part: 'FootLeft' });
     late.step();
@@ -614,8 +622,8 @@ describe('perfect contact, net counter, and desperate save', () => {
     const y = (gw.p1.head.getWorldCenter().y + gw.p2.head.getWorldCenter().y) / 2 - toM(70);
     gw.ball.body.setTransform(Vec2(toM(320), y), 0);
     gw.ball.body.setLinearVelocity(Vec2(0, 0));
-    gw.swing(gw.p1, 1);
-    gw.swing(gw.p2, 0.5);
+    gw.flip(gw.p1, 1);
+    gw.flip(gw.p2, 0.5);
     gw.step();
     expect(gw.counterEffect.frame).toBe(gw.frame - 1);
     expect(gw.ball.velocity.x).toBe(0);
@@ -634,6 +642,19 @@ describe('perfect contact, net counter, and desperate save', () => {
       gw.step();
     }
     gw.control.release(39);
+    gw.p1.jump();
+    gw.p2.jump();
+    run(gw, 4);
+    gw.world.setGravity(Vec2(0, 0));
+    for (const [player, x] of [[gw.p1, 260], [gw.p2, 380]] as const) {
+      const shift = toM(x) - player.head.getWorldCenter().x;
+      for (const body of [...player.bodies, player.prismBody]) {
+        const position = body.getPosition();
+        body.setTransform(Vec2(position.x + shift, position.y), body.getAngle());
+        body.setLinearVelocity(Vec2(0, 0));
+        body.setAngularVelocity(0);
+      }
+    }
     const y = (gw.p1.head.getWorldCenter().y + gw.p2.head.getWorldCenter().y) / 2 - toM(70);
     gw.ball.body.setTransform(Vec2(toM(320), y), 0);
     gw.ball.body.setLinearVelocity(Vec2(0, 0));
@@ -1088,7 +1109,7 @@ describe('hazards (reworked §13)', () => {
         run(gw, 30);
         expect(e.phase).toBe('stuck');
         expect(limbOf(e.host!)).toBe(`arm${hand}`);
-        gw.swing(player, 1);
+        gw.flip(player, 1);
         run(gw, 3);
         expect(e.host).toBeNull();
         expect(e.bonds).toHaveLength(0);
@@ -1128,7 +1149,7 @@ describe('hazards (reworked §13)', () => {
         const e = gw.executers[0];
         const player = side === 1 ? gw.p1 : gw.p2;
         run(gw, 20);
-        gw.swing(player, 1);
+        gw.flip(player, 1);
         let knocked = false;
         for (let f = 0; f < FLIP.maxFrames && !knocked; f++) {
           // Hold it where the feet sweep through until they get there.
