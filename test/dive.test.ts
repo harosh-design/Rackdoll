@@ -57,12 +57,12 @@ describe('grounded volleyball dive', () => {
       const startX = player.head.getWorldCenter().x;
       gw.ball.body.setTransform(Vec2(startX + direction * toM(100), toM(315)), 0);
       gw.ball.body.setLinearVelocity(Vec2(0, 0));
-      expect(gw.swing(player)).toBe(true);
+      expect(gw.swing(player, 0, true)).toBe(true);
       expect(player.diving).toBe(true);
       expect(player.flipping).toBe(false);
       expect(player.ass.getLinearVelocity().x * direction).toBeGreaterThan(0);
       expect(gw.swingCooldownFramesLeft(id)).toBe(SWING.cooldownFrames);
-      expect(gw.swing(player)).toBe(false);
+      expect(gw.swing(player, 0, true)).toBe(false);
       let largestAngle = 0;
       let reached = false;
       for (let frame = 0; frame < DIVE.maxFrames + 1; frame++) {
@@ -87,8 +87,9 @@ describe('grounded volleyball dive', () => {
     },
   );
 
-  it('dives on press, does not charge, and does not flip on release or while held', () => {
+  it('dives with down and attack held, does not charge, and does not flip on release or while held', () => {
     const gw = hazardWorld({ hazards: false });
+    gw.control.press(40);
     gw.control.press(32);
     gw.step();
     expect(gw.p1.diving).toBe(true);
@@ -98,6 +99,45 @@ describe('grounded volleyball dive', () => {
     gw.control.release(32);
     gw.step();
     expect(gw.p1.performingAcrobatics).toBe(false);
+  });
+
+  it.each([1, 2] as const)('lets player %s charge and flip from the ground without holding down', id => {
+    const gw = hazardWorld({ hazards: false });
+    const player = id === 1 ? gw.p1 : gw.p2;
+    const key = KEYS[id].serve;
+    expect(player.touchingGround).toBe(true);
+    gw.control.press(key);
+    run(gw, 4);
+    expect(player.diving).toBe(false);
+    expect(gw.control.chargeLevel(id)?.power).toBeGreaterThan(0);
+    gw.control.release(key);
+    gw.step();
+    expect(player.flipping).toBe(true);
+    expect(player.diving).toBe(false);
+  });
+
+  const combinations = ([1, 2] as const).flatMap(id =>
+    (['down-first', 'attack-first', 'together'] as const).map(order => ({ id, order })));
+  it.each(combinations)('starts player $id diving when the keys are held $order', ({ id, order }) => {
+    const gw = hazardWorld({ hazards: false });
+    const player = id === 1 ? gw.p1 : gw.p2;
+    const keys = KEYS[id];
+    if (order === 'down-first') {
+      gw.control.press(keys.down);
+      gw.step();
+      expect(player.diving).toBe(false);
+    } else if (order === 'attack-first') {
+      gw.control.press(keys.serve);
+      gw.step();
+      expect(player.diving).toBe(false);
+      expect(gw.control.chargeLevel(id)).not.toBeNull();
+    }
+    gw.control.press(keys.down);
+    gw.control.press(keys.serve);
+    gw.step();
+    expect(player.diving).toBe(true);
+    expect(player.flipping).toBe(false);
+    expect(gw.control.chargeLevel(id)).toBeNull();
   });
 
   it.each([-1, 1])('can save a low ball with the hands while diving in direction %s', direction => {
@@ -111,7 +151,7 @@ describe('grounded volleyball dive', () => {
       const part = a === gw.ball.body ? ud(b)?.part : b === gw.ball.body ? ud(a)?.part : undefined;
       if (part?.startsWith('Hand') || part?.startsWith('Finger')) handsMetBall = true;
     });
-    gw.swing(gw.p1);
+    gw.swing(gw.p1, 0, true);
     let saved = false;
     for (let frame = 0; frame < DIVE.maxFrames; frame++) {
       gw.step();
@@ -121,12 +161,17 @@ describe('grounded volleyball dive', () => {
     expect(gw.perfectEffects[1].frame).toBe(-100);
   });
 
-  it('uses a reassigned rally key for the grounded dive', () => {
-    const gw = hazardWorld({ hazards: false, bindings: { 1: { ...KEYS[1], serve: 'KeyG' }, 2: KEYS[2] } });
+  it('uses both reassigned down and rally keys for the grounded dive', () => {
+    const gw = hazardWorld({ hazards: false, bindings: { 1: { ...KEYS[1], down: 'KeyH', serve: 'KeyG' }, 2: KEYS[2] } });
+    gw.control.press(40);
     gw.control.press(32);
     gw.step();
     expect(gw.p1.diving).toBe(false);
     gw.control.press('KeyG');
+    gw.step();
+    expect(gw.p1.diving).toBe(false);
+    expect(gw.control.chargeLevel(1)).not.toBeNull();
+    gw.control.press('KeyH');
     gw.step();
     expect(gw.p1.diving).toBe(true);
     expect(gw.control.chargeLevel(1)).toBeNull();
@@ -134,7 +179,7 @@ describe('grounded volleyball dive', () => {
 
   it.each(['tiny', 'giant'] as const)('recovers safely when %s changes body size during a dive', power => {
     const gw = hazardWorld({ hazards: false });
-    gw.swing(gw.p1);
+    gw.swing(gw.p1, 0, true);
     gw.powerUps.activate(1, power, gw.frame);
     run(gw, DIVE.maxFrames + 10);
     expect(gw.p1.diving).toBe(false);
@@ -144,7 +189,7 @@ describe('grounded volleyball dive', () => {
 
   it('releases dive motors before a limb is severed', () => {
     const gw = hazardWorld({ hazards: false });
-    gw.swing(gw.p1);
+    gw.swing(gw.p1, 0, true);
     run(gw, 3);
     gw.p1.sever('ArmLeft');
     expect(gw.p1.diving).toBe(false);
@@ -153,7 +198,7 @@ describe('grounded volleyball dive', () => {
     expect([...gw.p1.bodies, ...gw.p1.detachedBodies].every(body => Number.isFinite(body.getPosition().y))).toBe(true);
   });
 
-  it('preserves the charged flip when no attached part touches the floor', () => {
+  it.each([false, true])('preserves the airborne charged flip with down held: %s', downHeld => {
     const gw = hazardWorld({ hazards: false });
     gw.world.setGravity(Vec2(0, 0));
     for (const body of gw.p1.bodies) {
@@ -163,6 +208,7 @@ describe('grounded volleyball dive', () => {
     gw.p1.setLinVelZero();
     gw.world.step(0);
     expect(gw.p1.touchingGround).toBe(false);
+    if (downHeld) gw.control.press(40);
     gw.control.press(32);
     run(gw, 4);
     expect(gw.control.chargeLevel(1)?.power).toBeGreaterThan(0);
@@ -175,7 +221,7 @@ describe('grounded volleyball dive', () => {
 
   it('freezes during pause and clears the dive and cooldown on a new round', () => {
     const gw = hazardWorld({ hazards: false });
-    gw.swing(gw.p1);
+    gw.swing(gw.p1, 0, true);
     run(gw, 3);
     const angle = gw.p1.head.getAngle();
     const cooldown = gw.swingCooldownFramesLeft(1);

@@ -246,8 +246,8 @@ export const SERVE = {
 } as const;
 
 /**
- * The button serves immediately while the ball is held. During a rally it
- * dives on floor contact, or charges an airborne flip that fires on release.
+ * The button serves immediately while the ball is held. During a rally,
+ * holding down with it dives from the floor; otherwise release fires a charged flip.
  */
 export const CHARGE = {
   /** Frames of hold to reach full power. 24 @ 30 fps ≈ 0.8 s. */

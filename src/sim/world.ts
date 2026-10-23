@@ -282,9 +282,9 @@ export class GameWorld {
 
   canSwing = (player: Player): boolean => this.swingCooldownFramesLeft(player.id) === 0 && !player.performingAcrobatics;
 
-  /** The shared rally button dives from any floor contact, and flips in the air. */
-  swing = (player: Player, power = 1): boolean => {
-    if (!player.touchingGround) return this.flip(player, power);
+  /** Down plus the rally button requests a grounded dive; other attacks flip. */
+  swing = (player: Player, power = 1, dive = false): boolean => {
+    if (!dive || !player.touchingGround) return this.flip(player, power);
     if (!this.canSwing(player) || this.game.phase !== 'play' || this.ball.ballOfPlayer !== 0) return false;
     if (!player.dive(this.ball.position)) return false;
     this.nextSwingFrame[player.id] = this.frame + SWING.cooldownFrames;
