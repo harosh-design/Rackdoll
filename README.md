@@ -204,12 +204,11 @@ complete instructions without leaving match setup.
 **Serve in the air.** The held ball hangs at your feet. Tap Space (or R for
 player 2) to serve with a fixed underhand flick. Jump first to clear the net.
 Once the ball is free, hold Down + Space (or S + R for player 2) together
-while any attached body part touches the floor to immediately launch a low
-volleyball dive toward the ball, even when the ball is behind the player.
+to immediately launch a volleyball dive toward the ball, on the ground or
+in the air, even when the ball is behind the player.
 Either key can be pressed first, and custom down and attack bindings work
 the same way. Both arms reach forward and the legs trail behind; the doll
-then returns upright. Walls, sensors and detached limbs do not count as floor
-contact. Hold the attack key alone to tuck and release to front-flip toward
+then returns upright. Hold the attack key alone to tuck and release to front-flip toward
 the opponent. The doll lunges at the net and turns one full circle, feet
 coming over the top and down in front of it. The head normally rides a rail
 that forbids it to rotate; for the flip that rail becomes a wheel joint on the same line,

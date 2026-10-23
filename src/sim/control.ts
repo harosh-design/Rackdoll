@@ -20,7 +20,7 @@ export interface ChargeInfo {
 /**
  * Controls run once per frame after the world step. A press while holding the
  * ball serves at fixed power immediately. During a rally, holding down and
- * the attack key together starts a dive from the floor. The attack key alone
+ * the attack key together starts a dive on the ground or in the air. The attack key alone
  * charges a flip, which fires on release.
  */
 export class Control {
@@ -91,7 +91,7 @@ export class Control {
     action = this.active.get(player.id);
     if (action == null) return;
 
-    if (action.kind === 'swing' && this.isDown(action.key) && this.isDown(k.down) && player.touchingGround) {
+    if (action.kind === 'swing' && this.isDown(action.key) && this.isDown(k.down)) {
       action.kind = 'dive';
       this.chargeFrames.delete(player.id);
       swing(player, 0, true);

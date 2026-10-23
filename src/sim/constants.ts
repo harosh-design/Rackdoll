@@ -247,7 +247,7 @@ export const SERVE = {
 
 /**
  * The button serves immediately while the ball is held. During a rally,
- * holding down with it dives from the floor; otherwise release fires a charged flip.
+ * holding down with it dives at any height; otherwise release fires a charged flip.
  */
 export const CHARGE = {
   /** Frames of hold to reach full power. 24 @ 30 fps ≈ 0.8 s. */
@@ -343,7 +343,7 @@ export const FLIP = {
   opponentFromRad: Math.PI * 1.1,
 } as const;
 
-/** A grounded attack stretches the doll into a low volleyball dive at the ball. */
+/** A volleyball dive stretches the doll toward the ball on the ground or in the air. */
 export const DIVE = {
   forwardSpeed: 8,
   lift: 2.8,

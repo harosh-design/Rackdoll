@@ -833,7 +833,7 @@ export class Player {
 
   /** Launch toward the ball with both arms reaching forward and the legs trailing. */
   dive(target: Vec2Value): boolean {
-    if (this.performingAcrobatics || !this.touchingGround) return false;
+    if (this.performingAcrobatics) return false;
     const dx = target.x - this.head.getWorldCenter().x;
     const dir: 1 | -1 = dx === 0 ? (this.id === 1 ? 1 : -1) : dx > 0 ? 1 : -1;
     const joint = this.releaseRotation(dir * DIVE.maxSpin, DIVE.maxMotorTorque);

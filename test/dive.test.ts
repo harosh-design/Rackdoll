@@ -7,7 +7,7 @@ import { KEYS } from '../src/sim/control';
 import { ud } from '../src/sim/types';
 import { hazardWorld, jointErrPx, run } from './helpers';
 
-describe('floor contact for the rally action', () => {
+describe('player floor contact', () => {
   it.each(PARTS.map(part => part.name))('recognizes a lone %s touching the floor', name => {
     const physics = new World();
     const ground = new Ground(physics, 'sharp');
@@ -49,7 +49,7 @@ describe('floor contact for the rally action', () => {
   });
 });
 
-describe('grounded volleyball dive', () => {
+describe('volleyball dive', () => {
   it.each([[1, -1], [1, 1], [2, -1], [2, 1]] as const)(
     'launches player %s toward a ball in direction %s without a somersault', (id, direction) => {
       const gw = hazardWorld({ hazards: false });
@@ -117,11 +117,17 @@ describe('grounded volleyball dive', () => {
   });
 
   const combinations = ([1, 2] as const).flatMap(id =>
-    (['down-first', 'attack-first', 'together'] as const).map(order => ({ id, order })));
-  it.each(combinations)('starts player $id diving when the keys are held $order', ({ id, order }) => {
+    (['grounded', 'airborne'] as const).flatMap(position =>
+      (['down-first', 'attack-first', 'together'] as const).map(order => ({ id, position, order }))));
+  it.each(combinations)('starts $position player $id diving when the keys are held $order', ({ id, position, order }) => {
     const gw = hazardWorld({ hazards: false });
     const player = id === 1 ? gw.p1 : gw.p2;
     const keys = KEYS[id];
+    if (position === 'airborne') {
+      player.jump();
+      run(gw, 4);
+      expect(player.touchingGround).toBe(false);
+    }
     if (order === 'down-first') {
       gw.control.press(keys.down);
       gw.step();
@@ -198,7 +204,7 @@ describe('grounded volleyball dive', () => {
     expect([...gw.p1.bodies, ...gw.p1.detachedBodies].every(body => Number.isFinite(body.getPosition().y))).toBe(true);
   });
 
-  it.each([false, true])('preserves the airborne charged flip with down held: %s', downHeld => {
+  it('preserves the airborne charged flip without holding down', () => {
     const gw = hazardWorld({ hazards: false });
     gw.world.setGravity(Vec2(0, 0));
     for (const body of gw.p1.bodies) {
@@ -208,7 +214,6 @@ describe('grounded volleyball dive', () => {
     gw.p1.setLinVelZero();
     gw.world.step(0);
     expect(gw.p1.touchingGround).toBe(false);
-    if (downHeld) gw.control.press(40);
     gw.control.press(32);
     run(gw, 4);
     expect(gw.control.chargeLevel(1)?.power).toBeGreaterThan(0);
@@ -217,6 +222,23 @@ describe('grounded volleyball dive', () => {
     gw.step();
     expect(gw.p1.flipping).toBe(true);
     expect(gw.p1.diving).toBe(false);
+  });
+
+  it.each([1, 2] as const)('lets airborne player %s dive directly and recover safely', id => {
+    const gw = hazardWorld({ hazards: false });
+    const player = id === 1 ? gw.p1 : gw.p2;
+    player.jump();
+    run(gw, 4);
+    expect(player.touchingGround).toBe(false);
+    expect(gw.swing(player, 0, true)).toBe(true);
+    expect(player.diving).toBe(true);
+    expect(player.flipping).toBe(false);
+    expect(gw.swingCooldownFramesLeft(id)).toBe(SWING.cooldownFrames);
+    run(gw, DIVE.maxFrames + 10);
+    expect(player.performingAcrobatics).toBe(false);
+    expect(player.railV.getBodyB()).toBe(player.head);
+    expect(player.revolutes.every(joint => !joint.isMotorEnabled())).toBe(true);
+    expect(player.bodies.every(body => Number.isFinite(body.getPosition().y))).toBe(true);
   });
 
   it('freezes during pause and clears the dive and cooldown on a new round', () => {
