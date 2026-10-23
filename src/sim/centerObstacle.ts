@@ -18,7 +18,7 @@ export const ORIGINAL_PLAYER_HEIGHT_PX = Math.max(...PARTS.map(part => part.dy +
   - Math.min(...PARTS.map(part => part.dy - partExtent(part)));
 export const AIR_HEATER = {
   halfWidthPx: 3, rangePx: ORIGINAL_PLAYER_HEIGHT_PX * 0.3,
-  acceleration: 585, upwardRatio: 1 / 3,
+  acceleration: 672.75, upwardRatio: 1 / 3,
 } as const;
 
 /** Offset from the nearest point on the fan's vertical outlet, in metres. */

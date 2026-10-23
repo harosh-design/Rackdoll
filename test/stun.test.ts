@@ -1,5 +1,6 @@
 import { Box, Circle, Vec2, World } from 'planck';
 import { describe, expect, it } from 'vitest';
+import { KEYS } from '../src/sim/control';
 import { ACTIONS, BODYTYPE, CHARGE, FLIP, STUN } from '../src/sim/constants';
 import { installContactListener, type ContactFlags } from '../src/sim/contacts';
 import type { PlayerId } from '../src/sim/player';
@@ -119,7 +120,7 @@ describe('weakened controls while stunned', () => {
       const gw = hazardWorld({ hazards: false });
       const start = gw.p1.head.getWorldCenter().x;
       if (stunned) gw.p1.stun();
-      gw.control.press(39);
+      gw.control.press(KEYS[1].right);
       run(gw, 20);
       return gw.p1.head.getWorldCenter().x - start;
     };
@@ -152,7 +153,7 @@ describe('weakened controls while stunned', () => {
     gw.p1.jump();
     run(gw, 4);
     gw.p1.stun();
-    gw.control.press(32);
+    gw.control.press(KEYS[1].serve);
     run(gw, 10);
     expect(gw.control.chargeLevel(1)?.power).toBeCloseTo(2 / CHARGE.maxFrames);
     run(gw, STUN.frames - 11);

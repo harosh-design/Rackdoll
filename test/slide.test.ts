@@ -38,99 +38,104 @@ describe('football slide', () => {
     },
   );
 
-  const combinations = ([1, 2] as const).flatMap(id =>
+  const positions = ([1, 2] as const).flatMap(id =>
     ([-1, 1] as const).flatMap(direction =>
-      (['direction-first', 'attack-first', 'together'] as const).map(order => ({ id, direction, order }))));
-  it.each(combinations)('starts player $id sliding $direction with $order input', ({ id, direction, order }) => {
+      (['grounded', 'airborne'] as const).map(position => ({ id, direction, position }))));
+  it.each(positions)('slides $position player $id toward the ball in direction $direction with one key', ({ id, direction, position }) => {
     const gw = hazardWorld({ hazards: false });
     const player = id === 1 ? gw.p1 : gw.p2;
-    const keys = KEYS[id];
-    const directionKey = direction === 1 ? keys.right : keys.left;
-    if (order === 'direction-first') {
-      gw.control.press(directionKey);
-      gw.step();
-    } else if (order === 'attack-first') {
-      gw.control.press(keys.serve);
-      gw.step();
-      expect(gw.control.chargeLevel(id)).not.toBeNull();
+    if (position === 'airborne') {
+      player.jump();
+      run(gw, 4);
+      expect(player.touchingGround).toBe(false);
     }
-    gw.control.press(directionKey);
-    gw.control.press(keys.serve);
+    const x = player.head.getPosition().x;
+    gw.ball.body.setTransform(Vec2(x + direction * toM(100), toM(100)), 0);
+    gw.control.press(KEYS[id].slide);
     gw.step();
     expect(player.sliding).toBe(true);
     expect(player.diving || player.flipping).toBe(false);
     expect(player.prismBody.getLinearVelocity().x * direction).toBeGreaterThan(0);
     expect(gw.control.chargeLevel(id)).toBeNull();
-    gw.control.release(keys.serve);
+    gw.control.release(KEYS[id].slide);
     gw.step();
     expect(player.flipping).toBe(false);
   });
 
-  it('uses reassigned direction and attack keys', () => {
+  it('uses a reassigned slide key and cancels a charged flip', () => {
     const gw = hazardWorld({ hazards: false, bindings: {
-      1: { ...KEYS[1], right: 'KeyL', serve: 'KeyG' }, 2: KEYS[2],
+      1: { ...KEYS[1], slide: 'KeyL', serve: 'KeyJ' }, 2: KEYS[2],
     } });
-    gw.control.press('KeyG');
+    gw.control.press(KEYS[1].slide);
     gw.step();
+    expect(gw.p1.sliding).toBe(false);
+    gw.control.press('KeyJ');
+    gw.step();
+    expect(gw.control.chargeLevel(1)).not.toBeNull();
     gw.control.press('KeyL');
     gw.step();
     expect(gw.p1.sliding).toBe(true);
-    expect(gw.p1.prismBody.getLinearVelocity().x).toBeGreaterThan(0);
+    expect(gw.control.chargeLevel(1)).toBeNull();
+    gw.control.release('KeyJ');
+    gw.control.release('KeyL');
+    run(gw, SLIDE.maxFrames + 1);
+    expect(gw.p1.performingAcrobatics).toBe(false);
+    expect(gw.swingCooldownFramesLeft(1)).toBe(0);
   });
 
-  it('gives down priority over sideways input', () => {
+  it('gives the dive button priority when both move buttons are pressed together', () => {
     const gw = hazardWorld({ hazards: false });
-    gw.control.press(40);
-    gw.control.press(39);
-    gw.control.press(32);
+    gw.control.press(KEYS[1].dive);
+    gw.control.press(KEYS[1].slide);
     gw.step();
     expect(gw.p1.diving).toBe(true);
     expect(gw.p1.sliding).toBe(false);
   });
 
-  it('cancels opposite directions instead of choosing a slide direction', () => {
+  const movementKeys = ([1, 2] as const).flatMap(id =>
+    (['left', 'right', 'down'] as const).map(action => ({ id, action })));
+  it.each(movementKeys)('keeps player $id charging a super hit while holding $action', ({ id, action }) => {
     const gw = hazardWorld({ hazards: false });
-    gw.control.press(37);
-    gw.control.press(39);
-    gw.control.press(32);
+    const player = id === 1 ? gw.p1 : gw.p2;
+    gw.control.press(KEYS[id][action]);
+    gw.control.press(KEYS[id].serve);
     gw.step();
-    expect(gw.p1.sliding).toBe(false);
-    expect(gw.control.chargeLevel(1)).not.toBeNull();
-    gw.control.release(32);
+    expect(player.sliding || player.diving).toBe(false);
+    expect(gw.control.chargeLevel(id)?.power).toBeGreaterThan(0);
+    gw.control.release(KEYS[id].serve);
     gw.step();
-    expect(gw.p1.flipping).toBe(true);
+    expect(player.flipping).toBe(true);
   });
 
   it('allows another slide and then a dive while the flip is cooling down', () => {
     const gw = hazardWorld({ hazards: false });
     gw.flip(gw.p1);
     run(gw, FLIP.maxFrames + 1);
-    gw.control.press(39);
     for (let attempt = 0; attempt < 2; attempt++) {
-      gw.control.press(32);
+      gw.control.press(KEYS[1].slide);
       gw.step();
       expect(gw.p1.sliding).toBe(true);
-      gw.control.release(32);
+      gw.control.release(KEYS[1].slide);
       run(gw, SLIDE.maxFrames + 1);
       expect(gw.p1.sliding).toBe(false);
     }
-    gw.control.press(40);
-    gw.control.press(32);
+    gw.control.press(KEYS[1].dive);
     gw.step();
     expect(gw.p1.diving).toBe(true);
     expect(gw.swingCooldownFramesLeft(1)).toBeGreaterThan(0);
-    gw.control.release(32);
+    gw.control.release(KEYS[1].dive);
     run(gw, DIVE.maxFrames + 1);
     expect(gw.p1.performingAcrobatics).toBe(false);
   });
 
-  it('does not repeat a held slide or trigger a flip when attack is released', () => {
+  it('does not repeat a held slide on key repeat or trigger a flip on release', () => {
     const gw = hazardWorld({ hazards: false });
-    gw.control.press(37);
-    gw.control.press(32);
+    gw.control.press(KEYS[1].slide);
     run(gw, SLIDE.maxFrames + 3);
+    gw.control.press(KEYS[1].slide); // OS key repeat while still held
+    gw.step();
     expect(gw.p1.performingAcrobatics).toBe(false);
-    gw.control.release(32);
+    gw.control.release(KEYS[1].slide);
     gw.step();
     expect(gw.p1.performingAcrobatics).toBe(false);
     expect(gw.swingCooldownFramesLeft(1)).toBe(0);
@@ -139,14 +144,26 @@ describe('football slide', () => {
   it('keeps serving first when the attack key is combined with movement', () => {
     const gw = world();
     run(gw, 90);
-    gw.control.press(39);
-    gw.control.press(32);
+    gw.control.press(KEYS[1].right);
+    gw.control.press(KEYS[1].serve);
     gw.step();
     expect(gw.ball.held).toBe(false);
     expect(gw.p1.performingAcrobatics).toBe(false);
-    gw.control.release(32);
+    gw.control.release(KEYS[1].serve);
     gw.step();
     expect(gw.p1.performingAcrobatics).toBe(false);
+  });
+
+  it('can slide after serving while the serve button remains held', () => {
+    const gw = world();
+    run(gw, 90);
+    gw.control.press(KEYS[1].serve);
+    gw.step();
+    expect(gw.ball.held).toBe(false);
+    gw.control.press(KEYS[1].slide);
+    gw.step();
+    expect(gw.p1.sliding).toBe(true);
+    expect(gw.control.chargeLevel(1)).toBeNull();
   });
 
   it('supports starting in the air, freezes on pause and clears on a new round', () => {
@@ -154,8 +171,7 @@ describe('football slide', () => {
     gw.p1.jump();
     run(gw, 4);
     expect(gw.p1.touchingGround).toBe(false);
-    gw.control.press(37);
-    gw.control.press(32);
+    gw.control.press(KEYS[1].slide);
     run(gw, 3);
     expect(gw.p1.sliding).toBe(true);
     const position = gw.p1.head.getPosition().clone();

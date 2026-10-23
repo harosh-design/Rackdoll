@@ -286,14 +286,14 @@ export class GameWorld {
   canManeuver = (player: Player): boolean => !player.performingAcrobatics &&
     this.game.phase === 'play' && this.ball.ballOfPlayer === 0;
 
-  /** Down plus the rally button requests a dive at any height; other attacks flip. */
+  /** The dedicated dive button works at any height; the attack button flips. */
   swing = (player: Player, power = 1, dive = false): boolean => {
     if (!dive) return this.flip(player, power);
     return this.canManeuver(player) && player.dive(this.ball.position);
   };
 
-  /** A football slide in the requested direction, independent of flip recovery. */
-  slide = (player: Player, direction: 1 | -1): boolean =>
+  /** Slide toward the ball by default, independently of flip recovery. */
+  slide = (player: Player, direction: 1 | -1 = this.ball.position.x < player.head.getWorldCenter().x ? -1 : 1): boolean =>
     this.canManeuver(player) && player.slide(direction);
 
   /** Execute an explicit flip, also used by the CPU's existing flip plans. */

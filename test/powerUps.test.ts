@@ -1,3 +1,4 @@
+import { KEYS } from '../src/sim/control';
 import { Vec2 } from 'planck';
 import { describe, expect, it, vi } from 'vitest';
 import { FEATHER, JOINTS, LANDING_CENTRE_M, MAX_TOUCHES, NET_X_PX, PARTS, POWER, toM, toPx } from '../src/sim/constants';
@@ -138,7 +139,7 @@ describe('bee powers without floor gifts', () => {
     // Measure the intact skeleton independently of impalement at the spike.
     vi.spyOn(gw.netSpike, 'impacts').mockReturnValue([]);
     const r = rng(7);
-    const keys = [37, 38, 39, 40];
+    const keys = [KEYS[1].left, KEYS[1].jump, KEYS[1].right, KEYS[1].down];
     for (let cycle = 0; cycle < 40; cycle++) {
       for (const k of keys) gw.control.release(k);
       gw.control.press(keys[Math.floor(r() * keys.length)]);
@@ -165,12 +166,12 @@ describe('bee powers without floor gifts', () => {
       gw.p1.forgetBallJoint();
       gw.ball.ballOfPlayer = 0;
       gw.ball.body.setTransform(Vec2(toM(-150), toM(100)), 0);
-      gw.control.press(39);
+      gw.control.press(KEYS[1].right);
       run(gw, 90);
       if (jump) {
-        gw.control.press(38);
+        gw.control.press(KEYS[1].jump);
         run(gw, 4);
-        gw.control.release(38);
+        gw.control.release(KEYS[1].jump);
       }
       gw.powerUps.activate(1, 'giant', gw.frame);
       for (let f = 0; f < 150; f++) {

@@ -87,16 +87,17 @@ describe('volleyball dive', () => {
     },
   );
 
-  it('dives with down and attack held, does not charge, and does not flip on release or while held', () => {
+  it('dives on one press without charging, repeating on key repeat, or flipping on release', () => {
     const gw = hazardWorld({ hazards: false });
-    gw.control.press(40);
-    gw.control.press(32);
+    gw.control.press(KEYS[1].dive);
     gw.step();
     expect(gw.p1.diving).toBe(true);
     expect(gw.control.chargeLevel(1)).toBeNull();
     run(gw, DIVE.maxFrames + 2);
+    gw.control.press(KEYS[1].dive); // OS key repeat while still held
+    gw.step();
     expect(gw.p1.performingAcrobatics).toBe(false);
-    gw.control.release(32);
+    gw.control.release(KEYS[1].dive);
     gw.step();
     expect(gw.p1.performingAcrobatics).toBe(false);
   });
@@ -116,33 +117,20 @@ describe('volleyball dive', () => {
     expect(player.diving).toBe(false);
   });
 
-  const combinations = ([1, 2] as const).flatMap(id =>
-    (['grounded', 'airborne'] as const).flatMap(position =>
-      (['down-first', 'attack-first', 'together'] as const).map(order => ({ id, position, order }))));
-  it.each(combinations)('starts $position player $id diving when the keys are held $order', ({ id, position, order }) => {
+  const positions = ([1, 2] as const).flatMap(id =>
+    (['grounded', 'airborne'] as const).map(position => ({ id, position })));
+  it.each(positions)('starts $position player $id diving with only the dive key', ({ id, position }) => {
     const gw = hazardWorld({ hazards: false });
     const player = id === 1 ? gw.p1 : gw.p2;
-    const keys = KEYS[id];
     if (position === 'airborne') {
       player.jump();
       run(gw, 4);
       expect(player.touchingGround).toBe(false);
     }
-    if (order === 'down-first') {
-      gw.control.press(keys.down);
-      gw.step();
-      expect(player.diving).toBe(false);
-    } else if (order === 'attack-first') {
-      gw.control.press(keys.serve);
-      gw.step();
-      expect(player.diving).toBe(false);
-      expect(gw.control.chargeLevel(id)).not.toBeNull();
-    }
-    gw.control.press(keys.down);
-    gw.control.press(keys.serve);
+    gw.control.press(KEYS[id].dive);
     gw.step();
     expect(player.diving).toBe(true);
-    expect(player.flipping).toBe(false);
+    expect(player.flipping || player.sliding).toBe(false);
     expect(gw.control.chargeLevel(id)).toBeNull();
   });
 
@@ -167,20 +155,25 @@ describe('volleyball dive', () => {
     expect(gw.perfectEffects[1].frame).toBe(-100);
   });
 
-  it('uses both reassigned down and rally keys for the grounded dive', () => {
-    const gw = hazardWorld({ hazards: false, bindings: { 1: { ...KEYS[1], down: 'KeyH', serve: 'KeyG' }, 2: KEYS[2] } });
-    gw.control.press(40);
-    gw.control.press(32);
+  it('uses a reassigned dive key and cancels an existing charged flip', () => {
+    const gw = hazardWorld({ hazards: false, bindings: {
+      1: { ...KEYS[1], dive: 'KeyH', serve: 'KeyJ' }, 2: KEYS[2],
+    } });
+    gw.control.press(KEYS[1].dive);
     gw.step();
     expect(gw.p1.diving).toBe(false);
-    gw.control.press('KeyG');
+    gw.control.press('KeyJ');
     gw.step();
-    expect(gw.p1.diving).toBe(false);
     expect(gw.control.chargeLevel(1)).not.toBeNull();
     gw.control.press('KeyH');
     gw.step();
     expect(gw.p1.diving).toBe(true);
     expect(gw.control.chargeLevel(1)).toBeNull();
+    gw.control.release('KeyJ');
+    gw.control.release('KeyH');
+    run(gw, DIVE.maxFrames + 1);
+    expect(gw.p1.performingAcrobatics).toBe(false);
+    expect(gw.swingCooldownFramesLeft(1)).toBe(0);
   });
 
   it.each(['tiny', 'giant'] as const)('recovers safely when %s changes body size during a dive', power => {
@@ -214,11 +207,11 @@ describe('volleyball dive', () => {
     gw.p1.setLinVelZero();
     gw.world.step(0);
     expect(gw.p1.touchingGround).toBe(false);
-    gw.control.press(32);
+    gw.control.press(KEYS[1].serve);
     run(gw, 4);
     expect(gw.control.chargeLevel(1)?.power).toBeGreaterThan(0);
     expect(gw.p1.performingAcrobatics).toBe(false);
-    gw.control.release(32);
+    gw.control.release(KEYS[1].serve);
     gw.step();
     expect(gw.p1.flipping).toBe(true);
     expect(gw.p1.diving).toBe(false);
@@ -260,38 +253,39 @@ describe('volleyball dive', () => {
 
   it('can dive repeatedly without starting a flip cooldown', () => {
     const gw = hazardWorld({ hazards: false });
-    gw.control.press(40);
     for (let attempt = 0; attempt < 3; attempt++) {
-      gw.control.press(32);
+      gw.control.press(KEYS[1].dive);
       gw.step();
       expect(gw.p1.diving).toBe(true);
       expect(gw.control.chargeLevel(1)).toBeNull();
       expect(gw.swingCooldownFramesLeft(1)).toBe(0);
-      gw.control.release(32);
+      gw.control.release(KEYS[1].dive);
       run(gw, DIVE.maxFrames + 1);
       expect(gw.p1.performingAcrobatics).toBe(false);
     }
   });
 
-  it('can dive during the flip cooldown even when down is pressed after attack', () => {
+  it('can dive on one press during the flip cooldown while attack is held', () => {
     const gw = hazardWorld({ hazards: false });
     gw.flip(gw.p1);
     run(gw, FLIP.maxFrames + 1);
     expect(gw.canSwing(gw.p1)).toBe(false);
     expect(gw.swingCooldownFramesLeft(1)).toBeGreaterThan(0);
-    gw.control.press(32);
+    gw.control.press(KEYS[1].serve);
     gw.step();
     expect(gw.control.chargeLevel(1)).toBeNull();
-    gw.control.press(40);
+    gw.control.press(KEYS[1].dive);
     const remaining = gw.swingCooldownFramesLeft(1);
     gw.step();
     expect(gw.p1.diving).toBe(true);
     expect(gw.swingCooldownFramesLeft(1)).toBe(remaining - 1);
-    gw.control.release(32);
+    gw.control.release(KEYS[1].dive);
     run(gw, DIVE.maxFrames + 1);
-    gw.control.press(32);
+    gw.control.press(KEYS[1].dive);
     gw.step();
     expect(gw.p1.diving).toBe(true);
     expect(gw.swingCooldownFramesLeft(1)).toBeLessThan(SWING.cooldownFrames);
   });
+
+
 });

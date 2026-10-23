@@ -1,3 +1,4 @@
+import { KEYS, type ControlKey } from '../src/sim/control';
 import { Vec2 } from 'planck';
 import { CHARGE, FLIP, toM, toPx } from '../src/sim/constants';
 import type { ExecuterTuning } from '../src/sim/executer';
@@ -44,7 +45,7 @@ export function untilPoint(gw: GameWorld, cap = 30 * 30): number {
  * Jump, then tap once airborne. Keep the prior flight time so the rally
  * physics checks see the ball released from the same part of the jump.
  */
-export function jumpServe(gw: GameWorld, jumpKey = 38, serveKey = 32, delay = 4): void {
+export function jumpServe(gw: GameWorld, jumpKey = KEYS[1].jump, serveKey = KEYS[1].serve, delay = 4): void {
   gw.control.press(jumpKey);
   run(gw, delay);
   gw.control.release(jumpKey);
@@ -120,7 +121,7 @@ export function jointErrPx(p: Player): number {
   return toPx(max);
 }
 
-const hold = (gw: GameWorld, c: number, on: boolean) => (on ? gw.control.press(c) : gw.control.release(c));
+const hold = (gw: GameWorld, c: ControlKey, on: boolean) => (on ? gw.control.press(c) : gw.control.release(c));
 
 /** Scripted player 1 behaviour, kept well clear of the net. */
 export const SCRIPTS: Record<string, (f: number, gw: GameWorld) => void> = {
@@ -128,11 +129,11 @@ export const SCRIPTS: Record<string, (f: number, gw: GameWorld) => void> = {
   pace: (f, gw) => {
     const x = toPx(gw.p1.ass.getWorldCenter().x);
     const right = Math.floor(f / 45) % 2 === 0;
-    hold(gw, 39, right && x < 180);
-    hold(gw, 37, !right && x > -120);
+    hold(gw, KEYS[1].right, right && x < 180);
+    hold(gw, KEYS[1].left, !right && x > -120);
   },
-  hop: (f, gw) => hold(gw, 38, f % 40 === 0),
-  crouch: (f, gw) => hold(gw, 40, Math.floor(f / 30) % 2 === 0),
+  hop: (f, gw) => hold(gw, KEYS[1].jump, f % 40 === 0),
+  crouch: (f, gw) => hold(gw, KEYS[1].down, Math.floor(f / 30) % 2 === 0),
 };
 
 /**

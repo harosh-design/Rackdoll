@@ -307,7 +307,7 @@ function togglePause(): void {
 
 const actionNames: Record<ControlAction, string> = {
   left: 'Move left', right: 'Move right', jump: 'Jump', down: 'Crouch',
-  serve: 'Serve / attack',
+  serve: 'Serve / super hit', dive: 'Dive', slide: 'Slide',
 };
 
 /** The level pickers, their names and blurbs, from the settings. */
@@ -399,7 +399,7 @@ function wireBindings(): void {
       return;
     }
     if (event.altKey || event.ctrlKey || event.metaKey || !isAssignableCode(event.code)) {
-      status(player, 'Choose a letter, number, arrow or common key. P and M are reserved.');
+      status(player, 'Choose a letter, number, arrow or common key. M is reserved.');
       return;
     }
     const code = normalizeCode(event.code);
@@ -539,8 +539,8 @@ function wireMenu(): void {
   });
 
   // The controls in the HUD's top bar, laid out where the renderer leaves
-  // room for them. Clicks there must not leave focus on a button the serve
-  // key (Space) would press again.
+  // room for them. Clicks there must not leave focus on a button that a
+  // reassigned serve key could press again.
   const bar = $('hud-controls');
   bar.style.setProperty('--x', String(HUD_BAR.midX));
   bar.style.setProperty('--y', String(HUD_BAR.y));
@@ -574,7 +574,7 @@ function wireMenu(): void {
       physicsPanel.close();
       return;
     }
-    if (e.code === 'KeyP' || e.code === 'Escape') {
+    if (e.code === 'Escape') {
       if (screen === 'playing' || screen === 'paused') {
         e.preventDefault();
         togglePause();

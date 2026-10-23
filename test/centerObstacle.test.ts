@@ -305,7 +305,7 @@ describe('air heater', () => {
     expect(airProbe(12, 40).body.getLinearVelocity().x).toBeGreaterThan(airProbe(30, 40).body.getLinearVelocity().x);
   });
 
-  it('triples the previous side acceleration and makes lift exactly one third as strong', () => {
+  it('increases the previous side acceleration by 15% and makes lift exactly one third as strong', () => {
     const gw = world({ map: 'crematorium', physics: { gravity: 0 } });
     for (const mass of [0.1, 20]) {
       for (const [dx, dy] of [[16, 40], [0, -16], [-16, 40]]) {
@@ -314,7 +314,7 @@ describe('air heater', () => {
         body.setMassData({ mass, center: Vec2(0, 0), I: 1 });
         gw.centerObstacle.beforeStep([gw.p1, gw.p2], true, undefined, 0.01);
         gw.world.step(0.01);
-        const sideSpeed = 195 * 3 * (1 - 10 / AIR_HEATER.rangePx) * 0.01;
+        const sideSpeed = 585 * 1.15 * (1 - 10 / AIR_HEATER.rangePx) * 0.01;
         expect(body.getLinearVelocity().x).toBeCloseTo(dx === 0 ? 0 : Math.sign(dx) * sideSpeed, 6);
         expect(body.getLinearVelocity().y).toBeCloseTo(dx === 0 ? -sideSpeed / 3 : 0, 6);
         gw.world.destroyBody(body);

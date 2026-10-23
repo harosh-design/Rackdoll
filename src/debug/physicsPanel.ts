@@ -108,7 +108,6 @@ export function wirePhysicsPanel(
     closeFocus();
   });
   panel.addEventListener('keydown', (event) => {
-    if (event.code === 'KeyP' && !(event.target instanceof HTMLInputElement && event.target.type === 'text')) return;
     if (event.code === 'Escape') {
       event.preventDefault();
       panel.close();

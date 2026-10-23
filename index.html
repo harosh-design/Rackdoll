@@ -579,7 +579,7 @@
         <h2 id="debug-title">Physics debug</h2>
         <button class="btn btn-sm" id="debug-close" type="button" aria-label="Close physics debug">Close</button>
       </header>
-      <p class="hint" id="debug-description">Changes apply immediately to the current and future matches. Play continues while this panel is open; pause with P before tuning if needed.</p>
+      <p class="hint" id="debug-description">Changes apply immediately to the current and future matches. Play continues while this panel is open; pause with Esc before tuning if needed.</p>
       <div id="physics-fields"></div>
       <div class="physics-presets">
         <label for="physics-preset">Presets</label>
@@ -611,7 +611,7 @@
         <span class="stage-corner stage-corner-bottom-left"></span>
       </div>
       <div class="hud-controls" id="hud-controls" role="toolbar" aria-label="Game controls">
-        <button class="hud-btn" id="btn-pause" type="button" aria-label="Pause" title="Pause (P)">
+        <button class="hud-btn" id="btn-pause" type="button" aria-label="Pause" title="Pause (Esc)">
           <svg><use href="#i-pause" /></svg>
         </button>
         <button class="hud-btn js-sound" type="button" aria-label="Music" aria-pressed="true" title="Music (M)">
@@ -643,10 +643,12 @@
             <div class="lobby-controls">
               <span class="badge">YOU</span>
               <dl class="quick-keys">
-                <div><dt>Move</dt><dd><button class="keycap" type="button" data-binding-player="1" data-binding-action="left" aria-describedby="binding-status-1">←</button><button class="keycap" type="button" data-binding-player="1" data-binding-action="right" aria-describedby="binding-status-1">→</button></dd></div>
-                <div><dt>Jump</dt><dd><button class="keycap" type="button" data-binding-player="1" data-binding-action="jump" aria-describedby="binding-status-1">↑</button></dd></div>
-                <div><dt>Crouch</dt><dd><button class="keycap" type="button" data-binding-player="1" data-binding-action="down" aria-describedby="binding-status-1">↓</button></dd></div>
-                <div><dt>Serve / attack</dt><dd><button class="keycap" type="button" data-binding-player="1" data-binding-action="serve" aria-describedby="binding-status-1">Space</button></dd></div>
+                <div><dt>Move</dt><dd><button class="keycap" type="button" data-binding-player="1" data-binding-action="left" aria-describedby="binding-status-1">A</button><button class="keycap" type="button" data-binding-player="1" data-binding-action="right" aria-describedby="binding-status-1">D</button></dd></div>
+                <div><dt>Jump</dt><dd><button class="keycap" type="button" data-binding-player="1" data-binding-action="jump" aria-describedby="binding-status-1">W</button></dd></div>
+                <div><dt>Crouch</dt><dd><button class="keycap" type="button" data-binding-player="1" data-binding-action="down" aria-describedby="binding-status-1">S</button></dd></div>
+                <div><dt>Serve / super hit</dt><dd><button class="keycap" type="button" data-binding-player="1" data-binding-action="serve" aria-describedby="binding-status-1">I</button></dd></div>
+                <div><dt>Dive</dt><dd><button class="keycap" type="button" data-binding-player="1" data-binding-action="dive" aria-describedby="binding-status-1">O</button></dd></div>
+                <div><dt>Slide</dt><dd><button class="keycap" type="button" data-binding-player="1" data-binding-action="slide" aria-describedby="binding-status-1">P</button></dd></div>
               </dl>
               <p class="binding-hint" id="binding-status-1" role="status" aria-live="polite">Click a key to change it.</p>
             </div>
@@ -682,11 +684,11 @@
               <div class="mode-group weather-group" id="weather-options" role="group" aria-labelledby="weather-title" aria-describedby="weather-description"></div>
               <p class="sr-only" id="weather-description" aria-live="polite">A new random sky each match.</p>
             </div>
-            <p class="lobby-tip"><img src="/art/horror/props/talisman.webp" alt="" width="38" height="44" aria-hidden="true"><span><b>Jump first. Then tap to serve.</b><span>Down + attack: dive. Left/right + attack: slide. Both have no cooldown.</span></span></p>
+            <p class="lobby-tip"><img src="/art/horror/props/talisman.webp" alt="" width="38" height="44" aria-hidden="true"><span><b>Jump first. Then tap to serve.</b><span>Tap your Dive or Slide key to reach the ball. Both have no cooldown.</span></span></p>
             <footer class="lobby-foot">
               <button class="btn btn-primary btn-xl" id="play" type="button"><svg width="22" height="22" aria-hidden="true"><use href="#i-play" /></svg><span>Start match</span><kbd>Enter</kbd></button>
               <p class="lobby-ticket"><span id="selected-map-name">Graveyard</span><span aria-hidden="true">·</span> First to 10</p>
-              <div class="lobby-links"><span><kbd>P</kbd> / <kbd>Esc</kbd> pause</span><button id="reset-bindings" type="button">Reset controls</button><button id="show-help" type="button">How to play <span aria-hidden="true">↗</span></button></div>
+              <div class="lobby-links"><span><kbd>Esc</kbd> pause</span><button id="reset-bindings" type="button">Reset controls</button><button id="show-help" type="button">How to play <span aria-hidden="true">↗</span></button></div>
             </footer>
           </main>
           <aside class="lobby-player lobby-player-2" data-bind-card="2" aria-label="Player 2, right side">
@@ -695,10 +697,12 @@
             <div class="lobby-controls">
               <span class="badge">CPU</span>
               <dl class="quick-keys">
-                <div><dt>Move</dt><dd><button class="keycap" type="button" data-binding-player="2" data-binding-action="left" aria-describedby="binding-status-2">A</button><button class="keycap" type="button" data-binding-player="2" data-binding-action="right" aria-describedby="binding-status-2">D</button></dd></div>
-                <div><dt>Jump</dt><dd><button class="keycap" type="button" data-binding-player="2" data-binding-action="jump" aria-describedby="binding-status-2">W</button></dd></div>
-                <div><dt>Crouch</dt><dd><button class="keycap" type="button" data-binding-player="2" data-binding-action="down" aria-describedby="binding-status-2">S</button></dd></div>
-                <div><dt>Serve / attack</dt><dd><button class="keycap" type="button" data-binding-player="2" data-binding-action="serve" aria-describedby="binding-status-2">R</button></dd></div>
+                <div><dt>Move</dt><dd><button class="keycap" type="button" data-binding-player="2" data-binding-action="left" aria-describedby="binding-status-2">←</button><button class="keycap" type="button" data-binding-player="2" data-binding-action="right" aria-describedby="binding-status-2">→</button></dd></div>
+                <div><dt>Jump</dt><dd><button class="keycap" type="button" data-binding-player="2" data-binding-action="jump" aria-describedby="binding-status-2">↑</button></dd></div>
+                <div><dt>Crouch</dt><dd><button class="keycap" type="button" data-binding-player="2" data-binding-action="down" aria-describedby="binding-status-2">↓</button></dd></div>
+                <div><dt>Serve / super hit</dt><dd><button class="keycap" type="button" data-binding-player="2" data-binding-action="serve" aria-describedby="binding-status-2">Z</button></dd></div>
+                <div><dt>Dive</dt><dd><button class="keycap" type="button" data-binding-player="2" data-binding-action="dive" aria-describedby="binding-status-2">X</button></dd></div>
+                <div><dt>Slide</dt><dd><button class="keycap" type="button" data-binding-player="2" data-binding-action="slide" aria-describedby="binding-status-2">C</button></dd></div>
               </dl>
               <p class="binding-hint" id="binding-status-2" role="status" aria-live="polite">Click a key to change it.</p>
             </div>
@@ -726,7 +730,7 @@
                 <h3><span class="num">1</span>The basics</h3>
                 <ul>
                   <li><b>First to 10 points</b> wins the match. Three touches max per side.</li>
-                  <li><b>Jump first, then tap <kbd data-keyof="serve">Space</kbd></b> for a serve that clears the net. You have six seconds to serve.</li>
+                  <li><b>Jump first, then tap <kbd data-keyof="serve">I</kbd></b> for a serve that clears the net. You have six seconds to serve.</li>
                   <li>The ball takes the colour of whoever touched it last.</li>
                   <li><b>Choose a map before playing.</b> Graveyard has an impaling spike; Crematorium has a blunt blast fan that repels players, the ball, hazards and bats, with an upward draft three times gentler than its side jets; Dead Circus has a flexible stitched pole. Every round restores both players and resets the divider.</li>
                 </ul>
@@ -734,10 +738,10 @@
               <section>
                 <h3><span class="num">2</span>Flips, dives and slides</h3>
                 <ul>
-                  <li><b>Hold <kbd data-keyof="down">↓</kbd> + <kbd data-keyof="serve">Space</kbd> together on the ground or in the air</b> to dive toward the ball with outstretched arms. Either key can be pressed first.</li>
-                  <li><b>Hold <kbd data-keyof="left">←</kbd> or <kbd data-keyof="right">→</kbd> + <kbd data-keyof="serve">Space</kbd></b> for a football slide in that direction, feet first. Down takes priority if it is held too.</li>
-                  <li>Dives and slides have <b>no cooldown</b>, including during flip recovery. Release and press attack again to repeat once the current move finishes.</li>
-                  <li><b>Hold the attack key alone during a rally</b>: the doll tucks, play briefly slows and a nearby ball is drawn in front of you.</li>
+                  <li><b>Tap <kbd data-keyof="dive">O</kbd> on the ground or in the air</b> to dive toward the ball with outstretched arms.</li>
+                  <li><b>Tap <kbd data-keyof="slide">P</kbd></b> for a football slide toward the ball, feet first. No movement key is required.</li>
+                  <li>Dives and slides have <b>no cooldown</b>, including during flip recovery. Release and press the same move key again to repeat once the current move finishes.</li>
+                  <li><b>Hold <kbd data-keyof="serve">I</kbd> during a rally to charge a super hit</b>: the doll tucks, play briefly slows and a nearby ball is drawn in front of you. Movement keys do not change the attack.</li>
                   <li><b>Release to front-flip</b> toward the net. The feet come over the top to kick the ball over, or strike the opponent or a hazard they meet.</li>
                   <li>More charge kicks harder and knocks back a nearby opponent.</li>
                   <li>A kick to the head <b>stuns for three seconds</b>: controls drop to 20% strength and charging slows. Stars show the stun.</li>
@@ -774,7 +778,7 @@
       <div class="card">
         <p class="eyebrow">Game paused</p>
         <h2>Intermission</h2>
-        <p class="sub">Press <kbd>P</kbd> or <kbd>Esc</kbd> to pick up where you left off.</p>
+        <p class="sub">Press <kbd>Esc</kbd> to pick up where you left off.</p>
         <div class="stack">
           <button class="btn btn-primary btn-lg" id="resume" type="button">
             <svg width="15" height="15"><use href="#i-play" /></svg>

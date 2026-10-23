@@ -169,8 +169,8 @@ migrate to the corresponding map. The divider is part of the map:
   The cutouts follow the actual pinned poses; the next round restores the hinges.
 - **Crematorium — Blast fan** repels every movable gameplay object from its column within
   30% of the original player's height (32.7 world pixels). The range stays fixed
-  through size powers. Side jets accelerate nearby objects at up to 585 m/s², three times
-  the previous strength; upward acceleration is one third as strong (up to 195 m/s²).
+  through size powers. Side jets accelerate nearby objects at up to 672.75 m/s²;
+  upward acceleration is one third as strong (up to 224.25 m/s²).
   The field fades with surface clearance and applies equally per unit mass to players,
   the ball, detached limbs and executers, including moving sensors. Flying bat familiars
   sample the same field, with damped drift included in rendering and pickup sweeps.
@@ -194,27 +194,29 @@ arms are gone. Lost parts cannot strike or count as ball touches. Injuries heal
 before every new round.
 
 The main menu shows editable controls directly on both player cards. Defaults
-are arrow keys and Space on the left, WASD and R on the right. Click any key,
+are WASD for movement and I / O / P for serve or super hit / dive / slide
+on the left, and arrow keys with Z / X / C for the same actions on the right. Click any key,
 then press its replacement; Esc cancels. Duplicate keys and reserved shortcuts
 are rejected. Custom bindings are saved in this browser and restored on reload,
-including previously saved configurations. **Reset controls** restores both
-players' defaults. P and Esc remain pause shortcuts. **How to play** opens the
+including previously saved configurations. Saved defaults from earlier layouts
+update to the current defaults. Older settings keep custom bindings
+and gain separate dive and slide keys; the old default Space attack becomes I
+when that key is free. **Reset controls** restores both players' defaults.
+Esc pauses the game. **How to play** opens the
 complete instructions without leaving match setup.
 
-**Serve in the air.** The held ball hangs at your feet. Tap Space (or R for
+**Serve in the air.** The held ball hangs at your feet. Tap I (or Z for
 player 2) to serve with a fixed underhand flick. Jump first to clear the net.
-Once the ball is free, hold Down + Space (or S + R for player 2) together
-to immediately launch a volleyball dive toward the ball, on the ground or
-in the air, even when the ball is behind the player.
-Either key can be pressed first, and custom down and attack bindings work
-the same way. Both arms reach forward and the legs trail behind; the doll
-then returns upright. Hold Left or Right + Space (or A or D + R for player 2)
-to perform a football slide in that direction, feet first with the torso
-leaning back. Down takes priority when both down and a sideways direction
-are held. Dives and slides have no cooldown and remain available while the
-flip is recovering; release and press the attack key again to repeat a move
-after its animation finishes. Hold the attack key alone to tuck and release to front-flip toward
-the opponent. The doll lunges at the net and turns one full circle, feet
+Once the ball is free, tap O (or X for player 2) to immediately launch a
+volleyball dive toward the ball, on the ground or in the air, even when the
+ball is behind the player. Both arms reach forward and the legs trail behind;
+the doll then returns upright. Tap P (or C for player 2) to perform a football
+slide toward the ball, feet first with the torso leaning back. Neither move
+requires movement or attack keys. Dives and slides have no cooldown and remain
+available while the flip is recovering; release and press the same move key
+again to repeat after its animation finishes. Hold the attack key to tuck and
+release to front-flip toward the opponent, even while holding movement keys.
+The doll lunges at the net and turns one full circle, feet
 coming over the top and down in front of it. The head normally rides a rail
 that forbids it to rotate; for the flip that rail becomes a wheel joint on the same line,
 whose motor keeps the spin going until the doll is back upright, when the

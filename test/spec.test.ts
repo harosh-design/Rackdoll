@@ -3,6 +3,7 @@
  * The spec's reference figures are sanity checks from a faithful port, not
  * targets to tune toward — so these assert ranges around them.
  */
+import { KEYS } from '../src/sim/control';
 import { Vec2, World, type Body } from 'planck';
 import { describe, expect, it, vi } from 'vitest';
 import { Ball } from '../src/sim/ball';
@@ -109,7 +110,7 @@ describe('§17.2 the doll + rails', () => {
       const r = rng(seed);
       const run = new Map<number, number>();
       for (frame = 0; frame < 900; frame++) {
-        for (const c of [37, 38, 39, 40, 65, 68, 87, 83]) (r() < 0.2 ? gw.control.press(c) : gw.control.release(c));
+        for (const c of [KEYS[1].left, KEYS[1].jump, KEYS[1].right, KEYS[1].down, KEYS[2].left, KEYS[2].right, KEYS[2].jump, KEYS[2].down]) (r() < 0.2 ? gw.control.press(c) : gw.control.release(c));
         gw.step();
         if (gw.game.phase === 'matchOver') gw.game.resetMatch();
         // standPlayer() teleports the doll but, like the original, not PrismBody.
@@ -133,9 +134,9 @@ describe('§17.2 the doll + rails', () => {
 
   it('pulls PrismBody back under the head in one step after a round reset', () => {
     const gw = world();
-    gw.control.press(39);
+    gw.control.press(KEYS[1].right);
     run(gw, 90); // P1 is now pinned at the net-side limit
-    gw.control.release(39);
+    gw.control.release(KEYS[1].right);
     gw.p1.standPlayer(100, 256);
     expect(px(Math.abs(gw.p1.head.getWorldCenter().x - gw.p1.prismBody.getWorldCenter().x))).toBeGreaterThan(100);
     gw.step();
@@ -146,8 +147,8 @@ describe('§17.2 the doll + rails', () => {
 
   it('keeps each player on their own half — both rails stop short of the net', () => {
     const gw = world();
-    gw.control.press(39); // P1 runs right
-    gw.control.press(65); // P2 runs left
+    gw.control.press(KEYS[1].right); // P1 runs right
+    gw.control.press(KEYS[2].left); // P2 runs left
     let p1Max = -1e9;
     let p2Min = 1e9;
     for (let i = 0; i < 30 * 8; i++) {
@@ -167,7 +168,7 @@ describe('§17.3 controls', () => {
     const gw = world();
     run(gw, 90);
     const x0 = px(gw.p1.ass.getWorldCenter().x);
-    gw.control.press(39);
+    gw.control.press(KEYS[1].right);
     run(gw, 30);
     const travel = px(gw.p1.ass.getWorldCenter().x) - x0;
     expect(travel).toBeGreaterThan(140);
@@ -178,7 +179,7 @@ describe('§17.3 controls', () => {
     const gw = world();
     run(gw, 90);
     const y0 = px(gw.p1.head.getWorldCenter().y);
-    gw.control.press(38);
+    gw.control.press(KEYS[1].jump);
     let peak = y0;
     for (let i = 0; i < 60; i++) {
       gw.step();
@@ -191,15 +192,15 @@ describe('§17.3 controls', () => {
   it('jump is consumed — it needs a fresh press', () => {
     const gw = world();
     run(gw, 90);
-    gw.control.press(38);
+    gw.control.press(KEYS[1].jump);
     gw.step();
-    expect(gw.control.isDown(38)).toBe(false);
+    expect(gw.control.isDown(KEYS[1].jump)).toBe(false);
   });
 
   it('jump only fires when the hips are low', () => {
     const gw = world();
     run(gw, 90);
-    gw.control.press(38);
+    gw.control.press(KEYS[1].jump);
     run(gw, 8); // airborne now
     const vy = gw.p1.head.getLinearVelocity().y;
     gw.p1.jump(); // must be a no-op in the air
@@ -324,13 +325,13 @@ describe('fixed serve and charged flip', () => {
   it('serves on press at fixed power, with no serve charge or swing on release', () => {
     const gw = world();
     run(gw, 90);
-    gw.control.press(32);
+    gw.control.press(KEYS[1].serve);
     gw.step();
     expect(gw.ball.held).toBe(false);
     expect(gw.control.chargeLevel(1)).toBeNull();
     const swing = vi.spyOn(gw.p1, 'flip');
     run(gw, CHARGE.maxFrames);
-    gw.control.release(32);
+    gw.control.release(KEYS[1].serve);
     gw.step();
     expect(swing).not.toHaveBeenCalled();
   });
@@ -339,7 +340,7 @@ describe('fixed serve and charged flip', () => {
     for (const id of [1, 2] as const) {
       const gw = hazardWorld({ hazards: false });
       const p = id === 1 ? gw.p1 : gw.p2;
-      const key = id === 1 ? 32 : 82;
+      const key = KEYS[id].serve;
       p.jump();
       run(gw, 4);
       gw.control.press(key);
@@ -407,13 +408,13 @@ describe('fixed serve and charged flip', () => {
     gw.p1.jump();
     run(gw, 4);
     const step = vi.spyOn(gw.world, 'step');
-    gw.control.press(32);
+    gw.control.press(KEYS[1].serve);
     gw.step();
     gw.step();
     expect(step.mock.lastCall?.[0]).toBeCloseTo(TIME_STEP * CHARGE.windupTimeScale);
     run(gw, CHARGE.maxFrames);
     expect(step.mock.lastCall?.[0]).toBeCloseTo(TIME_STEP);
-    gw.control.release(32);
+    gw.control.release(KEYS[1].serve);
     gw.step();
     expect(step.mock.lastCall?.[0]).toBeCloseTo(TIME_STEP);
   });
@@ -423,17 +424,17 @@ describe('fixed serve and charged flip', () => {
     gw.p1.jump();
     run(gw, 4);
     const swing = vi.spyOn(gw.p1, 'flip');
-    gw.control.press(32);
+    gw.control.press(KEYS[1].serve);
     run(gw, CHARGE.maxFrames);
-    gw.control.release(32);
+    gw.control.release(KEYS[1].serve);
     gw.step();
     const firstHitFrame = gw.swingEffects[1].frame;
     expect(gw.swingCooldownFramesLeft(1)).toBe(SWING.cooldownFrames - 1);
 
-    gw.control.press(32);
+    gw.control.press(KEYS[1].serve);
     run(gw, 3);
     expect(gw.control.chargeLevel(1)).toBeNull();
-    gw.control.release(32);
+    gw.control.release(KEYS[1].serve);
     gw.step();
     expect(gw.flip(gw.p1, 1)).toBe(false);
     expect(swing).toHaveBeenCalledTimes(1);
@@ -443,12 +444,12 @@ describe('fixed serve and charged flip', () => {
     gw.p1.jump();
     run(gw, 4);
     gw.frame = firstHitFrame + SWING.cooldownFrames - 1;
-    gw.control.press(32);
+    gw.control.press(KEYS[1].serve);
     gw.step();
     expect(gw.control.chargeLevel(1)).toBeNull();
     gw.step();
     expect(gw.control.chargeLevel(1)?.power).toBe(1 / CHARGE.maxFrames);
-    gw.control.release(32);
+    gw.control.release(KEYS[1].serve);
     gw.step();
     expect(swing).toHaveBeenCalledTimes(2);
     expect(gw.swingEffects[1].power).toBe(1 / CHARGE.maxFrames);
@@ -468,9 +469,9 @@ describe('fixed serve and charged flip', () => {
     gw.game.newRound();
     expect(gw.swingCooldownFramesLeft(1)).toBe(0);
     expect(gw.swingCooldownFramesLeft(2)).toBe(0);
-    gw.control.press(32);
+    gw.control.press(KEYS[1].serve);
     gw.step();
-    gw.control.release(32);
+    gw.control.release(KEYS[1].serve);
     expect(gw.ball.held).toBe(false);
     gw.step();
     expect(gw.flip(gw.p1, 1)).toBe(true);
@@ -486,7 +487,7 @@ describe('fixed serve and charged flip', () => {
       gw.ball.body.setTransform(Vec2(hand.x, hand.y - toM(50)), 0);
       gw.ball.body.setLinearVelocity(Vec2(0, 0));
     }
-    near.control.press(32);
+    near.control.press(KEYS[1].serve);
     near.step();
     idle.step();
     expect(near.ball.velocity.y).toBeGreaterThan(idle.ball.velocity.y + 0.001);
@@ -495,11 +496,11 @@ describe('fixed serve and charged flip', () => {
   it('knocks back a nearby opponent in proportion to flip charge', () => {
     const strike = (id: 1 | 2, power: number) => {
       const gw = hazardWorld({ hazards: false });
-      gw.control.press(39);
-      gw.control.press(65);
+      gw.control.press(KEYS[1].right);
+      gw.control.press(KEYS[2].left);
       run(gw, 90);
-      gw.control.release(39);
-      gw.control.release(65);
+      gw.control.release(KEYS[1].right);
+      gw.control.release(KEYS[2].left);
       const attacker = id === 1 ? gw.p1 : gw.p2;
       const defender = id === 1 ? gw.p2 : gw.p1;
       const sign = id === 1 ? 1 : -1;
@@ -527,11 +528,11 @@ describe('fixed serve and charged flip', () => {
 
   it('connects with an opponent near the edge of the kick reach', () => {
     const gw = hazardWorld({ hazards: false });
-    gw.control.press(39);
-    gw.control.press(65);
+    gw.control.press(KEYS[1].right);
+    gw.control.press(KEYS[2].left);
     run(gw, 90);
-    gw.control.release(39);
-    gw.control.release(65);
+    gw.control.release(KEYS[1].right);
+    gw.control.release(KEYS[2].left);
 
     const from = gw.p1.head.getWorldCenter();
     const target = gw.p2.tors.getWorldCenter();
@@ -614,11 +615,11 @@ describe('perfect contact, net counter, and desperate save', () => {
 
   it('counters two close swings by the net and sends the ball toward the weaker side', () => {
     const gw = hazardWorld({ hazards: false });
-    gw.control.press(39);
-    gw.control.press(65);
+    gw.control.press(KEYS[1].right);
+    gw.control.press(KEYS[2].left);
     run(gw, 90);
-    gw.control.release(39);
-    gw.control.release(65);
+    gw.control.release(KEYS[1].right);
+    gw.control.release(KEYS[2].left);
     const y = (gw.p1.head.getWorldCenter().y + gw.p2.head.getWorldCenter().y) / 2 - toM(70);
     gw.ball.body.setTransform(Vec2(toM(320), y), 0);
     gw.ball.body.setLinearVelocity(Vec2(0, 0));
@@ -636,12 +637,12 @@ describe('perfect contact, net counter, and desperate save', () => {
   it('lets the computer prepare and answer a visible charge by the net', () => {
     const gw = hazardWorld({ singlePlayer: true, hazards: false });
     gw.ai!.update = () => {};
-    gw.control.press(39);
+    gw.control.press(KEYS[1].right);
     for (let i = 0; i < 90; i++) {
       gw.p2.turnComp(Vec2(-7, 0));
       gw.step();
     }
-    gw.control.release(39);
+    gw.control.release(KEYS[1].right);
     gw.p1.jump();
     gw.p2.jump();
     run(gw, 4);
@@ -659,9 +660,9 @@ describe('perfect contact, net counter, and desperate save', () => {
     gw.ball.body.setTransform(Vec2(toM(320), y), 0);
     gw.ball.body.setLinearVelocity(Vec2(0, 0));
     gw.flags.onBallDown = false;
-    gw.control.press(32);
+    gw.control.press(KEYS[1].serve);
     run(gw, 6);
-    gw.control.release(32);
+    gw.control.release(KEYS[1].serve);
     gw.step();
     expect(gw.swingEffects[2].frame).toBe(gw.frame - 1);
     gw.step();
@@ -922,7 +923,7 @@ describe('hazards (reworked §13)', () => {
     // Walking away from it is much slower than walking freely.
     const walk = (gw: GameWorld) => {
       const a = px(gw.p1.ass.getWorldCenter().x);
-      gw.control.press(37);
+      gw.control.press(KEYS[1].left);
       run(gw, 30);
       return a - px(gw.p1.ass.getWorldCenter().x);
     };
@@ -991,7 +992,7 @@ describe('hazards (reworked §13)', () => {
       expect(e.hits).toBeGreaterThan(0);
       const direction = e.body.getWorldCenter().x < p.head.getWorldCenter().x ? 1 : -1;
       const before = px(p.head.getWorldCenter().x);
-      gw.control.press(side === 1 ? 37 : 68);
+      gw.control.press(side === 1 ? KEYS[1].left : KEYS[2].right);
       run(gw, 8);
       const recoilPx = (px(p.head.getWorldCenter().x) - before) * direction;
       expect(recoilPx).toBeGreaterThan(4);
@@ -1235,7 +1236,7 @@ describe('hazards (reworked §13)', () => {
         fireAtButton(gw, side);
         const ex = gw.executers[0];
         const r = rng(side);
-        const keys = side === 1 ? [37, 38, 39, 40] : [65, 68, 87, 83];
+        const keys = side === 1 ? [KEYS[1].left, KEYS[1].jump, KEYS[1].right, KEYS[1].down] : [KEYS[2].left, KEYS[2].right, KEYS[2].jump, KEYS[2].down];
         for (let f = 0; f < 30 * 20 && !ex.dead; f++) {
           for (const c of keys) (r() < 0.1 ? gw.control.press(c) : gw.control.release(c));
           gw.step();
@@ -1287,7 +1288,7 @@ describe('§17 soak', () => {
     const r = rng(12345);
     let points = 0;
     const gw = world({ hazards: true, events: { onPoint: () => { points++; } } });
-    const codes = [37, 39, 38, 40, 32, 65, 68, 87, 83, 82];
+    const codes = [KEYS[1].left, KEYS[1].right, KEYS[1].jump, KEYS[1].down, KEYS[1].serve, KEYS[2].left, KEYS[2].right, KEYS[2].jump, KEYS[2].down, KEYS[2].serve];
     for (let i = 0; i < 30 * 90; i++) {
       for (const c of codes) (r() < 0.12 ? gw.control.press(c) : gw.control.release(c));
       gw.step();
@@ -1308,7 +1309,7 @@ describe('§17 soak', () => {
       const r = rng(seed);
       const gw = world();
       for (let i = 0; i < 30 * 60; i++) {
-        for (const c of [37, 39, 38, 40, 32, 65, 68, 87, 83, 82]) (r() < 0.12 ? gw.control.press(c) : gw.control.release(c));
+        for (const c of [KEYS[1].left, KEYS[1].right, KEYS[1].jump, KEYS[1].down, KEYS[1].serve, KEYS[2].left, KEYS[2].right, KEYS[2].jump, KEYS[2].down, KEYS[2].serve]) (r() < 0.12 ? gw.control.press(c) : gw.control.release(c));
         gw.step();
         if (gw.game.phase === 'matchOver') gw.game.resetMatch();
       }
@@ -1324,7 +1325,7 @@ describe('§17 soak', () => {
       const r = rng(99);
       const gw = world({ singlePlayer: true, hazards: true });
       for (let i = 0; i < 30 * 20; i++) {
-        for (const c of [37, 39, 38, 32]) (r() < 0.15 ? gw.control.press(c) : gw.control.release(c));
+        for (const c of [KEYS[1].left, KEYS[1].right, KEYS[1].jump, KEYS[1].serve]) (r() < 0.15 ? gw.control.press(c) : gw.control.release(c));
         gw.step();
         gw.reap();
       }

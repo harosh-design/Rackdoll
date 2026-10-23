@@ -1,3 +1,4 @@
+import { KEYS } from '../src/sim/control';
 import type { Body, Vec2Value } from 'planck';
 import { describe, expect, it } from 'vitest';
 import { JOINTS, PARTS, toPx, type PartName } from '../src/sim/constants';
@@ -80,7 +81,7 @@ describe('drawn joints', () => {
     let gap = 0;
     let ballGap = 0;
     for (let i = 0; i < 30 * 40; i++) {
-      for (const c of [37, 39, 38, 40, 32, 65, 68, 87, 83, 82]) (r() < 0.12 ? gw.control.press(c) : gw.control.release(c));
+      for (const c of [KEYS[1].left, KEYS[1].right, KEYS[1].jump, KEYS[1].down, KEYS[1].serve, KEYS[2].left, KEYS[2].right, KEYS[2].jump, KEYS[2].down, KEYS[2].serve]) (r() < 0.12 ? gw.control.press(c) : gw.control.release(c));
       gw.step();
       gw.reap();
       if (gw.game.phase === 'matchOver') gw.game.resetMatch();
