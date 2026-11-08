@@ -11,7 +11,7 @@ import { Interpolator } from './render/interp';
 import { drawMenuCharacter } from './render/menuArt';
 import { animateMatchStart } from './ui/matchTransition';
 import { HUD_BAR, Renderer } from './render/renderer';
-import { WEATHER_OPTIONS, type WeatherChoice } from './render/weather';
+import { WEATHER_OPTIONS } from './render/weather';
 import { BEE_FLIGHT } from './sim/bees';
 import { BALL, BODYTYPE, FPS, OPTIONS } from './sim/constants';
 import type { ControlAction } from './sim/control';
@@ -55,7 +55,6 @@ const physicsLibrary = loadPhysicsLibrary(physicsStorage);
 const settings = {
   mode: '1p' as Mode,
   map: loadMapSelection(physicsStorage),
-  weather: 'random' as WeatherChoice,
   level: OPTIONS.currentLevel as number,
   /** Bot vs bot: the left CPU's level. */
   p1Level: OPTIONS.championLevel as number,
@@ -156,7 +155,7 @@ function startMatch(): void {
   applyMute(muted);
   physicsPanel.close();
   gw = createWorld();
-  renderer.startMatch(gw, settings.weather);
+  renderer.startMatch(gw);
   describeCourt();
   message = null;
   pendingHit = null;
@@ -420,23 +419,6 @@ function wireBindings(): void {
 
 function wireMenu(): void {
   wireBindings();
-  const weatherIcons: Record<WeatherChoice, string> = {
-    random: '<path d="M3 6h3c5 0 7 12 12 12h3m-4-4 4 4-4 4M3 18h3c2 0 3-2 4-4m4-4c1-2 2-4 4-4h3m-4-4 4 4-4 4"/>',
-    rain: '<path d="M5 13a4 4 0 0 1 1-8 6 6 0 0 1 11-1 4.5 4.5 0 0 1 1 9M7 16l-1 3m6-3-1 3m6-3-1 3"/>',
-    snow: '<path d="M12 2v20M3.3 7l17.4 10M3.3 17 20.7 7M9 4l3 3 3-3M9 20l3-3 3 3M4 10l4-1-1-4m10 14-1-4 4-1M4 14l4 1-1 4m10-14-1 4 4 1"/>',
-    autumn: '<path d="M5 20C1 11 8 5 17 6c2 10-4 16-12 14ZM5 20l9-10m-5 6 5 1M19 2v4m-2-2h4"/>',
-  };
-  const weatherOptions = [{ id: 'random' as const, label: 'Random', caption: 'Every match' }, ...WEATHER_OPTIONS];
-  for (const option of weatherOptions) {
-    const button = document.createElement('button');
-    button.type = 'button'; button.className = 'mode weather-option';
-    button.dataset.weather = option.id;
-    button.setAttribute('aria-pressed', String(option.id === settings.weather));
-    button.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${weatherIcons[option.id]}</svg>`;
-    const label = document.createElement('span'); label.className = 'mode-title'; label.textContent = option.label;
-    const caption = document.createElement('span'); caption.className = 'mode-cap'; caption.textContent = option.caption;
-    button.append(label, caption); $('weather-options').append(button);
-  }
   const mapPreviews: HTMLCanvasElement[] = [];
   for (const [index, option] of GAME_MAPS.entries()) {
     const button = document.createElement('button');
@@ -477,7 +459,6 @@ function wireMenu(): void {
     const map = gameMap(settings.map);
     $('map-description').textContent = map.description;
     $('selected-map-name').textContent = map.label;
-    $('weather-field').hidden = map.id !== 'graveyard';
     describeCourt();
   };
   syncMapDescription();
@@ -499,14 +480,6 @@ function wireMenu(): void {
   });
   group('level', (v) => { settings.level = Number(v); syncLevels(); });
   group('p1level', (v) => { settings.p1Level = Number(v); syncLevels(); });
-  group('weather', value => {
-    settings.weather = value as WeatherChoice;
-    renderer.previewWeather(settings.weather);
-    $('weather-description').textContent = settings.weather === 'random'
-      ? 'A new random sky each match. Pick a weather to preview and test it.'
-      : WEATHER_OPTIONS.find(option => option.id === settings.weather)!.description;
-    describeCourt();
-  });
   group('map', value => {
     settings.map = gameMap(value).id;
     syncMapDescription();

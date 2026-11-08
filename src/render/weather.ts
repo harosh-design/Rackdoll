@@ -5,12 +5,10 @@ export const WEATHER_OPTIONS = [
 ] as const;
 
 export type WeatherId = typeof WEATHER_OPTIONS[number]['id'];
-export type WeatherChoice = 'random' | WeatherId;
 type Layer = 'distant' | 'court' | 'foreground';
 
 /** Resolve once per match; automatic weather avoids the previous match's sky. */
-export function pickWeather(choice: WeatherChoice, previous?: WeatherId, random = Math.random): WeatherId {
-  if (choice !== 'random') return choice;
+export function pickWeather(previous?: WeatherId, random = Math.random): WeatherId {
   const candidates = WEATHER_OPTIONS.filter(option => option.id !== previous);
   return candidates[Math.min(candidates.length - 1, Math.max(0, Math.floor(random() * candidates.length)))].id;
 }

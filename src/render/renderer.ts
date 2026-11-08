@@ -28,7 +28,7 @@ import { BallSquash, type BallDeformation } from './ballDeformation';
 import { drawChameleonArt, drawChameleonTongue, loadChameleonArt } from './chameleonArt';
 import { drawSpikeBlood } from './spikeArt';
 import { drawFeatherAirflow } from './featherAirflow';
-import { pickWeather, WeatherEffects, type WeatherChoice, type WeatherId } from './weather';
+import { pickWeather, WeatherEffects, type WeatherId } from './weather';
 
 
 /**
@@ -119,7 +119,7 @@ export class Renderer {
   private grainPixelRatio = 1;
   private scenerySeconds = 0;
   private sceneryAt: number | null = null;
-  private weather = new WeatherEffects(pickWeather('random'));
+  private weather = new WeatherEffects(pickWeather());
   private previousWeather?: WeatherId;
   private weatherStartedAt = 0;
   private readonly reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -137,8 +137,8 @@ export class Renderer {
   }
 
   /** Called only for a new match; rounds and pauses retain their skins and weather. */
-  startMatch(gw: GameWorld, weatherChoice: WeatherChoice = 'random'): void {
-    this.setWeather(pickWeather(weatherChoice, this.previousWeather));
+  startMatch(gw: GameWorld): void {
+    this.setWeather(pickWeather(this.previousWeather));
     this.previousWeather = this.weather.id;
     const skin = pickBallSkin(this.previousBallSkin);
     this.ballSkins.set(gw, skin);
@@ -153,11 +153,6 @@ export class Renderer {
 
   drawMapPreview(canvas: HTMLCanvasElement, id: GameMapId): void {
     this.mapScenery.drawPreview(canvas, id);
-  }
-
-  /** Menu previews replace only the decorative weather, without restarting physics. */
-  previewWeather(choice: WeatherChoice): void {
-    this.setWeather(pickWeather(choice));
   }
 
   private setWeather(id: WeatherId): void {

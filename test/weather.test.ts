@@ -1,9 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { WeatherEffects } from '../src/render/weather';
+import { pickWeather, WeatherEffects } from '../src/render/weather';
 
 function frames(weather: WeatherEffects, fps: number, seconds: number, active = true): void {
   for (let frame = 0; frame < fps * seconds; frame++) weather.observeFrame(1 / fps, active);
 }
+
+describe('Match weather', () => {
+  it('selects each weather randomly and avoids the previous match', () => {
+    expect(pickWeather(undefined, () => 0)).toBe('rain');
+    expect(pickWeather(undefined, () => 0.4)).toBe('snow');
+    expect(pickWeather(undefined, () => 0.99)).toBe('autumn');
+    expect(pickWeather('rain', () => 0)).toBe('snow');
+    expect(pickWeather('rain', () => 0.99)).toBe('autumn');
+  });
+});
 
 describe('Adaptive weather density', () => {
   it('keeps full detail at healthy frame rates and ignores an isolated slow frame', () => {

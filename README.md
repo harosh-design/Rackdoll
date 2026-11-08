@@ -33,7 +33,7 @@ pedestals. Each side gets a different random design per match, with no immediate
 repeat on that side. The carvings face inward and retain press, flash and active
 lifetime feedback.
 The fullscreen start menu places The Mask and its controls on the left and
-Bones and its controls on the right. Map, mode and weather choices sit between
+Bones and its controls on the right. Map and mode choices sit between
 them, above a centered **Start match** button. Illustrated graveyard scenery,
 paper control cards and the game's own character cutouts match the court art.
 The start animation sends the players outward and reveals the arena; simulation
@@ -45,10 +45,8 @@ occasional distant lightning, drifting snowfall, or a starry autumn night with
 passing leaves. Random weather avoids consecutive repeats and stays fixed across
 rounds and pauses. Distant particles pass behind the scenery, middle particles
 behind the players, and a few larger flakes or leaves cross the foreground.
-The start menu's **Weather** selector chooses the next match's weather;
-**Random** restores automatic selection. This override lasts for the
-current page session. Indoor maps replace outdoor weather with drifting ash in
-Crematorium and settling dust in Dead Circus; their weather selector is hidden.
+Indoor maps replace outdoor weather with drifting ash in Crematorium and
+settling dust in Dead Circus.
 Weather and indoor particles freeze when paused, respect reduced motion,
 and do not affect physics or gameplay.
 The star field has soft, independent glints. Weather reuses bounded-size cached

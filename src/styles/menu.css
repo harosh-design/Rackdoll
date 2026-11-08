@@ -106,13 +106,6 @@
 .mode-duo .menu-portrait { width: 32px; height: 36px; }
 .mode-duo .menu-portrait + .menu-portrait { margin-left: -16px; transform: rotate(9deg); }
 .lobby .mode-puppet { width: 34px; height: 40px; object-fit: contain; transform: rotate(8deg); }
-.weather-group { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 0 5%; }
-.lobby .weather-option { flex-direction: row; justify-content: center; align-items: center; gap: 5px; padding: 8px 6px; border: 1px solid #a28caf; background: #b8a5c326; box-shadow: 1px 2px 0 #11101a; color: #dacbdf; }
-.lobby .weather-option svg { width: 16px; height: 16px; }
-.lobby .weather-option .mode-title { font-size: 12px; font-weight: 400; }
-.lobby .weather-option .mode-cap { display: none; }
-.lobby .weather-option:hover { background-color: #b8a5c34d; }
-.lobby .weather-option[aria-pressed='true'] { border-color: #263322; box-shadow: 1px 2px 0 #11101a; background: var(--sage); }
 .lobby-tip { display: flex; justify-content: center; align-items: center; gap: 14px; margin: 0; color: #cbbbd1; font: 11px/1.6 'Courier New', monospace; }
 .lobby-tip img { width: 32px; height: 39px; object-fit: contain; transform: rotate(-8deg); }
 .lobby-tip b { display: block; color: var(--paper); font-weight: 700; }
@@ -218,10 +211,6 @@ body[data-screen='menu'] .debug-launch { opacity: 0.65; }
   .lobby .mode-copy { gap: 4px; }
   .menu-portrait { width: 32px; height: 32px; }
   .lobby .mode-puppet { width: 27px; height: 32px; }
-  .weather-group { padding: 0; gap: 6px; }
-  .lobby .weather-option { padding: 9px 4px; }
-  .lobby .weather-option .mode-title { font-size: 11px; }
-  .lobby .weather-option svg { display: none; }
   .lobby-tip { gap: 8px; font-size: 9px; }
   .lobby-tip img { width: 27px; height: 33px; }
   .lobby-foot { position: fixed; inset: auto 0 0; z-index: 2; gap: 10px; padding: 27px 20px 14px; background: linear-gradient(transparent, #11101af5 18%, #11101a); }

@@ -73,9 +73,32 @@ coordinates. The hat and coat tails have expanded visual bounds; this never
 changes collision shapes. All thirteen parts use the existing closed-joint
 poses, individual rotations, size powers, and detached-part scales. No opaque
 skin undercoat or human silhouette mask is used behind skeleton bones.
-The masked forearms are centered on their elbow pivots and extend 2.5 pixels
-under the upper sleeves while keeping their wrist registration. Rounded elbow
-ends reuse each sleeve's cloth texture to conceal the atlas's open black cuffs.
+The masked shoulders are continuous coat fabric, without exposed armholes or
+painted oval shoulder pads. Both upper sleeves have solid, rounded cloth ends;
+the old runtime elbow texture stamps are removed. Wider, tapered forearms meet
+those ends and contain only the sleeve: each separate hand supplies its own glove
+and wrist cuff, avoiding a second painted palm between the forearm and hand.
+The masked atlas removes disconnected fragments beneath both forearms and palms.
+Its pelvis uses a compact, two-sided trouser connection instead of a baked-in
+projecting thigh, so each separately rigged leg retains a continuous silhouette.
+The rounded thigh centerlines register to the hip and knee anchors at local x=1
+on the left and x=-1 on the right. Thigh roots overlap the trouser hips; the
+ochre coat tails are composited above them as a separate clipped pelvis pass.
+This removes both the upper-thigh fins and the horizontal shorts-like seam.
+All layers retain each body's own pose and scale, including detached parts.
+`src/render/maskedRig.ts` registers the measured glove-cuff centers, both sleeve
+ends and belt buckle to the actual wrist, elbow and waist anchors. Two continuous
+torso texture bands keep the neck and shoulders fixed while placing the painted
+waist on the torso/pelvis hinge; the coat front tucks under the waistband. A final
+pelvis pass places the belt above the thigh roots. This keeps the cuffs centered
+when the wrists bend and prevents the belt from being covered by a moving thigh.
+The attachment regression tests compare the painted landmarks with real hinge
+anchors across rotations, size powers and detached-arm resizes. Close-up wrist
+and waist pose comparisons are saved under ignored `output/attachment-refine/`.
+The skeleton player, collision shapes, physical anchors and joint limits are
+unchanged. The repaired pieces were made with built-in ImageGen and packaged
+losslessly. Prompts, sources, comparisons and browser joint-angle checks are in
+ignored `output/joint-refine/`; the earlier pelvis repair is in `output/model-refine/`.
 
 ## Animation and paper texture
 
