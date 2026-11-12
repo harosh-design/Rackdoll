@@ -282,14 +282,24 @@ screenshots or validation reports under the ignored `output/` directory.
 
 ## Tomb
 
-`render/tombArt.ts` draws a cool gray burial hall with pencil hatching, vaulted
-ribs, edge niches, sealed doors, wax candles and slow dust. Its narrow carved
-column is blunt. Twelve inscribed stone slabs cover the real court floor, with
-branching ink cracks, muted mint seams, a short decorative tremor and stone dust
-on a first hit. Support geometry does not move. The scoring transition uses an
-opaque comic cutaway instead of showing players above a hole. A jointed bone
-forearm and gripping fingers claim the current ball skin; a single dim eye
-remains inside the opening. Small hands slide in a replacement and renew the
-whole court strip before the new rally. Existing grain, palette, audio synthesis
-and the two-second goal timer are reused. No new bitmap assets or dependencies
-are required. The simulation owns damage, contact rearming and scoring.
+`public/art/horror/background-tomb.webp` is the production burial-hall plate,
+generated with built-in ImageGen and packaged as a 469 KB WebP. It adds pencil
+vaults, carved funerary reliefs, sealed coffin niches, brick doors and candles
+around a quiet violet-gray central wall. `render/tombArt.ts` loads it once and
+maps the source's 95% wall/floor boundary to the actual court floor. A vector
+hall remains available during loading or image failure. Runtime dust uses the
+shared paused scenery clock; map previews use the same production plate.
+The source image and generation prompt are saved under `output/tomb-art/`.
+
+The narrow carved column remains blunt. Twelve inscribed slabs cover the real
+court floor, with branching ink cracks, muted mint seams, a short decorative
+tremor and stone dust on a first hit. Support geometry stays solid during play.
+After a point, `render/tombScene.ts` derives the animation from the authoritative
+broken slab and saved ball position in world pixels. The players fade completely
+before the opening appears. A jointed bone hand rises from that slab, grips the
+ball at its impact X, lifts it, and draws it into the same hole. Forearm bones
+and edge fingers stay within the scored opening below the surface; the palm can
+reach a seam impact without clipping in midair. Replacement hands reseal that
+stone and repair other damaged slabs in place. The generic centered comic popup
+and detached miniature floor strip are removed. Existing grain, palette, audio
+and the two-second goal timer remain in use. No dependencies were added.

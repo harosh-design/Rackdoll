@@ -21,6 +21,7 @@ import { PencilGrain } from './pencilGrain';
 import { RUBBER_NET, SHARP_SPIKE } from '../sim/centerObstacle';
 import { gameMap, type GameMapId } from '../sim/maps';
 import { drawBurialColumn, drawTombFloor, drawTombGoal, drawTombHall } from './tombArt';
+import { tombScenePose } from './tombScene';
 import { MapScenery } from './mapScenery';
 import { drawSteamPipe, drawStitchedPole } from './mapObstacles';
 import { drawBallArt, loadBallArt, pickBallSkin, type BallSkin } from './ballArt';
@@ -296,8 +297,16 @@ export class Renderer {
     const now = gw.frame - 1 + alpha;
     this.paintCourt(ctx, gw);
     if (gw.tomb?.transition) {
+      const scene = tombScenePose(gw.tomb, gw.frame, this.reducedMotion.matches)!;
+      this.worldSpace(ctx);
+      this.drawCenterObstacle(ctx, gw, interp, alpha);
+      this.drawPrizeButtons(ctx, gw, now);
+      if (scene.playerOpacity > 0) {
+        ctx.save(); ctx.globalAlpha = scene.playerOpacity;
+        drawHorrorPlayers(ctx, [gw.p1, gw.p2], interp, alpha); ctx.restore();
+      }
+      drawTombGoal(ctx, gw.tomb, gw.frame, this.reducedMotion.matches, this.ballSkinFor(gw));
       this.stageSpace(ctx);
-      drawTombGoal(ctx, gw.tomb, gw.frame, VIEW.stageW, VIEW.stageH, this.reducedMotion.matches, this.ballSkinFor(gw));
       this.grain.draw(ctx, this.canvas.width, this.canvas.height, this.scenerySeconds, this.grainPixelRatio);
       this.stageSpace(ctx); this.drawHud(ctx, gw, hud, now);
       return;

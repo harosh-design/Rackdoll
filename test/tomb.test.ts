@@ -139,7 +139,7 @@ describe('Tomb slabs', () => {
     expect(gw.tomb!.slabs.every(s => s.state === 'intact')).toBe(true);
   });
 
-  it('freezes physics and controls during the cutaway, and freezes all scene time on pause', () => {
+  it('freezes physics and controls during the goal scene, and freezes all scene time on pause', () => {
     const gw = tombWorld(); free(gw); land(gw); land(gw);
     const position = gw.p1.head.getPosition().clone(), ball = gw.ball.position.clone();
     run(gw, 8); expect(gw.p1.head.getPosition()).toEqual(position); expect(gw.ball.position).toEqual(ball);

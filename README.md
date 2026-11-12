@@ -511,9 +511,11 @@ regardless of the last player to touch the ball. Touch and serve-clock violation
 still apply. Held balls, players, detached limbs and hazards cannot damage slabs.
 
 The floor stays solid throughout play. After a point, physics and controls stop
-for the existing two-second transition, replaced by a comic cutaway: a hidden
-skeletal hand claims the ball through the broken slab, retreats, and smaller
-hands replace the stones. The complete twelve-slab strip shows all repairs before
-live play resumes. Every new rally, restart and match restores all slabs. Pause
+for the existing two-second transition. Players fade away before the scored
+slab opens; a skeletal hand emerges from that exact opening, grabs the ball at
+its recorded impact position, lifts it and retreats. Smaller hands replace the
+broken stone and repair the other damaged slabs directly on the court before
+live play resumes. The generated burial-hall background adds carved vaults,
+coffin niches, sealed doors and candlelit edge details with a quiet center. Every new rally, restart and match restores all slabs. Pause
 freezes the transition and impact effects; reduced motion removes shaking,
 particles and continuous hand movement while preserving the sequence of states.

@@ -321,7 +321,7 @@ export class GameWorld {
     if (this.paused) return;
     this.game.tombFrame = this.frame;
     if (this.tomb && this.game.phase !== 'play') {
-      // A comic cutaway replaces live physics during the two-second transition.
+      // The in-place goal scene replaces live physics during the two-second transition.
       // No controls or AI run above an exposed opening.
       this.timers.step();
       this.frame++;

@@ -1,6 +1,6 @@
 import { gameMap, type GameMapId } from '../sim/maps';
 import { drawHorrorBackground } from './horrorArt';
-import { drawBurialColumn, drawTombHall } from './tombArt';
+import { drawBurialColumn, drawTombHall, loadTombArt } from './tombArt';
 import { COMIC } from './comicStyle';
 import { drawSteamPipe, drawStitchedPole } from './mapObstacles';
 import { drawInteriorMotion, type InteriorMapId } from './interiorMotion';
@@ -23,6 +23,7 @@ export class MapScenery {
   private readonly plates: Partial<Record<PaintedMapId, HTMLImageElement>> = {};
 
   async load(): Promise<void> {
+    await loadTombArt();
     const results = await Promise.allSettled(Object.entries(PLATES).map(([id, plate]) => new Promise<void>((resolve, reject) => {
       const image = new Image();
       image.onload = () => { this.plates[id as PaintedMapId] = image; resolve(); };

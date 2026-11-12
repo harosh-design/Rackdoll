@@ -1,52 +1,73 @@
-import { BALL, FLOOR_TOP_PX, MS_PER_FRAME, TIMERS } from '../sim/constants';
+import { BALL, FLOOR_TOP_PX } from '../sim/constants';
 import type { Tomb, TombSlab } from '../sim/tomb';
-import { COMIC, COMIC_TEXT, COMIC_TITLE, comicPanel, hatch } from './comicStyle';
+import { COMIC, comicPanel, hatch } from './comicStyle';
 import { drawBallArt, type BallSkin } from './ballArt';
+import { tombScenePose } from './tombScene';
 
 const clamp = (n: number) => Math.max(0, Math.min(1, n));
+let background: HTMLImageElement | undefined;
+let backgroundLoading: Promise<void> | undefined;
+
+export function loadTombArt(): Promise<void> {
+  return backgroundLoading ??= (async () => {
+    try {
+      const image = new Image();
+      image.src = import.meta.env.BASE_URL + 'art/horror/background-tomb.webp';
+      await image.decode();
+      background = image;
+    } catch { console.warn('Could not load Tomb background art'); }
+  })();
+}
+
 
 /** Quiet pencil stone, with architecture and burial details around the edges. */
 export function drawTombHall(ctx: CanvasRenderingContext2D, width: number, height: number, floorY: number,
   seconds = 0, reducedMotion = false): void {
   ctx.save(); ctx.scale(width / 640, height / 400);
   const floor = floorY * 400 / height, time = reducedMotion ? 0 : seconds;
-  ctx.fillStyle = '#62646e'; ctx.fillRect(0, 0, 640, 400);
-  ctx.fillStyle = '#77747c'; ctx.fillRect(45, 60, 550, floor - 60);
-  ctx.strokeStyle = '#3f3b4a'; ctx.lineWidth = 1.3;
-  // Tall vault ribs stay above the ball's principal flight path.
-  for (const inset of [0, 20, 39]) {
-    ctx.beginPath(); ctx.moveTo(inset, floor); ctx.lineTo(inset, 126);
-    ctx.bezierCurveTo(inset, -14 + inset, 640 - inset, -14 + inset, 640 - inset, 126);
-    ctx.lineTo(640 - inset, floor); ctx.stroke();
-  }
-  for (const side of [0, 1]) {
-    ctx.save(); ctx.translate(side * 640, 0); ctx.scale(side ? -1 : 1, 1);
-    ctx.fillStyle = '#36333f'; ctx.fillRect(0, 94, 45, floor - 94);
-    hatch(ctx, 0, 90, 45, floor - 90, 8);
-    for (let n = 0; n < 3; n++) {
-      const y = 133 + n * 61;
-      ctx.fillStyle = '#1b1924';
-      ctx.beginPath(); ctx.moveTo(7, y + 35); ctx.lineTo(7, y + 6);
-      ctx.quadraticCurveTo(21, y - 13, 36, y + 6); ctx.lineTo(36, y + 35); ctx.closePath(); ctx.fill(); ctx.stroke();
-      ctx.strokeStyle = '#726574'; ctx.strokeRect(11, y + 14, 21, 18);
-      for (let k = 0; k < 3; k++) { ctx.beginPath(); ctx.moveTo(13, y + 19 + k * 4); ctx.lineTo(29 - k * 2, y + 19 + k * 4); ctx.stroke(); }
+  if (background) {
+    const sourceFloor = background.naturalHeight * 0.95;
+    ctx.drawImage(background, 0, 0, background.naturalWidth, sourceFloor, 0, 0, 640, floor);
+    ctx.drawImage(background, 0, sourceFloor, background.naturalWidth, background.naturalHeight - sourceFloor, 0, floor, 640, 400 - floor);
+  } else {
+    ctx.fillStyle = '#62646e'; ctx.fillRect(0, 0, 640, 400);
+    ctx.fillStyle = '#77747c'; ctx.fillRect(45, 60, 550, floor - 60);
+    ctx.strokeStyle = '#3f3b4a'; ctx.lineWidth = 1.3;
+    // Tall vault ribs stay above the ball's principal flight path.
+    for (const inset of [0, 20, 39]) {
+      ctx.beginPath(); ctx.moveTo(inset, floor); ctx.lineTo(inset, 126);
+      ctx.bezierCurveTo(inset, -14 + inset, 640 - inset, -14 + inset, 640 - inset, 126);
+      ctx.lineTo(640 - inset, floor); ctx.stroke();
     }
-    ctx.fillStyle = '#292633'; ctx.fillRect(48, floor - 76, 34, 76);
-    hatch(ctx, 48, floor - 76, 34, 76, 6);
-    ctx.strokeStyle = '#9c8a85'; ctx.lineWidth = 2;
-    for (let y = floor - 70; y < floor; y += 13) { ctx.beginPath(); ctx.moveTo(49, y); ctx.lineTo(80, y + 1); ctx.stroke(); }
-    // Candles, wax drips and restrained, warm light.
-    for (const [x, lift] of [[35, 0], [89, 3], [99, -2]]) {
-      const y = floor - 8 - lift;
-      ctx.fillStyle = COMIC.muted; ctx.fillRect(x, y - 14, 3, 14);
-      ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 0.6; ctx.strokeRect(x, y - 14, 3, 14);
-      ctx.fillStyle = '#d6b66e'; ctx.globalAlpha = 0.8;
-      ctx.beginPath(); ctx.ellipse(x + 1.5, y - 18, 1.5, 3 + Math.sin(time * 3 + x) * 0.5, 0.1, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1;
+    for (const side of [0, 1]) {
+      ctx.save(); ctx.translate(side * 640, 0); ctx.scale(side ? -1 : 1, 1);
+      ctx.fillStyle = '#36333f'; ctx.fillRect(0, 94, 45, floor - 94);
+      hatch(ctx, 0, 90, 45, floor - 90, 8);
+      for (let n = 0; n < 3; n++) {
+        const y = 133 + n * 61;
+        ctx.fillStyle = '#1b1924';
+        ctx.beginPath(); ctx.moveTo(7, y + 35); ctx.lineTo(7, y + 6);
+        ctx.quadraticCurveTo(21, y - 13, 36, y + 6); ctx.lineTo(36, y + 35); ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.strokeStyle = '#726574'; ctx.strokeRect(11, y + 14, 21, 18);
+        for (let k = 0; k < 3; k++) { ctx.beginPath(); ctx.moveTo(13, y + 19 + k * 4); ctx.lineTo(29 - k * 2, y + 19 + k * 4); ctx.stroke(); }
+      }
+      ctx.fillStyle = '#292633'; ctx.fillRect(48, floor - 76, 34, 76);
+      hatch(ctx, 48, floor - 76, 34, 76, 6);
+      ctx.strokeStyle = '#9c8a85'; ctx.lineWidth = 2;
+      for (let y = floor - 70; y < floor; y += 13) { ctx.beginPath(); ctx.moveTo(49, y); ctx.lineTo(80, y + 1); ctx.stroke(); }
+      // Candles, wax drips and restrained, warm light.
+      for (const [x, lift] of [[35, 0], [89, 3], [99, -2]]) {
+        const y = floor - 8 - lift;
+        ctx.fillStyle = COMIC.muted; ctx.fillRect(x, y - 14, 3, 14);
+        ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 0.6; ctx.strokeRect(x, y - 14, 3, 14);
+        ctx.fillStyle = '#d6b66e'; ctx.globalAlpha = 0.8;
+        ctx.beginPath(); ctx.ellipse(x + 1.5, y - 18, 1.5, 3 + Math.sin(time * 3 + x) * 0.5, 0.1, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1;
+      }
+      ctx.restore();
     }
-    ctx.restore();
+    ctx.fillStyle = '#39323e'; ctx.fillRect(0, floor, 640, 400 - floor);
+    hatch(ctx, 0, floor, 640, 400 - floor, 13);
   }
-  ctx.fillStyle = '#39323e'; ctx.fillRect(0, floor, 640, 400 - floor);
-  hatch(ctx, 0, floor, 640, 400 - floor, 13);
   ctx.fillStyle = COMIC.paper;
   for (let i = 0; i < 20; i++) {
     ctx.globalAlpha = 0.08 + (i % 3) * 0.02;
@@ -108,7 +129,33 @@ function drawSlab(ctx: CanvasRenderingContext2D, slab: TombSlab, y: number, age:
 }
 
 export function drawTombFloor(ctx: CanvasRenderingContext2D, tomb: Tomb, frame: number, reduced: boolean): void {
-  for (const slab of tomb.slabs) drawSlab(ctx, slab, FLOOR_TOP_PX, frame - slab.hitFrame, reduced);
+  const pose = tombScenePose(tomb, frame, reduced);
+  for (const slab of tomb.slabs) {
+    const repaired = !!pose && pose.repair > 0 && pose.repair >= (slab.index + 1) / 12;
+    if (pose?.slab === slab && pose.opening > 0) {
+      drawOpening(ctx, slab, pose.opening);
+      continue;
+    }
+    drawSlab(ctx, slab, FLOOR_TOP_PX, frame - slab.hitFrame, reduced, repaired);
+  }
+}
+
+/** The gap occupies exactly one real slab; neighboring stones never move. */
+function drawOpening(ctx: CanvasRenderingContext2D, slab: TombSlab, amount: number): void {
+  const y = FLOOR_TOP_PX, width = slab.right - slab.left;
+  ctx.save(); ctx.beginPath(); ctx.rect(slab.left + 0.5, y, width - 1, 26); ctx.clip();
+  ctx.fillStyle = COMIC.ink; ctx.fillRect(slab.left, y, width, 26);
+  for (const side of [-1, 1]) {
+    const center = (slab.left + slab.right) / 2;
+    const edge = side < 0 ? slab.left : slab.right;
+    ctx.save(); ctx.translate(edge, y); ctx.rotate(-side * amount * 1.2);
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(center - edge, 1);
+    ctx.lineTo(center - edge + side * 3, 9); ctx.lineTo(center - edge - side * 2, 19);
+    ctx.lineTo(0, 21); ctx.closePath(); ctx.fillStyle = '#95868c';
+    ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 1.4; ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
+  ctx.restore();
 }
 
 /** Jointed ink-and-bone fingers. Also reused by the hands replacing the slabs. */
@@ -122,70 +169,71 @@ function bone(ctx: CanvasRenderingContext2D, points: number[][], width: number):
   for (const [x, y] of points.slice(1, -1)) { ctx.beginPath(); ctx.arc(x, y, width * 0.5, 0, Math.PI * 2); ctx.fill(); }
 }
 
-/** An opaque comic cutaway replaces the players before the opening is revealed. */
-export function drawTombGoal(ctx: CanvasRenderingContext2D, tomb: Tomb, frame: number, width: number, height: number,
+/** World-space animation at the scored slab and the saved ball impact position. */
+export function drawTombGoal(ctx: CanvasRenderingContext2D, tomb: Tomb, frame: number,
   reduced: boolean, skin: BallSkin): void {
+  const pose = tombScenePose(tomb, frame, reduced);
   const scene = tomb.transition;
-  if (!scene) return;
-  const t = clamp((frame - scene.frame) / (TIMERS.goalMs / MS_PER_FRAME - 1));
-  const repair = clamp((t - 0.69) / 0.23), broken = scene.broken !== null;
-  ctx.save(); ctx.scale(width / 640, height / 400);
-  comicPanel(ctx, 27, 85, 586, 275, '#69616c');
-  hatch(ctx, 29, 88, 582, 269, 14);
-  ctx.fillStyle = COMIC.paper; ctx.font = '19px ' + COMIC_TITLE; ctx.textAlign = 'center';
-  ctx.fillText(repair > 0 ? 'THE TOMB RESETS' : broken ? 'SOMETHING BELOW CLAIMS THE BALL' : 'THE STONES REMEMBER', 320, 114);
-  ctx.font = '10px ' + COMIC_TEXT;
-  ctx.fillText(repair > 0 ? 'All twelve slabs restored before the next serve' : 'Rally over', 320, 132);
-  ctx.save(); ctx.beginPath(); ctx.rect(45, 145, 550, 145); ctx.clip();
-  if (broken) {
-    const open = reduced ? 1 : clamp(t / 0.09);
-    ctx.fillStyle = COMIC.ink;
-    ctx.beginPath(); ctx.ellipse(320, 258, 112 * open * (1 - repair * 0.3), 24 * (reduced && repair > 0 ? 0 : 1 - repair), 0, 0, Math.PI * 2); ctx.fill();
-    // Fractured stone halves move away only after active play has ended.
-    for (const side of [-1, 1]) {
-      ctx.save(); ctx.translate(320 + side * (69 + open * 66), 250 + open * 8); ctx.rotate(side * open * 0.16);
-      drawSlab(ctx, { ...tomb.slabs[scene.broken!], left: -62, right: 62, hitX: 0, state: 'cracked' }, 0, 20, true); ctx.restore();
+  if (!pose || !scene) return;
+  const { slab, repair } = pose;
+  // Repair the whole court in place, rather than a detached miniature strip.
+  for (const stone of tomb.slabs) {
+    if (stone.state === 'intact' || repair <= 0 || repair >= 1 || stone === slab) continue;
+    const amount = clamp(repair * 12 - stone.index);
+    if (amount <= 0 || amount >= 1) continue;
+    const center = (stone.left + stone.right) / 2;
+    for (const side of [-1, 1]) bone(ctx, [[center + side * 16, FLOOR_TOP_PX + 24],
+      [center + side * 18, FLOOR_TOP_PX + 5], [center + side * 12, FLOOR_TOP_PX + 3]], 2.5);
+  }
+  if (!slab) return;
+  const floor = FLOOR_TOP_PX, width = slab.right - slab.left;
+  ctx.save();
+  // Nothing belonging to the creature can appear through an adjacent slab.
+  ctx.beginPath(); ctx.moveTo(slab.left - 50, floor - 260);
+  ctx.lineTo(slab.right + 50, floor - 260); ctx.lineTo(slab.right + 50, floor);
+  ctx.lineTo(slab.right, floor); ctx.lineTo(slab.right, floor + 24);
+  ctx.lineTo(slab.left, floor + 24); ctx.lineTo(slab.left, floor);
+  ctx.lineTo(slab.left - 50, floor); ctx.closePath(); ctx.clip();
+  if (pose.opening > 0.3 && pose.retreat < 1) {
+    ctx.fillStyle = COMIC.ochre;
+    ctx.beginPath(); ctx.ellipse(pose.originX + 17, floor + 10, 3.5, 1.3, -0.15, 0, Math.PI * 2); ctx.fill();
+  }
+  if (pose.handVisible) {
+    const x = pose.palmX, y = pose.palmY;
+    // The two forearm bones emerge inside the actual hole and bend to the ball.
+    bone(ctx, [[pose.originX - 7, floor + 24], [x - 15, (floor + y) / 2], [x - 9, y + 18]], 6);
+    bone(ctx, [[pose.originX + 8, floor + 24], [x - 2, (floor + y) / 2 + 3], [x + 8, y + 20]], 4.5);
+    ctx.fillStyle = COMIC.paper; ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.ellipse(x, y + 8, 14, 18, -0.15, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    for (let i = 0; i < 4; i++) {
+      const fingerX = x - 13 + i * 7;
+      bone(ctx, [[fingerX, y + 4], [fingerX - 4, y - 12 - i],
+        [fingerX + 1, y - 29], [fingerX + 7, y - 23]], 3.3);
     }
-    const reach = reduced ? (repair > 0 ? 0 : 1) : clamp((t - 0.04) / 0.18) * (1 - clamp((t - 0.47) / 0.2));
-    if (reach > 0) {
-      // Only a forearm, a palm and gripping fingertips ever leave the dark.
-      const palmY = 286 - reach * 94;
-      bone(ctx, [[303, 294], [296, palmY + 40], [317, palmY + 13]], 12);
-      bone(ctx, [[330, 294], [322, palmY + 43], [326, palmY + 15]], 8);
-      ctx.fillStyle = COMIC.paper; ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.ellipse(321, palmY + 10, 18, 22, -0.3, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-      for (let i = 0; i < 4; i++) {
-        const x = 308 + i * 9;
-        bone(ctx, [[x, palmY + 8], [x - 8, palmY - 12 - i * 2], [x - 3, palmY - 29], [x + 5, palmY - 23]], 4.5);
-      }
-      ctx.save(); ctx.translate(327, palmY - 17); ctx.rotate(scene.ballAngle);
-      drawBallArt(ctx, skin, BALL.radiusPx); ctx.restore();
-      bone(ctx, [[334, palmY + 19], [349, palmY - 1], [339, palmY - 15]], 5);
-      for (const side of [-1, 1]) for (let i = 0; i < 3; i++) {
-        const x = 320 + side * (83 + i * 9);
-        bone(ctx, [[x - side * 9, 282], [x, 251], [x + side * 8, 253]], 4);
-      }
-      ctx.fillStyle = COMIC.ochre; ctx.beginPath(); ctx.ellipse(356, 269, 5, 2, -0.2, 0, Math.PI * 2); ctx.fill();
+    // Grip fingers curl over the real edges of this particular stone opening.
+    for (const side of [-1, 1]) for (let i = 0; i < 2; i++) {
+      const edge = side < 0 ? slab.left + 4 + i * 5 : slab.right - 4 - i * 5;
+      bone(ctx, [[edge + side * 4, floor + 19], [edge, floor - 6], [edge - side * 4, floor - 2]], 2.5);
     }
-    if (repair > 0) {
-      const slide = reduced ? 0 : (1 - repair) * 120;
-      drawSlab(ctx, { ...tomb.slabs[scene.broken!], left: 205 + slide, right: 435 + slide, hitX: 320 }, 246, 99, true, true);
-      if (repair < 1) for (const x of [257, 380]) bone(ctx, [[x + slide, 281], [x + slide - 9, 263], [x + slide + 9, 257]], 4);
-    }
-  } else {
-    ctx.fillStyle = COMIC.muted; ctx.font = '18px ' + COMIC_TITLE;
-    ctx.fillText('THE KEEPERS REPLACE EVERY DAMAGED STONE', 320, 213);
   }
   ctx.restore();
-  // Show the complete court being renewed, including slabs away from the goal.
-  ctx.font = '9px ' + COMIC_TEXT; ctx.fillStyle = COMIC.paper;
-  ctx.fillText(repair >= 1 ? 'COURT SEALED · READY TO SERVE' : 'LEFT COURT                         RIGHT COURT', 320, 341);
-  for (const slab of tomb.slabs) {
-    const x = 60 + slab.index * 43 + (slab.owner === 2 ? 4 : 0);
-    const renewed = repair > 0 && repair >= (slab.index + 1) / 12;
-    const offset = renewed && !reduced ? (1 - repair) * 15 : 0;
-    drawSlab(ctx, { ...slab, left: x, right: x + 40, hitX: x + 20 }, 302 - offset, 99, true, renewed);
-    if (repair > 0 && repair < 1) bone(ctx, [[x + 5, 328], [x + 7, 316 - offset], [x + 15, 315 - offset]], 2);
+  // Above the floor the ball keeps its true impact X, even at a slab seam.
+  ctx.save(); ctx.beginPath(); ctx.rect(slab.left - 50, floor - 260, width + 100, 260); ctx.clip();
+  if (pose.ballVisible) {
+    ctx.save(); ctx.translate(pose.ballX, pose.ballY); ctx.rotate(scene.ballAngle);
+    drawBallArt(ctx, skin, BALL.radiusPx); ctx.restore();
+    if (pose.handVisible && pose.grab >= 0.9) {
+      bone(ctx, [[pose.palmX + 9, pose.palmY + 12], [pose.palmX + 22, pose.palmY - 3],
+        [pose.palmX + 12, pose.palmY - 17]], 4);
+    }
   }
   ctx.restore();
+  if (repair > 0 && repair < 1) {
+    ctx.save(); ctx.beginPath(); ctx.rect(slab.left, floor, width, 24); ctx.clip();
+    drawSlab(ctx, slab, floor + (1 - repair) * 25, 100, true, true);
+    ctx.restore();
+    for (const side of [-1, 1]) bone(ctx, [[pose.originX + side * 14, floor + 24],
+      [pose.originX + side * 18, floor + (1 - repair) * 23 + 2],
+      [pose.originX + side * 10, floor + (1 - repair) * 23]], 2.5);
+  }
 }
