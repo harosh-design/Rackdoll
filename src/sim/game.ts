@@ -7,6 +7,7 @@ import type { Ball } from './ball';
 import type { ContactFlags } from './contacts';
 import type { Player, PlayerId } from './player';
 import { FrameTimer, type TimerSet } from './timer';
+import type { Tomb } from './tomb';
 
 export type Phase = 'play' | 'goal' | 'matchOver';
 
@@ -19,7 +20,7 @@ export interface GameEvents {
   onMatchOver?: (winner: PlayerId) => void;
 }
 
-export type PointReason = 'floor' | 'touches' | 'serveClock';
+export type PointReason = 'floor' | 'touches' | 'serveClock' | 'slab';
 
 /** §11 Game rules. */
 export class Game {
@@ -58,6 +59,7 @@ export class Game {
     ball: Ball,
     flags: ContactFlags,
     events: GameEvents = {},
+    private readonly tomb?: Tomb,
   ) {
     this.world = world;
     this.timers = timers;
@@ -132,6 +134,15 @@ export class Game {
     if (this.p2.contact > MAX_TOUCHES) return this.awardPoint(1, 'touches');
 
     // 4. The ball hit the floor.
+    if (this.tomb) {
+      const slab = this.tomb.landing(this.ball, this.flags.ballFloorHits ?? [], this.tombFrame);
+      this.flags.onBallDown = false;
+      if (slab) {
+        this.awardPoint(slab.owner === 1 ? 2 : 1, 'slab');
+        this.tomb.breakSlab(slab);
+      }
+      return;
+    }
     if (this.flags.onBallDown && this.ball.body.getJointList() == null) {
       const x = this.ball.body.getWorldCenter().x;
       const winner: PlayerId = x < LANDING_CENTRE_M ? 2 : 1;
@@ -201,6 +212,7 @@ export class Game {
     this.win1 = winner === 1;
     this.lastPointReason = reason;
     this.score[winner] += 1;
+    this.tomb?.startTransition(this.tombFrame, this.ball);
     if (winner === 1) this.campaignScore += this.level;
     this.events.onPoint?.(winner, reason);
 
@@ -223,6 +235,9 @@ export class Game {
 
   /** §11 newRound(). */
   newRound(): void {
+    this.goalTimer.reset();
+    this.tomb?.reset();
+    if (this.flags.ballFloorHits) this.flags.ballFloorHits.length = 0;
     this.events.onBeforeNewRound?.();
     this.releaseGrips();
     this.p1.restoreBody();
@@ -295,4 +310,7 @@ export class Game {
     const x = this.ball.body.getWorldCenter().x;
     return holder === 1 ? x < SERVE_CENTRE_M : x > SERVE_CENTRE_M;
   }
+
+  /** Simulation frame supplied by GameWorld, including the frozen goal scene. */
+  tombFrame = 0;
 }

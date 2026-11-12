@@ -220,7 +220,7 @@ function onPoint(winner: PlayerId, reason: PointReason): void {
   const who = gw.botVsBot
     ? `${winner === 1 ? 'LEFT' : 'RIGHT'} CPU POINT`
     : single ? (winner === 1 ? 'POINT!' : 'CPU POINT') : `PLAYER ${winner} POINT`;
-  const why = reason === 'touches' ? ' · 4 TOUCHES' : reason === 'serveClock' ? ' · TOO SLOW' : '';
+  const why = reason === 'touches' ? ' · 4 TOUCHES' : reason === 'serveClock' ? ' · TOO SLOW' : reason === 'slab' ? ' · SLAB BROKEN' : '';
   message = who + why;
   messageTone = winner;
   if (single && winner === 2) sfx.lose();
@@ -432,7 +432,7 @@ function wireMenu(): void {
     const marker = document.createElement('span'); marker.className = 'map-selected';
     marker.textContent = '✓'; marker.setAttribute('aria-hidden', 'true');
     const label = document.createElement('span'); label.className = 'mode-title'; label.textContent = option.label;
-    const caption = document.createElement('span'); caption.className = 'mode-cap'; caption.textContent = option.obstacleLabel;
+    const caption = document.createElement('span'); caption.className = 'mode-cap'; caption.textContent = option.id === 'tomb' ? 'First cracks · second scores' : option.obstacleLabel;
     button.append(preview, marker, label, caption); $('map-options').append(button);
     mapPreviews.push(preview);
     button.addEventListener('keydown', event => {
@@ -572,6 +572,8 @@ let last = performance.now();
 
 function simFrame(): void {
   const wasDown = gw.flags.onBallDown;
+  const slabImpacts = gw.tomb?.impacts;
+  const tombRepair = gw.tomb?.transition ? gw.frame - gw.tomb.transition.frame : -1;
   const executers = gw.executers.length;
   const hazardHits = new Map(gw.executers.map((e) => [e, { hits: e.hits, snaps: e.snaps }]));
   const buttons = gw.ground.prizeButtons.map((b) => [b.pressedAt, b.releasedAt]);
@@ -592,6 +594,8 @@ function simFrame(): void {
     if (b.releasedAt !== released) sfx.buttonRearm();
   });
 
+  if (gw.tomb && gw.tomb.impacts !== slabImpacts) sfx.stone(gw.game.lastPointReason === 'slab' && gw.game.phase === 'goal');
+  if (gw.tomb?.transition && tombRepair === 41) sfx.stone(false, true);
   if (!wasDown && gw.flags.onBallDown) sfx.thud(gw.game.phase === 'goal');
   if (gw.executers.length > executers) sfx.executer();
   for (const [e, { hits, snaps }] of hazardHits) {

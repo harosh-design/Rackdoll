@@ -21,6 +21,7 @@ import { airDamping, normalizePhysics, type PhysicsSettings } from './physics';
 import { bodyTypeOf } from './types';
 import type { PrizeButton } from './prizeButton';
 import { FrameTimer, TimerSet } from './timer';
+import { Tomb } from './tomb';
 
 export interface GameWorldOptions {
   /** Single player puts an AI on player 2. */
@@ -86,11 +87,12 @@ export class GameWorld {
   readonly powerUps: PowerUps;
   readonly bees: Bees;
   readonly game: Game;
+  readonly tomb: Tomb | undefined;
   readonly control: Control;
   /** The AI driving each side, or null for a human. */
   readonly ais: Record<PlayerId, AI | null>;
   readonly timers = new TimerSet();
-  readonly flags: ContactFlags = { onBallDown: false, bYesPrize: false, prizeHits: [], ballPlayerHits: [], playerHeadHits: [] };
+  readonly flags: ContactFlags = { onBallDown: false, bYesPrize: false, prizeHits: [], ballPlayerHits: [], playerHeadHits: [], ballFloorHits: [] };
   readonly executers: Executer[] = [];
   /** Total hazard launches this match, shared by both buttons. */
   executerLaunches = 0;
@@ -158,6 +160,7 @@ export class GameWorld {
     const railAnchor = this.world.createBody({ type: 'static', position: Vec2(0, 0) });
 
     this.ground = new Ground(this.world, gameMap(this.mapId).obstacle);
+    this.tomb = this.mapId === 'tomb' ? new Tomb() : undefined;
     this.p1 = new Player(this.world, railAnchor, SPAWN_P1_PX.x, SPAWN_P1_PX.y, 1);
     this.p2 = new Player(this.world, railAnchor, SPAWN_P2_PX.x, SPAWN_P2_PX.y, 2);
     this.ball = new Ball(this.world);
@@ -207,7 +210,7 @@ export class GameWorld {
     };
 
     this.game = new Game(
-      this.world, this.timers, this.p1, this.p2, this.ball, this.flags, events,
+      this.world, this.timers, this.p1, this.p2, this.ball, this.flags, events, this.tomb,
     );
     if (opts.level != null) this.game.level = opts.level;
 
@@ -316,6 +319,15 @@ export class GameWorld {
    */
   step(): void {
     if (this.paused) return;
+    this.game.tombFrame = this.frame;
+    if (this.tomb && this.game.phase !== 'play') {
+      // A comic cutaway replaces live physics during the two-second transition.
+      // No controls or AI run above an exposed opening.
+      this.timers.step();
+      this.frame++;
+      return;
+    }
+    this.flags.ballFloorHits!.length = 0;
     this.p1.tickRecoil();
     this.p2.tickRecoil();
     this.p1.tickStun();
@@ -365,6 +377,11 @@ export class GameWorld {
 
     // 4. Rules.
     this.game.update();
+    if (this.tomb && this.game.phase !== 'play') {
+      this.timers.step();
+      this.frame++;
+      return;
+    }
     this.updateBallTint();
     this.powerUps.tick(this.frame);
     // A ball meeting a bee gives its power to whoever holds it or touched it last.

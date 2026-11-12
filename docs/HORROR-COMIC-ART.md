@@ -1,6 +1,6 @@
 # Pencil horror-comic art
 
-The game shares one pencil horror-comic direction across three selectable maps.
+The game shares one pencil horror-comic direction across four selectable maps.
 Player 1 wears an ochre hat and coat, violet clothes, and an ink-patterned face covering.
 Player 2 has exposed cream bones, a skull, and plum shorts. Graveyard contains
 blue pencil-colored sky, a cream moon, bare branches at the edges, a solid black
@@ -278,3 +278,18 @@ detached limbs, all three maps and all nine prop loads. Check the start menu
 at desktop and mobile widths, including fixed keys, mode badges, CPU levels,
 keyboard start, reduced motion and start/pause transitions. Save any new
 screenshots or validation reports under the ignored `output/` directory.
+
+
+## Tomb
+
+`render/tombArt.ts` draws a cool gray burial hall with pencil hatching, vaulted
+ribs, edge niches, sealed doors, wax candles and slow dust. Its narrow carved
+column is blunt. Twelve inscribed stone slabs cover the real court floor, with
+branching ink cracks, muted mint seams, a short decorative tremor and stone dust
+on a first hit. Support geometry does not move. The scoring transition uses an
+opaque comic cutaway instead of showing players above a hole. A jointed bone
+forearm and gripping fingers claim the current ball skin; a single dim eye
+remains inside the opening. Small hands slide in a replacement and renew the
+whole court strip before the new rally. Existing grain, palette, audio synthesis
+and the two-second goal timer are reused. No new bitmap assets or dependencies
+are required. The simulation owns damage, contact rearming and scoring.

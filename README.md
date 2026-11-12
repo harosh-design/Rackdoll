@@ -8,14 +8,14 @@ All project code and documentation must be written in English. See
 [`AGENTS.md`](AGENTS.md) for the project language policy.
 
 The game uses a shared [pencil horror-comic art direction](docs/HORROR-COMIC-ART.md):
-a masked player in an ochre coat, a skeleton in plum shorts, and three maps:
-Graveyard, Crematorium, and Dead Circus. On Graveyard, the moon moves smoothly across the
+a masked player in an ochre coat, a skeleton in plum shorts, and four maps:
+Graveyard, Crematorium, Dead Circus, and Tomb. On Graveyard, the moon moves smoothly across the
 sky along the upper half of an ellipse, taking five minutes to cross and
 easing into each return pass. It and the black silhouettes use subtle
 line-boil animation; coarse cached procedural paper grain overlays the
 artwork at a fixed 16% intensity. The Map selector previews each court and its
 fixed center obstacle. Old People, Shaders, and location preferences are ignored.
-All three maps use a quiet pencil field with low dark silhouettes and scenery
+All four maps use a quiet pencil field with low dark silhouettes and scenery
 restricted to the edges, keeping the ball clear of detailed background artwork.
 Crematorium and Dead Circus combine illustrated static architecture and props
 with vector flames, swaying lamps, steam, striped curtain hems and hanging lights.
@@ -24,7 +24,7 @@ reduced motion.
 
 The comic direction also covers hazards, power-carrying bats,
 three illustrated ball skins, motion marks, obstacles, scoreboards, menus, pause
-and results. Those visual changes preserve the existing physics and rules.
+and results. The visual skins preserve existing physics; Tomb adds the slab rules described below.
 Each match randomly selects a stitched leather ball, a cratered moon or a mint
 eyeball, avoiding consecutive repeats. The skin stays fixed throughout that
 match's rounds, serves and pauses; a restart or rematch selects another skin.
@@ -496,3 +496,21 @@ build on it without touching the physics:
 - **Touch controls**: add a `KeySink` next to `src/input/keyboard.ts`.
 - **More AI tuning**: `AI.maxSpeed` and the §12 thresholds can vary levels 1–5.
 - **Original art**: swap `Renderer.partArt`. The §15 artwork bounds are already wired in.
+
+
+### Tomb rules
+
+Tomb is a vaulted underground burial hall with a blunt carved column. Each half
+has six stone slabs spanning the playable floor between its wall and the column.
+A free ball's first landing cracks one slab and bounces without ending the rally.
+A separate landing on that cracked slab awards one point to the other half,
+regardless of the last player to touch the ball. Touch and serve-clock violations
+still apply. Held balls, players, detached limbs and hazards cannot damage slabs.
+
+The floor stays solid throughout play. After a point, physics and controls stop
+for the existing two-second transition, replaced by a comic cutaway: a hidden
+skeletal hand claims the ball through the broken slab, retreats, and smaller
+hands replace the stones. The complete twelve-slab strip shows all repairs before
+live play resumes. Every new rally, restart and match restores all slabs. Pause
+freezes the transition and impact effects; reduced motion removes shaking,
+particles and continuous hand movement while preserving the sequence of states.

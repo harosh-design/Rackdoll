@@ -1,7 +1,7 @@
 import { Vec2, type Body, type Contact, type World } from 'planck';
 import {
   BALL, BALL_BODY_RESTITUTION, BALL_VX_SCALE_PRIZE, BALL_VX_SCALE_WALL, BODYTYPE, EXECUTER_DOLL_FRICTION,
-  type PartName,
+  toPx, type PartName,
 } from './constants';
 import { bodyTypeOf, ud } from './types';
 
@@ -15,6 +15,8 @@ import { bodyTypeOf, ud } from './types';
 export interface ContactFlags {
   /** The rally is over — the ball hit the floor. */
   onBallDown: boolean;
+  /** Solved, free-ball floor impacts in world pixels; consumed by Tomb rules. */
+  ballFloorHits?: number[];
   /** The ball hit a prize button this rally (§10; kept for parity). */
   bYesPrize: boolean;
   /**
@@ -74,7 +76,10 @@ export function installContactListener(world: World, flags: ContactFlags): void 
       case BODYTYPE.GROUND:
         // Only a free ball lands. A held ball brushing the floor would leave
         // the flag set, and game.update would score it the moment it is served.
-        if (ballBody.getJointList() == null) flags.onBallDown = true;
+        if (ballBody.getJointList() == null) {
+          flags.onBallDown = true;
+          if (bodyTypeOf(ballBody) === BODYTYPE.BALL) flags.ballFloorHits?.push(toPx(ballBody.getWorldCenter().x));
+        }
         break;
       default:
         break;

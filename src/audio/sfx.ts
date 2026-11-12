@@ -119,6 +119,12 @@ export class Sfx {
     this.tone(120, 0.14, 'sine', quiet ? 0.26 : 0.45, 60);
   }
 
+  /** Dry stone fracture and a low scrape from beneath the court. */
+  stone(broken = false, repair = false): void {
+    this.noise(broken ? 0.35 : 0.16, broken ? 0.7 : 0.48, repair ? 700 : 2200);
+    this.tone(repair ? 70 : broken ? 95 : 180, broken ? 0.45 : 0.2, 'triangle', 0.28, 42);
+  }
+
   perfect(): void {
     if (this.play('perfect', 0.73)) return;
     this.tone(720, 0.13, 'sine', 0.4, 1120);

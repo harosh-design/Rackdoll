@@ -11,11 +11,11 @@ import type { GameWorld } from '../src/sim/world';
 import { fireAtButton, hazardWorld, run, world } from './helpers';
 
 describe('centre obstacle selection and round lifecycle', () => {
-  it('defaults to the sharp spike and accepts all three variants', () => {
+  it('defaults to the sharp spike and accepts all four variants', () => {
     expect(world().centerObstacle.id).toBe('sharp');
     expect(normalizeCenterObstacle('unknown')).toBe('sharp');
     expect(normalizeCenterObstacle('classic')).toBe('sharp');
-    expect(CENTER_OBSTACLES.map(option => option.id)).toEqual(['sharp', 'blower', 'rubber']);
+    expect(CENTER_OBSTACLES.map(option => option.id)).toEqual(['sharp', 'blower', 'rubber', 'column']);
     for (const option of CENTER_OBSTACLES) expect(world({ centerObstacle: option.id }).centerObstacle.id).toBe(option.id);
   });
 

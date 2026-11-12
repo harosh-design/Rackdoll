@@ -20,6 +20,7 @@ import { drawHorrorBackground, drawHorrorPlayers, loadHorrorArt } from './horror
 import { PencilGrain } from './pencilGrain';
 import { RUBBER_NET, SHARP_SPIKE } from '../sim/centerObstacle';
 import { gameMap, type GameMapId } from '../sim/maps';
+import { drawBurialColumn, drawTombFloor, drawTombGoal, drawTombHall } from './tombArt';
 import { MapScenery } from './mapScenery';
 import { drawSteamPipe, drawStitchedPole } from './mapObstacles';
 import { drawBallArt, loadBallArt, pickBallSkin, type BallSkin } from './ballArt';
@@ -226,6 +227,8 @@ export class Renderer {
       drawHorrorBackground(ctx, VIEW.stageW, VIEW.stageH, floorY, this.scenerySeconds,
         this.weather, weatherSeconds, this.reducedMotion.matches);
       this.weather.drawCourt(ctx, VIEW.stageW, VIEW.stageH, floorY, weatherSeconds, this.reducedMotion.matches);
+    } else if (gw.mapId === 'tomb') {
+      drawTombHall(ctx, VIEW.stageW, VIEW.stageH, floorY, this.scenerySeconds, this.reducedMotion.matches);
     } else {
       this.mapScenery.draw(ctx, gw.mapId, VIEW.stageW, VIEW.stageH, floorY,
         this.scenerySeconds, this.reducedMotion.matches);
@@ -234,6 +237,7 @@ export class Renderer {
     const ground = COURT.ground;
     ctx.fillStyle = gw.mapId === 'graveyard' ? '#cfb3cb' : gw.mapId === 'crematorium' ? '#a28587' : '#b08783';
     ctx.fillRect(ground.x - ground.hw, SOLES_PX, ground.hw * 2, 1.2);
+    if (gw.tomb) drawTombFloor(ctx, gw.tomb, gw.frame, this.reducedMotion.matches);
     for (const wall of [COURT.leftWall, COURT.rightWall]) {
       const left = wall === COURT.leftWall;
       const inner = left ? wall.x + wall.hw : wall.x - wall.hw;
@@ -263,6 +267,8 @@ export class Renderer {
       ctx.fillStyle = COMIC.paper; ctx.fill(); ctx.stroke();
       ctx.save(); ctx.clip(); hatch(ctx, x - 6, top, 7, FLOOR_TOP_PX - top, 7); ctx.restore();
       ctx.strokeStyle = COMIC.plum; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.moveTo(x, top + 10); ctx.lineTo(x + 1, FLOOR_TOP_PX); ctx.stroke();
+    } else if (obstacle.id === 'column') {
+      drawBurialColumn(ctx, x, top, FLOOR_TOP_PX);
     } else if (obstacle.id === 'blower') {
       drawSteamPipe(ctx, x, top, FLOOR_TOP_PX, this.reducedMotion.matches ? 0.6 : this.scenerySeconds);
     } else {
@@ -289,6 +295,13 @@ export class Renderer {
     const interp = closedPoses(frames, alpha, [gw.p1, gw.p2], gw.ball.body);
     const now = gw.frame - 1 + alpha;
     this.paintCourt(ctx, gw);
+    if (gw.tomb?.transition) {
+      this.stageSpace(ctx);
+      drawTombGoal(ctx, gw.tomb, gw.frame, VIEW.stageW, VIEW.stageH, this.reducedMotion.matches, this.ballSkinFor(gw));
+      this.grain.draw(ctx, this.canvas.width, this.canvas.height, this.scenerySeconds, this.grainPixelRatio);
+      this.stageSpace(ctx); this.drawHud(ctx, gw, hud, now);
+      return;
+    }
     drawFeatherAirflow(ctx, gw, now);
     this.drawShadows(gw, interp, alpha);
     this.worldSpace(ctx);

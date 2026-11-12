@@ -1,7 +1,7 @@
 import type { GameMapId } from '../sim/maps';
 import { COMIC, hatch } from './comicStyle';
 
-export type InteriorMapId = Exclude<GameMapId, 'graveyard'>;
+export type InteriorMapId = Exclude<GameMapId, 'graveyard' | 'tomb'>;
 
 /** All moving scenery is vector geometry, anchored to the painted environment. */
 export function drawInteriorMotion(ctx: CanvasRenderingContext2D, id: InteriorMapId,

@@ -1,10 +1,12 @@
 import { gameMap, type GameMapId } from '../sim/maps';
 import { drawHorrorBackground } from './horrorArt';
+import { drawBurialColumn, drawTombHall } from './tombArt';
 import { COMIC } from './comicStyle';
 import { drawSteamPipe, drawStitchedPole } from './mapObstacles';
 import { drawInteriorMotion, type InteriorMapId } from './interiorMotion';
 
-const PLATES: Record<InteriorMapId, { file: string; floor: number; wall: string; ground: string }> = {
+type PaintedMapId = InteriorMapId;
+const PLATES: Record<PaintedMapId, { file: string; floor: number; wall: string; ground: string }> = {
   crematorium: { file: 'background-crematorium.webp', floor: 0.84, wall: '#526b86', ground: '#805a79' },
   'dead-circus': { file: 'background-dead-circus.webp', floor: 0.84, wall: '#896875', ground: '#613e5a' },
 };
@@ -18,12 +20,12 @@ const MOTES = Array.from({ length: 12 }, (_, i) => ({
 }));
 
 export class MapScenery {
-  private readonly plates: Partial<Record<InteriorMapId, HTMLImageElement>> = {};
+  private readonly plates: Partial<Record<PaintedMapId, HTMLImageElement>> = {};
 
   async load(): Promise<void> {
     const results = await Promise.allSettled(Object.entries(PLATES).map(([id, plate]) => new Promise<void>((resolve, reject) => {
       const image = new Image();
-      image.onload = () => { this.plates[id as InteriorMapId] = image; resolve(); };
+      image.onload = () => { this.plates[id as PaintedMapId] = image; resolve(); };
       image.onerror = () => reject(new Error('Could not load map art: ' + plate.file));
       image.src = import.meta.env.BASE_URL + 'art/horror/' + plate.file;
     })));
@@ -31,8 +33,9 @@ export class MapScenery {
   }
 
   /** Interior maps have their own dust and ash instead of outdoor weather. */
-  draw(ctx: CanvasRenderingContext2D, id: InteriorMapId, width: number, height: number, floorY: number,
+  draw(ctx: CanvasRenderingContext2D, id: Exclude<GameMapId, 'graveyard'>, width: number, height: number, floorY: number,
     seconds: number, reducedMotion = false): void {
+    if (id === 'tomb') { drawTombHall(ctx, width, height, floorY, seconds, reducedMotion); return; }
     const plate = PLATES[id], image = this.plates[id];
     ctx.save();
     if (image) {
@@ -65,10 +68,15 @@ export class MapScenery {
     const ctx = canvas.getContext('2d')!, { width, height } = canvas;
     const floorY = height * 0.91;
     if (id === 'graveyard') drawHorrorBackground(ctx, width, height, floorY, 0);
-    else this.draw(ctx, id, width, height, floorY, 0, true);
+    else if (id === 'tomb') {
+      drawTombHall(ctx, width, height, floorY, 0, true);
+      ctx.fillStyle = '#aca097'; ctx.strokeStyle = COMIC.ink;
+      for (let i = 0; i < 12; i++) { ctx.fillRect(i * width / 12, floorY, width / 12 - 1, 9); ctx.strokeRect(i * width / 12, floorY, width / 12 - 1, 9); }
+    } else this.draw(ctx, id, width, height, floorY, 0, true);
     ctx.save(); ctx.translate(width / 2, floorY); ctx.scale(height / 280, height / 280);
     const map = gameMap(id);
-    if (map.obstacle === 'blower') drawSteamPipe(ctx, 0, -149, 0, 0.6);
+    if (map.obstacle === 'column') drawBurialColumn(ctx, 0, -149, 0);
+    else if (map.obstacle === 'blower') drawSteamPipe(ctx, 0, -149, 0, 0.6);
     else if (map.obstacle === 'rubber') {
       drawStitchedPole(ctx, Array.from({ length: 7 }, (_, i) => ({ x: Math.sin(i / 6 * Math.PI) * 13, y: -149 * i / 6 })));
     } else {

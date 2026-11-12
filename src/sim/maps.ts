@@ -20,6 +20,12 @@ export const GAME_MAPS = [
     description: 'An empty tent with a flexible, stitched divider. Players and the ball bend it into the opposite half; it springs back when released.',
     atmosphere: 'Settling dust', surround: '#2b1e29',
   },
+  {
+    id: 'tomb', label: 'Tomb', obstacle: 'column', obstacleLabel: 'Burial column',
+    caption: 'Crack it. Break it.',
+    description: 'Six stone slabs on each side. First landing cracks a slab and bounces; a fresh landing on that cracked slab scores for the opponent. Every rally restores all twelve slabs.',
+    atmosphere: 'Buried whispers', surround: '#25252e',
+  },
 ] as const satisfies readonly { id: string; label: string; obstacle: CenterObstacleId; obstacleLabel: string;
   caption: string; description: string; atmosphere: string; surround: string }[];
 

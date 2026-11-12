@@ -87,7 +87,7 @@
 .lobby .mode[aria-pressed='true'] { background-color: var(--sage); border-color: #17151e; box-shadow: 0 0 0 2px #bdd1ab, 3px 5px 0 #090913b3; }
 .lobby .mode[aria-pressed='true'] .mode-title { color: #243226; }
 .lobby :focus-visible { outline: 2px solid #f0d597; outline-offset: 4px; }
-.map-group { gap: 12px; }
+.map-group { gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .lobby .map-option { gap: 3px; padding: 0 0 10px; overflow: hidden; }
 .map-preview { width: 100%; height: auto; aspect-ratio: 1.7; background: #302636; border-bottom: 2px solid var(--dark); }
 .lobby .map-option .mode-title { padding: 6px 9px 0; font: clamp(16px, 1.55vw, 25px)/1.05 Impact, 'Arial Narrow', sans-serif; text-transform: uppercase; letter-spacing: 0.02em; }

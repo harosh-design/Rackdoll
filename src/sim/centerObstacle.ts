@@ -8,6 +8,7 @@ export const CENTER_OBSTACLES = [
   { id: 'sharp', label: 'Sharp spike', caption: 'Impales and holds', description: 'A tapered spear impales body parts that sink onto its point. Hold jump to pull free; holding down or taking a blow drives them deeper. Struggle against a strong pull and a caught arm or leg tears off.' },
   { id: 'blower', label: 'Blast fan', caption: 'Blows everything away', description: 'A blunt fan repels players, the ball, hazards and bats. Its upward draft is three times gentler than its side jets. It cannot impale.' },
   { id: 'rubber', label: 'Rubber net', caption: 'Bends under pressure', description: 'Lean on the flexible rubber net to bend it into your opponent’s half. It springs back when released.' },
+  { id: 'column', label: 'Burial column', caption: 'Blunt carved stone', description: 'A narrow, solid burial column with a flat cap. It has no special hazard.' },
 ] as const;
 export type CenterObstacleId = typeof CENTER_OBSTACLES[number]['id'];
 export const normalizeCenterObstacle = (value: unknown): CenterObstacleId =>
