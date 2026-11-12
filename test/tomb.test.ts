@@ -54,6 +54,33 @@ describe('Tomb slabs', () => {
     expect(floor!.isSensor()).toBe(false);
   });
 
+  it.each([-100, 730])('resets both touch counts and contact debounces when a slab at %s cracks', x => {
+    const gw = tombWorld(); free(gw);
+    gw.p1.contact = 3; gw.p2.contact = 2;
+    gw.p1.bContact = gw.p2.bContact = true;
+    land(gw, x);
+    expect(gw.p1.contact).toBe(0); expect(gw.p2.contact).toBe(0);
+    expect(gw.p1.bContact).toBe(false); expect(gw.p2.bContact).toBe(false);
+    expect(gw.game.phase).toBe('play');
+    gw.p1.contact = 2;
+    gw.flags.ballFloorHits!.push(x, x); gw.game.update();
+    expect(gw.p1.contact).toBe(2);
+  });
+
+  it('allows three fresh player touches after cracking a slab, then penalizes the fourth', () => {
+    const gw = tombWorld(); free(gw); gw.p1.contact = 3; land(gw);
+    for (let count = 1; count <= 4; count++) {
+      free(gw); run(gw, 8);
+      const head = gw.p1.head.getWorldCenter();
+      gw.ball.body.setTransform(Vec2(head.x, head.y - toM(40)), 0);
+      gw.ball.body.setLinearVelocity(Vec2(0, 3));
+      for (let f = 0; f < 20 && gw.p1.contact < count; f++) run(gw, 1);
+      expect(gw.p1.contact).toBe(count);
+      expect(gw.game.phase).toBe(count < 4 ? 'play' : 'goal');
+    }
+    expect(gw.game.lastPointReason).toBe('touches'); expect(gw.game.score[2]).toBe(1);
+  });
+
   it.each([{ x: -100, winner: 2 }, { x: 730, winner: 1 }] as const)('scores once for the other half at $x, regardless of last touch', ({ x, winner }) => {
     let observed = false;
     const gw = world({ map: 'tomb', physics: { gravity: 0 }, events: { onPoint: () => {
@@ -140,11 +167,11 @@ describe('Tomb slabs', () => {
     expect(gw.game.lastPointReason).toBe('serveClock'); expect(gw.game.score[2]).toBe(1);
   });
 
-  it('runs seeded CPU matches with finite bodies, legal serves and slab impacts', () => {
+  it('sustains seeded CPU rallies with finite bodies, legal serves and slab impacts', () => {
     const gw = world({ map: 'tomb', botVsBot: true, level: 5 });
     run(gw, 1800);
     expect(gw.tomb!.impacts).toBeGreaterThan(0);
-    expect(gw.game.score[1] + gw.game.score[2]).toBeGreaterThan(0);
+    // Resetting touches can sustain a legal rally for the full soak duration.
     for (const body of [gw.ball.body, ...gw.p1.bodies, ...gw.p2.bodies]) {
       expect(Number.isFinite(body.getPosition().x + body.getPosition().y)).toBe(true);
     }

@@ -1,5 +1,5 @@
 import { Circle, Vec2, type Body, type World } from 'planck';
-import { BALL, BODYTYPE, SPAWN_BALL_PX, toM } from './constants';
+import { BALL, BODYTYPE, COLLISION, SPAWN_BALL_PX, toM } from './constants';
 import type { BodyUserData } from './types';
 
 /** §9 Ball. */
@@ -24,6 +24,7 @@ export class Ball {
       density: BALL.density,
       friction: BALL.friction, // the contact listener identifies the ball by this
       restitution: BALL.restitution,
+      filterCategoryBits: COLLISION.BALL,
     });
     // §16.3 — explicit, after CreateShape, overriding the density.
     this.body.setMassData({

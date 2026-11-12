@@ -1,6 +1,6 @@
 import { Circle, Vec2 } from 'planck';
 import { describe, expect, it } from 'vitest';
-import { CHAMELEON, COMET, EXECUTER, FLOOR_TOP_PX, FPS, OPTIONS, SPRING, SWING, TIME_STEP, toM, toPx } from '../src/sim/constants';
+import { BALL, CHAMELEON, COLLISION, COMET, EXECUTER, FLOOR_TOP_PX, FPS, OPTIONS, SPRING, SWING, TIME_STEP, toM, toPx } from '../src/sim/constants';
 import { Executer } from '../src/sim/executer';
 import { executerVariant } from '../src/sim/executerVariants';
 import { fireAtButton, hazardWorld, jointErrPx, run } from './helpers';
@@ -200,7 +200,9 @@ describe('wall chameleon', () => {
       if (e.solid) expect(p.x).toBeCloseTo(wallX, 8);
       else expect(Math.abs(p.x - wallX)).toBeLessThanOrEqual(toM(CHAMELEON.emergeDistancePx));
       expect(toPx(p.y)).toBeLessThanOrEqual(FLOOR_TOP_PX - CHAMELEON.floorClearancePx + 1e-8);
-      expect(e.body.getFixtureList()!.isSensor()).toBe(true);
+      const ballSurface = e.body.getFixtureList()!;
+      expect(ballSurface.getFilterMaskBits()).toBe(COLLISION.BALL);
+      expect(ballSurface.getNext()!.isSensor()).toBe(true);
       previousY = p.y;
       maxJointPx = Math.max(maxJointPx, jointErrPx(e.target));
       frames++;
@@ -212,6 +214,43 @@ describe('wall chameleon', () => {
     expect(e.hits).toBeGreaterThanOrEqual(2);
     expect(maxJointPx).toBeLessThan(15);
     expect(toPx(previousY)).toBeCloseTo(FLOOR_TOP_PX - CHAMELEON.floorClearancePx, 6);
+  });
+
+  it.each([1, 2] as const)('rebounds the ball from wall %i before it reaches the wall itself', side => {
+    const { gw, e } = setup(side, -180);
+    gw.setPhysics({ gravity: 0 });
+    run(gw, CHAMELEON.emergeFrames + 2);
+    e.hitByPlayer(Vec2(0, 0));
+    const inward = side === 1 ? 1 : -1, center = e.body.getPosition();
+    gw.ball.body.setTransform(Vec2(center.x + inward * toM(EXECUTER.radiusPx + BALL.radiusPx + 30), center.y), 0);
+    gw.ball.body.setLinearVelocity(Vec2(-inward * 8, 0));
+    let bounced = false;
+    for (let f = 0; f < 12; f++) {
+      run(gw, 1);
+      if (gw.ball.body.getLinearVelocity().x * inward > 0) {
+        expect((gw.ball.position.x - e.body.getPosition().x) * inward).toBeGreaterThan(toM(EXECUTER.radiusPx));
+        expect(Math.abs(gw.ball.body.getLinearVelocity().x)).toBeGreaterThan(6);
+        bounced = true; break;
+      }
+    }
+    expect(bounced).toBe(true);
+    expect(e.body.isKinematic()).toBe(true);
+  });
+
+  it('keeps its ball surface inactive while emerging or overlapping the spawning ball', () => {
+    const { gw, e } = setup(1, -180);
+    gw.setPhysics({ gravity: 0 });
+    const surface = e.body.getFixtureList()!;
+    expect(surface.isSensor()).toBe(true);
+    for (let f = 0; f <= CHAMELEON.emergeFrames + 2; f++) {
+      gw.ball.body.setTransform(e.body.getPosition().clone(), 0);
+      gw.ball.body.setLinearVelocity(Vec2(0, 0));
+      run(gw, 1);
+      expect(surface.isSensor()).toBe(true);
+    }
+    gw.ball.body.setTransform(Vec2(toM(300), toM(-100)), 0);
+    run(gw, 2);
+    expect(surface.isSensor()).toBe(false);
   });
 
   it.each([1, 2] as const)('briefly tugs the whole player toward wall %i with a bounded impulse', side => {

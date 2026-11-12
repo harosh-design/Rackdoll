@@ -447,7 +447,9 @@ changes that on purpose:
   previous strength. Upward acceleration is capped at 25% of gravity for
   the player and 45% for the ball, so neither can be held aloft. A flip
   interrupts the tongue, and a round reset releases it.
-  Its body remains a kinematic sensor, so it cannot pin a doll against the wall.
+  Its body is kinematic with a separate ball-only surface: the ball rebounds
+  with the usual hazard restitution, while dolls pass through. That surface
+  activates after emergence and only once the spawning ball has cleared it.
 - **Knocks.** Every blow is a change of velocity given to every part of the
   doll alike, plus a jolt to the part struck, and locks steering for a few
   frames so it carries. Shoving only the head and hips, as the opponent's
@@ -503,6 +505,7 @@ build on it without touching the physics:
 Tomb is a vaulted underground burial hall with a blunt carved column. Each half
 has six stone slabs spanning the playable floor between its wall and the column.
 A free ball's first landing cracks one slab and bounces without ending the rally.
+Each new crack resets both touch counts, allowing another three player touches.
 A separate landing on that cracked slab awards one point to the other half,
 regardless of the last player to touch the ball. Touch and serve-clock violations
 still apply. Held balls, players, detached limbs and hazards cannot damage slabs.

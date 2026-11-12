@@ -23,7 +23,7 @@ export const GAME_MAPS = [
   {
     id: 'tomb', label: 'Tomb', obstacle: 'column', obstacleLabel: 'Burial column',
     caption: 'Crack it. Break it.',
-    description: 'Six stone slabs on each side. First landing cracks a slab and bounces; a fresh landing on that cracked slab scores for the opponent. Every rally restores all twelve slabs.',
+    description: 'Six stone slabs on each side. First landing cracks a slab, resets touch counts and bounces; a fresh landing on that cracked slab scores for the opponent. Every rally restores all twelve slabs.',
     atmosphere: 'Buried whispers', surround: '#25252e',
   },
 ] as const satisfies readonly { id: string; label: string; obstacle: CenterObstacleId; obstacleLabel: string;

@@ -5,7 +5,7 @@ import {
 } from './constants';
 import { FrameTimer, type TimerSet } from './timer';
 import type { Player, PlayerId } from './player';
-import { ud, type BodyUserData } from './types';
+import { bodyTypeOf, ud, type BodyUserData } from './types';
 import { seededRandom, type ExecuterVariant } from './executerVariants';
 
 export interface ExecuterTuning {
@@ -120,7 +120,7 @@ const unit = (x: number, y: number): Vec2 => {
  *   ball that just pressed the button;
  * - then steered by a bounded force rather than having its velocity
  *   overwritten, so a player in the way stops it instead of being crushed;
- * - the wall crawler stays a kinematic sensor and only pulls with its tongue;
+ * - the wall crawler is kinematic, rebounds balls and pulls dolls with its tongue;
  * - the spring uses gravity and redirects only on contact; other flyers hover;
  * - every blow it deals goes through Player.knock(): a shove shared between
  *   the rail-mounted head and the hips, which moves the doll without tearing
@@ -134,7 +134,7 @@ export class Executer {
   dead = false;
   /** Frames since launch. */
   age = 0;
-  /** False while emerging. The wall crawler remains a sensor after it is ready. */
+  /** False while emerging. The wall crawler stays non-solid to dolls. */
   solid = false;
   phase: ExecuterPhase;
   /** Frames spent in the current phase. */
@@ -177,6 +177,8 @@ export class Executer {
   tongueAim = Vec2(0, 0);
 
   private readonly fixture: Fixture;
+  /** Chameleon: a separate solid surface filtered to the ball alone. */
+  private readonly ballFixture?: Fixture;
   private readonly timer: FrameTimer;
   private readonly timers: TimerSet;
   private readonly world: World;
@@ -243,6 +245,16 @@ export class Executer {
       filterCategoryBits: COLLISION.EXECUTER,
       filterMaskBits: 0xffff,
     });
+    if (o.variant.id === 'chameleon') {
+      this.ballFixture = this.body.createFixture({
+        shape: Circle(toM(EXECUTER.radiusPx)),
+        friction: o.variant.friction,
+        restitution: o.variant.restitution,
+        isSensor: true,
+        filterCategoryBits: COLLISION.EXECUTER,
+        filterMaskBits: COLLISION.BALL,
+      });
+    }
     this.body.setMassData({ mass: this.tuning.mass, center: Vec2(0, 0), I: EXECUTER.inertia });
     this.body.setUserData({ e_bodytype: BODYTYPE.EXECUTER, sprite: `Executer-${o.variant.id}` } as BodyUserData);
 
@@ -358,6 +370,14 @@ export class Executer {
     this.phaseAge += 1;
     if (this.variant.id === 'chameleon') {
       this.solid = this.age >= CHAMELEON.emergeFrames;
+      if (this.solid && this.ballFixture?.isSensor()) {
+        let overlapsBall = false;
+        for (let edge = this.body.getContactList(); edge; edge = edge.next) {
+          if (edge.contact.isTouching() && edge.other && bodyTypeOf(edge.other) === BODYTYPE.BALL) overlapsBall = true;
+        }
+        // Do not activate a collider inside the ball that summoned this hazard.
+        if (!overlapsBall) this.ballFixture.setSensor(false);
+      }
       if (this.knockbackFrames > 0) this.knockbackFrames -= 1;
       this.updateChameleon(dt, ball);
       return;
@@ -400,7 +420,7 @@ export class Executer {
   // Chameleon
   // -------------------------------------------------------------------------
 
-  /** A kinematic sensor follows the wall without crushing or blocking a doll. */
+  /** Kinematic wall motion; only the ball meets its solid fixture. */
   private crawlDownWall(): void {
     const p = this.body.getPosition();
     const inward = this.side === 1 ? 1 : -1;

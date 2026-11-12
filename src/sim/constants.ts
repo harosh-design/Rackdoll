@@ -795,13 +795,14 @@ export const EXECUTER_DOLL_FRICTION = 0.05;
 
 /**
  * Collision filtering. The original has none (§16.4) and every original body
- * keeps the defaults. The only filtered body is new: a barrier above the net
- * that stops executers — and nothing else — crossing to the other half.
+ * keeps the defaults except the ball's category. The barrier above the net
+ * stops executers crossing halves; the crawler's solid fixture hits only balls.
  */
 export const COLLISION = {
   DEFAULT: 0x0001,
   EXECUTER_BARRIER: 0x0002,
   EXECUTER: 0x0004,
+  BALL: 0x0008,
 } as const;
 
 /** The executer-only barrier: from the net top up to the ceiling. Pixels. */

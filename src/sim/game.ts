@@ -135,11 +135,20 @@ export class Game {
 
     // 4. The ball hit the floor.
     if (this.tomb) {
+      const impacts = this.tomb.impacts;
       const slab = this.tomb.landing(this.ball, this.flags.ballFloorHits ?? [], this.tombFrame);
       this.flags.onBallDown = false;
       if (slab) {
         this.awardPoint(slab.owner === 1 ? 2 : 1, 'slab');
         this.tomb.breakSlab(slab);
+      } else if (this.tomb.impacts !== impacts) {
+        // A newly cracked slab starts a fresh three-touch sequence.
+        for (const id of [1, 2] as const) {
+          const player = this.playerOf[id];
+          player.contact = 0;
+          player.bContact = false;
+          this.contactTimers[id].reset();
+        }
       }
       return;
     }
