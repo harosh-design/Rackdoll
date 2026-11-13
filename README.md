@@ -357,8 +357,12 @@ code where it happens.
 - **Pause** freezes the physics and every timer, serve clock included.
 - **A held ball can't land.** Only a free ball sets the floor flag. Otherwise a
   held ball brushing the floor would be scored the moment it was served.
-- **Sounds** use short Stable Audio 3 samples for hits, points, buttons,
-  and special moves. Procedural cues cover the first moments while samples load
+- **Sounds** use Stable Audio 3 samples for hits, points, buttons,
+  and special moves. Ten additional stereo cues cover flip charging, full charge,
+  flip release and recovery, dives, slides, the last three serve seconds,
+  power expiry, and match results. These longer cues retain their body and use
+  subtle room reflections; held charges fade when cancelled or paused.
+  Procedural cues cover the first moments while samples load
   or if a file is unavailable. Background music is temporarily disabled while
   replacement tracks are planned; sound effects keep playing.
   **Render interpolation** blends the last two frames on high-refresh

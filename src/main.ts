@@ -2,6 +2,7 @@ import { wirePhysicsPanel } from './debug/physicsPanel';
 import { loadPhysicsLibrary, type PresetStorage } from './debug/physicsPresets';
 import { Music } from './audio/music';
 import { Sfx } from './audio/sfx';
+import { GameAudio } from './audio/gameAudio';
 import {
   bindingOwner, defaultBindings, isAssignableCode, keyLabel,
   loadBindings, normalizeCode, saveBindings, toKeyBindings,
@@ -44,6 +45,7 @@ const backdrop = $('ambient-backdrop') as HTMLCanvasElement;
 const renderer = new Renderer(canvas, backdrop);
 const interp = new Interpolator();
 const sfx = new Sfx();
+const gameAudio = new GameAudio(sfx);
 const music = new Music();
 /** Background music is disabled until replacement tracks are added. */
 const MUSIC_ENABLED = false;
@@ -135,6 +137,7 @@ function createWorld(demo = false): GameWorld {
     },
   });
   hookSounds(w);
+  gameAudio.reset(w);
   interp.reset();
   interp.commit(allBodies(w));
   return w;
@@ -270,6 +273,7 @@ function onMatchOver(winner: PlayerId): void {
 // ---------------------------------------------------------------------------
 
 function setScreen(s: Screen): void {
+  if (s !== 'playing') sfx.stopCharges();
   const leavingMenu = s === 'starting' && screen === 'menu';
   if (s === 'menu') $('menu').scrollTop = 0;
   screen = s;
@@ -586,6 +590,7 @@ function simFrame(): void {
 
   gw.step();
   gw.reap();
+  gameAudio.update(gw);
   interp.commit(allBodies(gw));
 
   gw.ground.prizeButtons.forEach((b, i) => {

@@ -1,10 +1,20 @@
+import type { PlayerId } from '../sim/player';
+
 /** Generated one-shots; procedural cues remain available while files load. */
 const samples = [
   'bump', 'clack', 'thud', 'perfect', 'counter', 'rescue',
   'miss', 'point', 'lose', 'executer', 'button', 'rearm',
   'gift', 'bee', 'slime',
+  'charge', 'charged', 'swing', 'swing-ready', 'dive', 'slide',
+  'serve-warning', 'power-end', 'match-win', 'match-lose',
 ] as const;
 type Sample = typeof samples[number];
+
+interface SampleVoice {
+  source: AudioBufferSourceNode;
+  gain: GainNode;
+  stopping: boolean;
+}
 
 export class Sfx {
   enabled = true;
@@ -12,6 +22,7 @@ export class Sfx {
   private master: GainNode | null = null;
   private readonly buffers = new Map<Sample, AudioBuffer>();
   private loading: Promise<void> | null = null;
+  private readonly charges = new Map<PlayerId, { full: boolean; voice: SampleVoice | null }>();
 
   /** Browsers only allow audio after a user gesture; call from one. */
   unlock(): void {
@@ -48,10 +59,14 @@ export class Sfx {
     })).then(() => undefined);
   }
 
-  private play(name: Sample, volume = 1, rate = 1): boolean {
-    if (!this.enabled || !this.ctx || !this.master) return false;
+  private play(name: Sample, volume = 1, rate = 1, pan = 0): boolean {
+    return this.startSample(name, volume, rate, pan) !== null;
+  }
+
+  private startSample(name: Sample, volume: number, rate: number, pan: number): SampleVoice | null {
+    if (!this.enabled || !this.ctx || !this.master) return null;
     const buffer = this.buffers.get(name);
-    if (!buffer) return false;
+    if (!buffer) return null;
     const source = this.ctx.createBufferSource();
     const gain = this.ctx.createGain();
     source.buffer = buffer;
@@ -60,9 +75,27 @@ export class Sfx {
     const filter = this.ctx.createBiquadFilter();
     filter.type = 'lowpass';
     filter.frequency.value = name === 'bump' || name === 'thud' || name === 'bee' || name === 'slime' ? 6500 : 9500;
-    source.connect(filter).connect(gain).connect(this.master);
+    const panner = this.ctx.createStereoPanner();
+    panner.pan.value = pan;
+    source.connect(filter).connect(gain).connect(panner).connect(this.master);
+    source.onended = () => {
+      source.disconnect();
+      filter.disconnect();
+      gain.disconnect();
+      panner.disconnect();
+    };
     source.start();
-    return true;
+    return { source, gain, stopping: false };
+  }
+
+  private fadeVoice(voice: SampleVoice | null): void {
+    if (!voice || voice.stopping || !this.ctx) return;
+    voice.stopping = true;
+    const now = this.ctx.currentTime;
+    voice.gain.gain.cancelScheduledValues(now);
+    voice.gain.gain.setValueAtTime(voice.gain.gain.value, now);
+    voice.gain.gain.linearRampToValueAtTime(0, now + 0.16);
+    voice.source.stop(now + 0.18);
   }
 
   private tone(freq: number, dur: number, type: OscillatorType, vol: number, slideTo?: number): void {
@@ -213,5 +246,71 @@ export class Sfx {
     if (this.play('gift', 0.64)) return;
     this.tone(660, 0.1, 'triangle', 0.3, 990);
     setTimeout(() => this.tone(1320, 0.16, 'sine', 0.25), 90);
+  }
+
+  /** One windup per press; reaching full charge crossfades into its own cue. */
+  charge(id: PlayerId, power: number | null): void {
+    let state = this.charges.get(id);
+    if (power === null || !this.enabled) {
+      this.fadeVoice(state?.voice ?? null);
+      this.charges.delete(id);
+      return;
+    }
+    const pan = id === 1 ? -0.22 : 0.22;
+    if (!state) {
+      state = { full: false, voice: this.startSample('charge', 0.42, 0.94, pan) };
+      this.charges.set(id, state);
+      if (!state.voice) this.tone(105, 0.65, 'sine', 0.12, 245);
+    }
+    if (state.voice && !state.voice.stopping && this.ctx) {
+      state.voice.source.playbackRate.setTargetAtTime(0.94 + Math.min(1, power) * 0.12, this.ctx.currentTime, 0.06);
+    }
+    if (power >= 1 && !state.full) {
+      state.full = true;
+      this.fadeVoice(state.voice);
+      state.voice = null;
+      if (!this.play('charged', 0.55, 1, pan)) this.tone(660, 0.8, 'sine', 0.2, 990);
+    }
+  }
+
+  /** Cancel held windups when leaving play, including pause and a new match. */
+  stopCharges(): void {
+    for (const id of [1, 2] as const) this.charge(id, null);
+  }
+
+  swing(id: PlayerId, power: number): void {
+    if (this.play('swing', 0.38 + 0.22 * power, 0.96 + 0.08 * power, id === 1 ? -0.22 : 0.22)) return;
+    this.noise(0.85, 0.26, 2400);
+    this.tone(160, 0.65, 'triangle', 0.16, 65);
+  }
+
+  swingReady(id: PlayerId): void {
+    if (this.play('swing-ready', 0.4, 1, id === 1 ? -0.22 : 0.22)) return;
+    this.tone(440, 0.8, 'sine', 0.15, 660);
+  }
+
+  dive(id: PlayerId): void {
+    if (this.play('dive', 0.43, 1, id === 1 ? -0.22 : 0.22)) return;
+    this.noise(0.85, 0.22, 1800);
+  }
+
+  slide(id: PlayerId): void {
+    if (this.play('slide', 0.4, 1, id === 1 ? -0.22 : 0.22)) return;
+    this.noise(0.95, 0.24, 1100);
+  }
+
+  serveWarning(seconds: number, id: PlayerId): void {
+    if (this.play('serve-warning', 0.33 + (3 - seconds) * 0.035, 1 + (3 - seconds) * 0.055, id === 1 ? -0.18 : 0.18)) return;
+    this.tone(320 + (3 - seconds) * 45, 0.75, 'sine', 0.16);
+  }
+
+  powerEnd(id: PlayerId): void {
+    if (this.play('power-end', 0.42, 1, id === 1 ? -0.22 : 0.22)) return;
+    this.tone(520, 1.2, 'sine', 0.16, 180);
+  }
+
+  matchEnd(won: boolean): void {
+    if (this.play(won ? 'match-win' : 'match-lose', 0.72)) return;
+    this.tone(won ? 440 : 330, 1.8, 'triangle', 0.22, won ? 880 : 110);
   }
 }
