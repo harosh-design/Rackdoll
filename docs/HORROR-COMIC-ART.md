@@ -30,7 +30,7 @@ Ash is limited to twelve faint motes, and dust to eight, to preserve ball visibi
 weather and moon scenery appear only on Graveyard. Indoor particles and steam
 freeze with the scenery clock on pause and remain still with reduced motion.
 
-The menu's three Map cards render miniature views of the actual backgrounds and
+The menu's four Map cards render miniature views of the actual backgrounds and
 their dividers. Selecting a card previews the complete court and fixes its
 obstacle for every mode, restart and rematch. The browser remembers the map;
 legacy center-obstacle choices migrate to the matching map. CPU difficulty
@@ -39,7 +39,7 @@ remains a separate setting.
 ## Assets and rig
 
 Built-in ImageGen generated the player atlases, pencil plate and prop cutouts.
-The working tree contains only the WebP assets loaded by the current game.
+Production WebP assets live under `public/art/horror/`.
 Historical source PNGs, generation prompts and packaging scripts are available
 in earlier Git commits.
 
@@ -95,9 +95,10 @@ when the wrists bend and prevents the belt from being covered by a moving thigh.
 The attachment regression tests compare the painted landmarks with real hinge
 anchors across rotations, size powers and detached-arm resizes. Close-up wrist
 and waist pose comparisons are saved under ignored `output/attachment-refine/`.
-The skeleton player, collision shapes, physical anchors and joint limits are
-unchanged. The repaired pieces were made with built-in ImageGen and packaged
-losslessly. Prompts, sources, comparisons and browser joint-angle checks are in
+The skeleton's lower-leg cutouts are widened around the knee centers. Atlas
+registrations are visual and follow the physical joint coordinates. The
+repaired masked pieces were made with built-in ImageGen and packaged losslessly.
+Prompts, sources, comparisons and browser joint-angle checks are in
 ignored `output/joint-refine/`; the earlier pelvis repair is in `output/model-refine/`.
 
 ## Animation and paper texture
@@ -282,22 +283,21 @@ screenshots or validation reports under the ignored `output/` directory.
 
 ## Tomb
 
-`public/art/horror/background-tomb.webp` is the production burial-hall plate,
-generated with built-in ImageGen and packaged as a 469 KB WebP. It adds pencil
-vaults, carved funerary reliefs, sealed coffin niches, brick doors and candles
-around a quiet violet-gray central wall. `render/tombArt.ts` loads it once and
-maps the source's 95% wall/floor boundary to the actual court floor. A vector
-hall remains available during loading or image failure. Runtime dust uses the
-shared paused scenery clock; map previews use the same production plate.
-The source image and generation prompt are saved under `output/tomb-art/`.
+`public/art/horror/background-tomb-v2.webp` is the production burial-hall plate,
+restyled with built-in ImageGen using Crematorium and Dead Circus as references.
+Warm stone edges, inked coffin niches and candles frame the quiet plum wall.
+`render/mapScenery.ts` registers the wall seam to the court floor and caches the
+result at display resolution, up to 2560 pixels wide. Dust uses the shared
+scenery clock. The map card uses the same plate, slabs and spike as the court.
 
-The narrow carved column remains blunt. Twelve inscribed slabs cover the real
-court floor, with branching ink cracks, muted mint seams, a short decorative
-tremor and stone dust on a first hit. Support geometry stays solid during play.
+Tomb shares Graveyard's spike art and pinning physics. Caught limbs stay
+attached under strain. The twelve inscribed stones are drawn from a cached
+strip, with darkened tiles, branching ink cracks and brief stone dust at impact.
+Support geometry stays solid during play.
 After a point, `render/tombScene.ts` derives the animation from the authoritative
 broken slab and saved ball position in world pixels. The players fade completely
-before the opening appears. A jointed bone hand rises from that slab, grips the
-ball at its impact X, lifts it, and draws it into the same hole. Forearm bones
+before the opening appears. A hand using Bones' textured cutouts rises from
+that slab, grips the ball at its impact X, lifts it, and draws it into the same hole. Forearm bones
 and edge fingers stay within the scored opening below the surface; the palm can
 reach a seam impact without clipping in midair. Replacement hands reseal that
 stone and repair other damaged slabs in place. The generic centered comic popup

@@ -33,6 +33,10 @@ describe('map selection', () => {
     expect(loadMapSelection({ getItem: key => key === 'rackdoll-center-obstacle' ? map.obstacle : null })).toBe(map.id);
   });
 
+  it('opens Tomb for a saved burial-column selection', () => {
+    expect(loadMapSelection({ getItem: key => key === 'rackdoll-center-obstacle' ? 'column' : null })).toBe('tomb');
+  });
+
   it('prefers the saved map over the old obstacle and safely handles invalid or blocked storage', () => {
     const getItem = (key: string) => key === MAP_STORAGE_KEY ? 'dead-circus' : 'blower';
     expect(loadMapSelection({ getItem })).toBe('dead-circus');

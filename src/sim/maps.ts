@@ -1,4 +1,4 @@
-import type { CenterObstacleId } from './centerObstacle';
+import { normalizeCenterObstacle, type CenterObstacleId } from './centerObstacle';
 
 /** A map owns its center obstacle; players choose the complete arena. */
 export const GAME_MAPS = [
@@ -21,10 +21,10 @@ export const GAME_MAPS = [
     atmosphere: 'Settling dust', surround: '#2b1e29',
   },
   {
-    id: 'tomb', label: 'Tomb', obstacle: 'column', obstacleLabel: 'Burial column',
+    id: 'tomb', label: 'Tomb', obstacle: 'tomb-spike', obstacleLabel: 'Tomb spike',
     caption: 'Crack it. Break it.',
-    description: 'Six stone slabs on each side. First landing cracks a slab, resets touch counts and bounces; a fresh landing on that cracked slab scores for the opponent. Every rally restores all twelve slabs.',
-    atmosphere: 'Buried whispers', surround: '#25252e',
+    description: 'Six stone slabs on each side. First landing cracks a slab, resets touch counts and bounces. A fresh landing on the same cracked slab scores for the opposite side. Hold jump to pull free of the spike. All limbs stay attached when you struggle on it.',
+    atmosphere: 'Candlelit crypt', surround: '#252036',
   },
 ] as const satisfies readonly { id: string; label: string; obstacle: CenterObstacleId; obstacleLabel: string;
   caption: string; description: string; atmosphere: string; surround: string }[];
@@ -37,7 +37,8 @@ export function gameMap(value: unknown): typeof GAME_MAPS[number] {
 }
 
 export function mapForObstacle(value: unknown): GameMapId {
-  return (GAME_MAPS.find(map => map.obstacle === value) ?? GAME_MAPS[0]).id;
+  const obstacle = normalizeCenterObstacle(value);
+  return (GAME_MAPS.find(map => map.obstacle === obstacle) ?? GAME_MAPS[0]).id;
 }
 
 /** Retain a returning player's obstacle preference as the corresponding map. */

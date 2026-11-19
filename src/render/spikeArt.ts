@@ -1,10 +1,27 @@
 import type { CenterObstacle } from '../sim/centerObstacle';
 import { SHARP_SPIKE } from '../sim/centerObstacle';
-import { FLOOR_TOP_PX, NET_X_PX } from '../sim/constants';
+import { FLOOR_TOP_PX, NET_TOP_PX, NET_X_PX } from '../sim/constants';
+import { COMIC, hatch } from './comicStyle';
+
+/** The same blade and shaft frame both Graveyard and Tomb. */
+export function drawImpalingSpike(ctx: CanvasRenderingContext2D, x: number, floor: number): void {
+  const { halfWidthPx, topPx } = SHARP_SPIKE;
+  const tip = floor - (FLOOR_TOP_PX - topPx);
+  const neck = floor - (FLOOR_TOP_PX - NET_TOP_PX);
+  ctx.save();
+  ctx.beginPath(); ctx.moveTo(x - halfWidthPx, floor);
+  ctx.lineTo(x, tip); ctx.lineTo(x + halfWidthPx, floor); ctx.closePath();
+  ctx.fillStyle = COMIC.paper; ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 1.6;
+  ctx.fill(); ctx.stroke();
+  ctx.save(); ctx.clip(); hatch(ctx, x - halfWidthPx, neck, halfWidthPx + 1, floor - neck, 7); ctx.restore();
+  ctx.strokeStyle = COMIC.plum; ctx.lineWidth = 0.8;
+  ctx.beginPath(); ctx.moveTo(x, neck + 10); ctx.lineTo(x + 1, floor); ctx.stroke();
+  ctx.restore();
+}
 
 /** Blood accumulates on the blade and trickles down its silhouette until reset. */
 export function drawSpikeBlood(ctx: CanvasRenderingContext2D, obstacle: CenterObstacle, basePx: number, alpha: number): void {
-  if (!obstacle.bloodstains.length || obstacle.id !== 'sharp') return;
+  if (!obstacle.bloodstains.length) return;
   const x = NET_X_PX, tip = SHARP_SPIKE.topPx;
   ctx.save();
   ctx.beginPath();

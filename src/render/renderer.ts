@@ -10,7 +10,7 @@ import type { PrizeButton } from '../sim/prizeButton';
 import { POWER_LABELS } from '../sim/powerUps';
 import { drawFamiliarPops, drawFamiliars } from './familiars';
 import { drawHorrorProp, HORROR_HAZARD_LABELS } from './horrorProps';
-import { COMIC, COMIC_TEXT, COMIC_TITLE, burstPath, comicPanel, hatch, inkRect } from './comicStyle';
+import { COMIC, COMIC_TEXT, COMIC_TITLE, burstPath, comicPanel, inkRect } from './comicStyle';
 import { STAGE } from './stageLayout';
 import { SOLE_Y } from './dollArt';
 import { closedPoses, type PoseSource } from './dollPose';
@@ -18,17 +18,17 @@ import type { Interpolator, Pose } from './interp';
 import { AmbientBackdrop } from './ambientBackdrop';
 import { drawHorrorBackground, drawHorrorPlayers, loadHorrorArt } from './horrorArt';
 import { PencilGrain } from './pencilGrain';
-import { RUBBER_NET, SHARP_SPIKE } from '../sim/centerObstacle';
+import { RUBBER_NET } from '../sim/centerObstacle';
 import { gameMap, type GameMapId } from '../sim/maps';
-import { drawBurialColumn, drawTombFloor, drawTombGoal, drawTombHall } from './tombArt';
-import { tombScenePose } from './tombScene';
+import { drawTombFloor, drawTombGoal } from './tombArt';
+import { tombScenePose, type TombScenePose } from './tombScene';
 import { MapScenery } from './mapScenery';
 import { drawSteamPipe, drawStitchedPole } from './mapObstacles';
 import { drawBallArt, loadBallArt, pickBallSkin, type BallSkin } from './ballArt';
 import { DEFAULT_GRAVE_SKINS, drawGraveArt, loadGraveArt, pickGraveSkins, type GraveSkins } from './graveArt';
 import { BallSquash, type BallDeformation } from './ballDeformation';
 import { drawChameleonArt, drawChameleonTongue, loadChameleonArt } from './chameleonArt';
-import { drawSpikeBlood } from './spikeArt';
+import { drawImpalingSpike, drawSpikeBlood } from './spikeArt';
 import { drawFeatherAirflow } from './featherAirflow';
 import { pickWeather, WeatherEffects, type WeatherId } from './weather';
 
@@ -219,26 +219,27 @@ export class Renderer {
   // drawn at the fixed arena scale each frame.
   // -------------------------------------------------------------------------
 
-  private paintCourt(ctx: CanvasRenderingContext2D, gw: GameWorld): void {
+  private paintCourt(ctx: CanvasRenderingContext2D, gw: GameWorld, scene: TombScenePose | null, reduced: boolean): void {
     this.backdrop?.draw(this.scenerySeconds, gameMap(gw.mapId).surround);
     this.stageSpace(ctx);
     const floorY = this.toStage(0, SOLES_PX).y;
     const weatherSeconds = this.scenerySeconds - this.weatherStartedAt;
     if (gw.mapId === 'graveyard') {
       drawHorrorBackground(ctx, VIEW.stageW, VIEW.stageH, floorY, this.scenerySeconds,
-        this.weather, weatherSeconds, this.reducedMotion.matches);
-      this.weather.drawCourt(ctx, VIEW.stageW, VIEW.stageH, floorY, weatherSeconds, this.reducedMotion.matches);
-    } else if (gw.mapId === 'tomb') {
-      drawTombHall(ctx, VIEW.stageW, VIEW.stageH, floorY, this.scenerySeconds, this.reducedMotion.matches);
+        this.weather, weatherSeconds, reduced);
+      this.weather.drawCourt(ctx, VIEW.stageW, VIEW.stageH, floorY, weatherSeconds, reduced);
     } else {
       this.mapScenery.draw(ctx, gw.mapId, VIEW.stageW, VIEW.stageH, floorY,
-        this.scenerySeconds, this.reducedMotion.matches);
+        this.scenerySeconds, reduced);
     }
     this.worldSpace(ctx);
-    const ground = COURT.ground;
-    ctx.fillStyle = gw.mapId === 'graveyard' ? '#cfb3cb' : gw.mapId === 'crematorium' ? '#a28587' : '#b08783';
-    ctx.fillRect(ground.x - ground.hw, SOLES_PX, ground.hw * 2, 1.2);
-    if (gw.tomb) drawTombFloor(ctx, gw.tomb, gw.frame, this.reducedMotion.matches);
+    if (gw.tomb) {
+      drawTombFloor(ctx, gw.tomb, scene, gw.frame, reduced);
+    } else {
+      const ground = COURT.ground;
+      ctx.fillStyle = gw.mapId === 'graveyard' ? '#cfb3cb' : gw.mapId === 'crematorium' ? '#a28587' : '#b08783';
+      ctx.fillRect(ground.x - ground.hw, SOLES_PX, ground.hw * 2, 1.2);
+    }
     for (const wall of [COURT.leftWall, COURT.rightWall]) {
       const left = wall === COURT.leftWall;
       const inner = left ? wall.x + wall.hw : wall.x - wall.hw;
@@ -262,14 +263,8 @@ export class Renderer {
     const obstacle = gw.centerObstacle;
     const x = COURT.net.x, top = COURT.net.y - COURT.net.hh;
     ctx.save(); ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 1.6;
-    if (obstacle.id === 'sharp') {
-      ctx.beginPath(); ctx.moveTo(x - SHARP_SPIKE.halfWidthPx, FLOOR_TOP_PX);
-      ctx.lineTo(x, SHARP_SPIKE.topPx); ctx.lineTo(x + SHARP_SPIKE.halfWidthPx, FLOOR_TOP_PX); ctx.closePath();
-      ctx.fillStyle = COMIC.paper; ctx.fill(); ctx.stroke();
-      ctx.save(); ctx.clip(); hatch(ctx, x - 6, top, 7, FLOOR_TOP_PX - top, 7); ctx.restore();
-      ctx.strokeStyle = COMIC.plum; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.moveTo(x, top + 10); ctx.lineTo(x + 1, FLOOR_TOP_PX); ctx.stroke();
-    } else if (obstacle.id === 'column') {
-      drawBurialColumn(ctx, x, top, FLOOR_TOP_PX);
+    if (obstacle.isSpike) {
+      drawImpalingSpike(ctx, x, FLOOR_TOP_PX);
     } else if (obstacle.id === 'blower') {
       drawSteamPipe(ctx, x, top, FLOOR_TOP_PX, this.reducedMotion.matches ? 0.6 : this.scenerySeconds);
     } else {
@@ -293,24 +288,27 @@ export class Renderer {
     this.weather.observeFrame(sceneryDt, !hud.paused && !document.hidden);
     if (this.sceneryAt !== null && !hud.paused) this.scenerySeconds += sceneryDt;
     this.sceneryAt = sceneryAt;
-    const interp = closedPoses(frames, alpha, [gw.p1, gw.p2], gw.ball.body);
+    const reduced = this.reducedMotion.matches;
+    const players = [gw.p1, gw.p2];
+    const scene = gw.tomb ? tombScenePose(gw.tomb, gw.frame, reduced) : null;
     const now = gw.frame - 1 + alpha;
-    this.paintCourt(ctx, gw);
-    if (gw.tomb?.transition) {
-      const scene = tombScenePose(gw.tomb, gw.frame, this.reducedMotion.matches)!;
+    this.paintCourt(ctx, gw, scene, reduced);
+    if (gw.tomb && scene) {
       this.worldSpace(ctx);
-      this.drawCenterObstacle(ctx, gw, interp, alpha);
+      this.drawCenterObstacle(ctx, gw, frames, alpha);
       this.drawPrizeButtons(ctx, gw, now);
       if (scene.playerOpacity > 0) {
+        const poses = closedPoses(frames, alpha, players, gw.ball.body);
         ctx.save(); ctx.globalAlpha = scene.playerOpacity;
-        drawHorrorPlayers(ctx, [gw.p1, gw.p2], interp, alpha); ctx.restore();
+        drawHorrorPlayers(ctx, players, poses, alpha); ctx.restore();
       }
-      drawTombGoal(ctx, gw.tomb, gw.frame, this.reducedMotion.matches, this.ballSkinFor(gw));
+      drawTombGoal(ctx, gw.tomb, scene, this.ballSkinFor(gw));
       this.stageSpace(ctx);
       this.grain.draw(ctx, this.canvas.width, this.canvas.height, this.scenerySeconds, this.grainPixelRatio);
       this.stageSpace(ctx); this.drawHud(ctx, gw, hud, now);
       return;
     }
+    const interp = closedPoses(frames, alpha, players, gw.ball.body);
     drawFeatherAirflow(ctx, gw, now);
     this.drawShadows(gw, interp, alpha);
     this.worldSpace(ctx);
@@ -320,7 +318,7 @@ export class Renderer {
     this.drawCenterObstacle(ctx, gw, interp, alpha);
     this.drawPrizeButtons(ctx, gw, now);
     this.drawFootMotion(ctx, gw, interp, now);
-    drawHorrorPlayers(ctx, [gw.p1, gw.p2], interp, alpha);
+    drawHorrorPlayers(ctx, players, interp, alpha);
     this.drawPowerGlows(ctx, gw, interp, alpha);
     drawFamiliars(ctx, gw, now, alpha);
     this.drawBall(ctx, gw, interp, alpha);
@@ -333,7 +331,7 @@ export class Renderer {
     this.drawChargeMeters(ctx, gw, interp, alpha);
     this.stageSpace(ctx);
     if (gw.mapId === 'graveyard') this.weather.drawForeground(ctx, VIEW.stageW, VIEW.stageH, this.toStage(0, SOLES_PX).y,
-      this.scenerySeconds - this.weatherStartedAt, this.reducedMotion.matches);
+      this.scenerySeconds - this.weatherStartedAt, reduced);
     this.grain.draw(ctx, this.canvas.width, this.canvas.height, this.scenerySeconds, this.grainPixelRatio);
     this.stageSpace(ctx);
     this.drawOffscreenBall(ctx, gw, interp, alpha);

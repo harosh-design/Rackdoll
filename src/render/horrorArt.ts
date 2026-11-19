@@ -87,6 +87,10 @@ export function drawHorrorPlayers(ctx: CanvasRenderingContext2D, dolls: readonly
   }
 }
 
+export function drawSkeletonPart(ctx: CanvasRenderingContext2D, name: PartName): void {
+  drawPart(ctx, name, 2);
+}
+
 function drawPart(ctx: CanvasRenderingContext2D, name: PartName, id: 1 | 2): void {
   const image = players[id];
   if (!image) {

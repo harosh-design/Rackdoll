@@ -1,14 +1,16 @@
 import { gameMap, type GameMapId } from '../sim/maps';
 import { drawHorrorBackground } from './horrorArt';
-import { drawBurialColumn, drawTombHall, loadTombArt } from './tombArt';
 import { COMIC } from './comicStyle';
 import { drawSteamPipe, drawStitchedPole } from './mapObstacles';
-import { drawInteriorMotion, type InteriorMapId } from './interiorMotion';
+import { drawInteriorMotion } from './interiorMotion';
+import { drawImpalingSpike } from './spikeArt';
+import { drawTombIntactFloor } from './tombArt';
 
-type PaintedMapId = InteriorMapId;
+type PaintedMapId = Exclude<GameMapId, 'graveyard'>;
 const PLATES: Record<PaintedMapId, { file: string; floor: number; wall: string; ground: string }> = {
   crematorium: { file: 'background-crematorium.webp', floor: 0.84, wall: '#526b86', ground: '#805a79' },
   'dead-circus': { file: 'background-dead-circus.webp', floor: 0.84, wall: '#896875', ground: '#613e5a' },
+  tomb: { file: 'background-tomb-v2.webp', floor: 940 / 992, wall: '#58465d', ground: '#3a283a' },
 };
 
 /** Fixed seeds keep dust stable across frames, previews, pauses and reloads. */
@@ -21,9 +23,9 @@ const MOTES = Array.from({ length: 12 }, (_, i) => ({
 
 export class MapScenery {
   private readonly plates: Partial<Record<PaintedMapId, HTMLImageElement>> = {};
+  private tombBackdrop?: { canvas: HTMLCanvasElement; floorY: number; image?: HTMLImageElement };
 
   async load(): Promise<void> {
-    await loadTombArt();
     const results = await Promise.allSettled(Object.entries(PLATES).map(([id, plate]) => new Promise<void>((resolve, reject) => {
       const image = new Image();
       image.onload = () => { this.plates[id as PaintedMapId] = image; resolve(); };
@@ -33,12 +35,8 @@ export class MapScenery {
     for (const result of results) if (result.status === 'rejected') console.warn(result.reason);
   }
 
-  /** Interior maps have their own dust and ash instead of outdoor weather. */
-  draw(ctx: CanvasRenderingContext2D, id: Exclude<GameMapId, 'graveyard'>, width: number, height: number, floorY: number,
-    seconds: number, reducedMotion = false): void {
-    if (id === 'tomb') { drawTombHall(ctx, width, height, floorY, seconds, reducedMotion); return; }
+  private drawPlate(ctx: CanvasRenderingContext2D, id: PaintedMapId, width: number, height: number, floorY: number): void {
     const plate = PLATES[id], image = this.plates[id];
-    ctx.save();
     if (image) {
       const sourceFloor = image.naturalHeight * plate.floor;
       ctx.drawImage(image, 0, 0, image.naturalWidth, sourceFloor, 0, 0, width, floorY);
@@ -47,11 +45,37 @@ export class MapScenery {
     } else {
       ctx.fillStyle = plate.wall; ctx.fillRect(0, 0, width, floorY);
       ctx.fillStyle = plate.ground; ctx.fillRect(0, floorY, width, height - floorY);
+      drawFallbackScenery(ctx, id, width, floorY);
     }
+  }
+
+  /** Bake Tomb's registered floor seam once per canvas size or source change. */
+  private drawTombBackdrop(ctx: CanvasRenderingContext2D, width: number, height: number, floorY: number): void {
+    const pixelW = Math.min(ctx.canvas.width, 2560);
+    const pixelH = Math.max(1, Math.round(pixelW * height / width));
+    const floor = floorY * pixelH / height;
+    const image = this.plates.tomb;
+    let cached = this.tombBackdrop;
+    if (!cached || cached.canvas.width !== pixelW || cached.canvas.height !== pixelH
+      || cached.floorY !== floor || cached.image !== image) {
+      const canvas = cached?.canvas ?? document.createElement('canvas');
+      canvas.width = pixelW; canvas.height = pixelH;
+      this.drawPlate(canvas.getContext('2d', { alpha: false })!, 'tomb', pixelW, pixelH, floor);
+      cached = { canvas, floorY: floor, image };
+      this.tombBackdrop = cached;
+    }
+    ctx.drawImage(cached.canvas, 0, 0, width, height);
+  }
+
+  /** Interior maps have their own dust and ash instead of outdoor weather. */
+  draw(ctx: CanvasRenderingContext2D, id: PaintedMapId, width: number, height: number, floorY: number,
+    seconds: number, reducedMotion = false): void {
+    ctx.save();
+    if (id === 'tomb') this.drawTombBackdrop(ctx, width, height, floorY);
+    else this.drawPlate(ctx, id, width, height, floorY);
     const time = reducedMotion ? 0 : seconds;
     ctx.beginPath(); ctx.rect(0, 0, width, floorY); ctx.clip();
-    if (!image) drawFallbackScenery(ctx, id, width, floorY);
-    drawInteriorMotion(ctx, id, width, floorY, time);
+    if (id !== 'tomb') drawInteriorMotion(ctx, id, width, floorY, time);
     ctx.fillStyle = id === 'crematorium' ? '#e1d8bc' : '#d8b980';
     const count = id === 'crematorium' ? MOTES.length : 8;
     for (let i = 0; i < count; i++) {
@@ -69,29 +93,36 @@ export class MapScenery {
     const ctx = canvas.getContext('2d')!, { width, height } = canvas;
     const floorY = height * 0.91;
     if (id === 'graveyard') drawHorrorBackground(ctx, width, height, floorY, 0);
-    else if (id === 'tomb') {
-      drawTombHall(ctx, width, height, floorY, 0, true);
-      ctx.fillStyle = '#aca097'; ctx.strokeStyle = COMIC.ink;
-      for (let i = 0; i < 12; i++) { ctx.fillRect(i * width / 12, floorY, width / 12 - 1, 9); ctx.strokeRect(i * width / 12, floorY, width / 12 - 1, 9); }
-    } else this.draw(ctx, id, width, height, floorY, 0, true);
+    else this.draw(ctx, id, width, height, floorY, 0, true);
+    if (id === 'tomb') drawTombIntactFloor(ctx, 0, floorY, width);
     ctx.save(); ctx.translate(width / 2, floorY); ctx.scale(height / 280, height / 280);
     const map = gameMap(id);
-    if (map.obstacle === 'column') drawBurialColumn(ctx, 0, -149, 0);
-    else if (map.obstacle === 'blower') drawSteamPipe(ctx, 0, -149, 0, 0.6);
+    if (map.obstacle === 'blower') drawSteamPipe(ctx, 0, -149, 0, 0.6);
     else if (map.obstacle === 'rubber') {
       drawStitchedPole(ctx, Array.from({ length: 7 }, (_, i) => ({ x: Math.sin(i / 6 * Math.PI) * 13, y: -149 * i / 6 })));
     } else {
-      ctx.fillStyle = COMIC.paper; ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 1.3;
-      ctx.beginPath(); ctx.moveTo(-5, 0); ctx.lineTo(0, -161); ctx.lineTo(5, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
+      drawImpalingSpike(ctx, 0, 0);
     }
     ctx.restore();
   }
 }
 
 /** Keep the court readable while a background plate is still loading. */
-function drawFallbackScenery(ctx: CanvasRenderingContext2D, id: InteriorMapId, width: number, floorY: number): void {
+function drawFallbackScenery(ctx: CanvasRenderingContext2D, id: PaintedMapId, width: number, floorY: number): void {
   const scale = width / 640, floor = floorY / scale;
   ctx.save(); ctx.scale(scale, scale);
+  if (id === 'tomb') {
+    ctx.fillStyle = '#302331'; ctx.strokeStyle = COMIC.ink; ctx.lineWidth = 2;
+    for (const side of [0, 1]) {
+      ctx.save(); ctx.translate(side * 640, 0); ctx.scale(side ? -1 : 1, 1);
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(158, 0);
+      ctx.quadraticCurveTo(80, 36, 72, 115);
+      ctx.lineTo(72, floor); ctx.lineTo(0, floor); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.restore();
+    }
+    ctx.restore();
+    return;
+  }
   ctx.fillStyle = '#11101a';
   ctx.beginPath(); ctx.moveTo(0, floor);
   for (let x = 0; x <= 640; x += 4) {

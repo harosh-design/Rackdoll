@@ -127,6 +127,17 @@
 .lobby-links kbd { padding: 0 4px; font-size: 9px; color: var(--paper); border-color: #a38c9f; background: #171324; }
 .lobby-links button { padding: 0 0 2px; border: 0; border-bottom: 1px dashed #a38c9f; color: #d6c6db; background: none; font: inherit; cursor: pointer; }
 .lobby-links button:hover { color: var(--paper); }
+.lobby-links .fps-toggle {
+  min-height: 24px;
+  padding: 3px 7px;
+  border: 1px solid #ad977b99;
+  border-radius: 2px;
+  background: #1e182b;
+  color: var(--paper);
+  font-weight: 700;
+}
+.lobby-links .fps-toggle[aria-pressed='true'] { background: #503655; border-color: #dbb366; color: #f5dfad; }
+.lobby-links .fps-toggle:hover { border-color: var(--paper); }
 .lobby-help { width: min(720px, calc(100% - 32px)); padding: 26px; color: #201b28; transform: none; }
 .lobby-help:not([open]) { display: none; }
 .lobby-help::backdrop { background: #090913c9; backdrop-filter: blur(8px); }
@@ -223,6 +234,7 @@ body[data-screen='menu'] .debug-launch { opacity: 0.65; }
 }
 @media (max-width: 360px) {
   .lobby-foot #play { gap: 10px; padding-inline: 10px; font-size: 23px; }
+  .lobby-links > span { display: none; }
 }
 @media (min-width: 761px) and (max-height: 600px) {
   .lobby { padding-bottom: 145px; }

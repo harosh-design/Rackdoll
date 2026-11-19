@@ -1,4 +1,5 @@
 import type { Ball } from './ball';
+import { SHARP_SPIKE } from './centerObstacle';
 import { BALL, BODYTYPE, COURT, FLOOR_TOP_PX, LEFT_WALL_INNER_PX, NET_X_PX, RIGHT_WALL_INNER_PX, toPx } from './constants';
 import { bodyTypeOf } from './types';
 
@@ -12,11 +13,11 @@ export interface TombSlab {
   hitX: number;
 }
 
-/** Slabs cover the floor between the wall faces and the blunt column. */
+/** Slabs cover the floor between the wall faces and the foot of the spike. */
 export function tombSlabs(): TombSlab[] {
   return ([1, 2] as const).flatMap(owner => {
-    const left = owner === 1 ? LEFT_WALL_INNER_PX : NET_X_PX + 3;
-    const right = owner === 1 ? NET_X_PX - 3 : RIGHT_WALL_INNER_PX;
+    const left = owner === 1 ? LEFT_WALL_INNER_PX : NET_X_PX + SHARP_SPIKE.halfWidthPx;
+    const right = owner === 1 ? NET_X_PX - SHARP_SPIKE.halfWidthPx : RIGHT_WALL_INNER_PX;
     return Array.from({ length: 6 }, (_, i) => ({
       index: (owner - 1) * 6 + i, owner,
       left: left + (right - left) * i / 6, right: left + (right - left) * (i + 1) / 6,
@@ -33,7 +34,7 @@ export class Tomb {
   private armed = true;
 
   slabAt(x: number): TombSlab {
-    // Half-open intervals assign a seam to its right-hand slab. The column
+    // Half-open intervals assign a seam to its right-hand slab. The spike
     // covers the center gap; clamp numerical edge contacts to the nearest slab.
     const side = x < COURT.net.x ? this.slabs.slice(0, 6) : this.slabs.slice(6);
     return side.find(slab => x < slab.right) ?? side[5];
@@ -60,12 +61,11 @@ export class Tomb {
     }
     // A contact ending for a jittery step is insufficient: the ball must clear
     // the surface before a new landing can count, including after a held ball.
-    const clear = toPx(ball.position.y) + BALL.radiusPx < FLOOR_TOP_PX - 3;
-    let touching = false;
+    if (this.armed || toPx(ball.position.y) + BALL.radiusPx >= FLOOR_TOP_PX - 3) return null;
     for (let edge = ball.body.getContactList(); edge; edge = edge.next) {
-      if (edge.contact.isTouching() && edge.other && bodyTypeOf(edge.other) === BODYTYPE.GROUND) touching = true;
+      if (edge.contact.isTouching() && edge.other && bodyTypeOf(edge.other) === BODYTYPE.GROUND) return null;
     }
-    if (clear && !touching) this.armed = true;
+    this.armed = true;
     return null;
   }
 

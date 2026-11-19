@@ -15,7 +15,7 @@ describe('centre obstacle selection and round lifecycle', () => {
     expect(world().centerObstacle.id).toBe('sharp');
     expect(normalizeCenterObstacle('unknown')).toBe('sharp');
     expect(normalizeCenterObstacle('classic')).toBe('sharp');
-    expect(CENTER_OBSTACLES.map(option => option.id)).toEqual(['sharp', 'blower', 'rubber', 'column']);
+    expect(CENTER_OBSTACLES.map(option => option.id)).toEqual(['sharp', 'blower', 'rubber', 'tomb-spike']);
     for (const option of CENTER_OBSTACLES) expect(world({ centerObstacle: option.id }).centerObstacle.id).toBe(option.id);
   });
 
@@ -244,6 +244,33 @@ describe('sharp spike struggle', () => {
     expect(gw.centerObstacle.pins.size).toBe(0);
     expect(player.injured).toBe(false);
     expect(player.revolutes).toHaveLength(12);
+  });
+
+  it.each([1, 2] as const)('keeps player %s intact under sustained strain on the Tomb spike and releases on jump', id => {
+    const gw = hazardWorld({ map: 'tomb' });
+    const player = id === 1 ? gw.p1 : gw.p2;
+    const hand = id === 1 ? 'HandRight' : 'HandLeft';
+    const part = catchPart(gw, player, hand);
+    const away = id === 1 ? KEYS[1].left : KEYS[2].right;
+    gw.control.press(away);
+    let peakTension = 0;
+    for (let frame = 0; frame < 120; frame++) {
+      run(gw, 1);
+      peakTension = Math.max(peakTension, player.tendonTension(hand, 1 / TIME_STEP) / player.mass);
+    }
+    gw.control.release(away);
+    expect(peakTension).toBeGreaterThan(SHARP_SPIKE.tearForce);
+    expect(gw.centerObstacle.pins.get(part)?.strain).toBe(0);
+    expect(player.impaled).toBe(true);
+    expect(player.injured).toBe(false);
+    expect(player.skeletonJoints).toHaveLength(12);
+
+    gw.control.press(KEYS[id].jump);
+    for (let frame = 0; frame < 90 && player.impaled; frame++) run(gw, 1);
+    gw.control.release(KEYS[id].jump);
+    expect(player.impaled).toBe(false);
+    expect(player.injured).toBe(false);
+    expect(gw.game.phase).toBe('play');
   });
 
   it('never tears off the head or torso, and needs struggling to tear a limb', () => {

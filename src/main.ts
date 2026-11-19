@@ -26,9 +26,11 @@ type Screen = 'menu' | 'starting' | 'playing' | 'paused' | 'over';
 
 /** One simulation frame per 1/30 s of wall clock, exactly like the SWF. */
 const FRAME = 1 / FPS;
+const FPS_STORAGE_KEY = 'rackdoll-show-fps';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const canvas = $('game') as HTMLCanvasElement;
+const fpsCounter = $('fps-counter');
 const overlays = { menu: $('menu'), pause: $('pause'), over: $('over') };
 
 /** What each CPU level is like, for the menu. Follows BOT_LEVELS. */
@@ -61,6 +63,7 @@ const settings = {
   /** Bot vs bot: the left CPU's level. */
   p1Level: OPTIONS.championLevel as number,
   bindings: loadBindings(),
+  showFps: loadFpsSetting(),
 };
 let screen: Screen = 'menu';
 let capturing: { player: PlayerId; action: ControlAction } | null = null;
@@ -68,6 +71,35 @@ let gw = createWorld(true);
 let message: string | null = null;
 /** Whose point the banner announces: their jersey colours it. */
 let messageTone: PlayerId | 0 = 0;
+let fpsWindowStart: number | null = null;
+let fpsFrames = 0;
+
+function loadFpsSetting(): boolean {
+  try { return physicsStorage?.getItem(FPS_STORAGE_KEY) === '1'; }
+  catch { return false; }
+}
+
+function resetFpsCounter(): void {
+  fpsCounter.hidden = !settings.showFps || screen !== 'playing';
+  fpsCounter.textContent = '— FPS';
+  fpsWindowStart = null;
+  fpsFrames = 0;
+}
+
+/** Measure the browser's render rate from elapsed wall time. */
+function countRenderedFrame(now: number): void {
+  if (fpsWindowStart === null) {
+    fpsWindowStart = now;
+    return;
+  }
+  fpsFrames++;
+  const elapsed = now - fpsWindowStart;
+  if (elapsed < 500) return;
+  const label = `${Math.round(fpsFrames * 1000 / elapsed)} FPS`;
+  if (fpsCounter.textContent !== label) fpsCounter.textContent = label;
+  fpsWindowStart = now;
+  fpsFrames = 0;
+}
 
 // ---------------------------------------------------------------------------
 // Global music mute — the M key toggles the background music on every screen;
@@ -277,6 +309,7 @@ function setScreen(s: Screen): void {
   const leavingMenu = s === 'starting' && screen === 'menu';
   if (s === 'menu') $('menu').scrollTop = 0;
   screen = s;
+  resetFpsCounter();
   document.body.dataset.screen = s;
   overlays.menu.classList.toggle('show', s === 'menu' || leavingMenu);
   overlays.pause.classList.toggle('show', s === 'paused');
@@ -423,6 +456,17 @@ function wireBindings(): void {
 
 function wireMenu(): void {
   wireBindings();
+  const fpsToggles = document.querySelectorAll<HTMLButtonElement>('[data-fps-toggle]');
+  for (const button of fpsToggles) {
+    button.setAttribute('aria-pressed', String(settings.showFps));
+    button.addEventListener('click', () => {
+      settings.showFps = !settings.showFps;
+      for (const toggle of fpsToggles) toggle.setAttribute('aria-pressed', String(settings.showFps));
+      try { physicsStorage?.setItem(FPS_STORAGE_KEY, settings.showFps ? '1' : '0'); }
+      catch { /* The counter still works for this session. */ }
+      resetFpsCounter();
+    });
+  }
   const mapPreviews: HTMLCanvasElement[] = [];
   for (const [index, option] of GAME_MAPS.entries()) {
     const button = document.createElement('button');
@@ -659,6 +703,7 @@ function tick(now: number): void {
     message: screen === 'playing' || screen === 'paused' ? message : null,
     messageTone,
   });
+  if (settings.showFps && screen === 'playing') countRenderedFrame(now);
   requestAnimationFrame(tick);
 }
 

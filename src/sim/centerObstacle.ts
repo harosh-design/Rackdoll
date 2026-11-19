@@ -8,11 +8,11 @@ export const CENTER_OBSTACLES = [
   { id: 'sharp', label: 'Sharp spike', caption: 'Impales and holds', description: 'A tapered spear impales body parts that sink onto its point. Hold jump to pull free; holding down or taking a blow drives them deeper. Struggle against a strong pull and a caught arm or leg tears off.' },
   { id: 'blower', label: 'Blast fan', caption: 'Blows everything away', description: 'A blunt fan repels players, the ball, hazards and bats. Its upward draft is three times gentler than its side jets. It cannot impale.' },
   { id: 'rubber', label: 'Rubber net', caption: 'Bends under pressure', description: 'Lean on the flexible rubber net to bend it into your opponent’s half. It springs back when released.' },
-  { id: 'column', label: 'Burial column', caption: 'Blunt carved stone', description: 'A narrow, solid burial column with a flat cap. It has no special hazard.' },
+  { id: 'tomb-spike', label: 'Tomb spike', caption: 'Keeps caught limbs attached', description: 'The tapered spear catches and holds deeply impaled parts. Hold jump to pull free. Struggling on this spike leaves every limb attached.' },
 ] as const;
 export type CenterObstacleId = typeof CENTER_OBSTACLES[number]['id'];
 export const normalizeCenterObstacle = (value: unknown): CenterObstacleId =>
-  CENTER_OBSTACLES.find(option => option.id === value)?.id ?? 'sharp';
+  value === 'column' ? 'tomb-spike' : CENTER_OBSTACLES.find(option => option.id === value)?.id ?? 'sharp';
 
 const partExtent = (part: typeof PARTS[number]): number => part.shape.kind === 'circle' ? part.shape.r : part.shape.hh;
 export const ORIGINAL_PLAYER_HEIGHT_PX = Math.max(...PARTS.map(part => part.dy + partExtent(part)))
@@ -101,6 +101,7 @@ export interface SpikeBloodstain { height: number; scale: number; age: number }
 /** A centre obstacle owns both its collision geometry and its round-local state. */
 export class CenterObstacle {
   readonly id: CenterObstacleId;
+  readonly isSpike: boolean;
   readonly bodies: Body[] = [];
   readonly net: Body;
   readonly blade: NetSpike;
@@ -122,6 +123,7 @@ export class CenterObstacle {
 
   constructor(private readonly world: World, id: CenterObstacleId = 'sharp') {
     this.id = normalizeCenterObstacle(id);
+    this.isSpike = this.id === 'sharp' || this.id === 'tomb-spike';
     this.blade = new NetSpike(SHARP_NECK_PX);
     if (this.id === 'rubber') {
       // Clearance lets the foot rotate without wedging its corner into the floor.
@@ -144,7 +146,7 @@ export class CenterObstacle {
       this.net = this.bodies[0];
     } else {
       this.net = this.makeBody(COURT.net.y);
-      if (this.id === 'sharp') {
+      if (this.isSpike) {
         // The top of the point is not solid, so it can sink into a part.
         // Only a deep insertion catches.
         this.net.createFixture(Polygon([
@@ -185,8 +187,7 @@ export class CenterObstacle {
     players: readonly Player[], active = true,
     steer?: (player: Player) => Vec2Value | null, dt: number = TIME_STEP,
   ): void {
-    // The capped fan and the rubber divider never sample the spear's blade.
-    this.blade.capture(this.id === 'sharp' ? players : []);
+    if (this.isSpike) this.blade.capture(players);
     for (const stain of this.bloodstains) stain.age = Math.min(180, stain.age + 1);
     for (const pin of this.pins.values()) this.driveRider(pin, active ? steer?.(pin.player) ?? null : null, dt);
     // Blows count once, on the step after they land.
@@ -219,9 +220,8 @@ export class CenterObstacle {
 
   /** Run after the solver: joints cannot be created or destroyed while it is locked. */
   afterStep(players: readonly Player[]): Player[] {
-    const cut: Player[] = [];
-    if (this.id !== 'sharp') return cut;
-    cut.push(...this.strainTendons());
+    if (!this.isSpike) return [];
+    const cut = this.id === 'sharp' ? this.strainTendons() : [];
     for (const pin of [...this.pins.values()]) this.settlePin(pin);
     for (const [body, clearance] of this.freed) {
       if (Vec2.distance(body.getWorldCenter(), POINT) > clearance) this.freed.delete(body);

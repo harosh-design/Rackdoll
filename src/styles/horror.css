@@ -93,6 +93,23 @@ h2 { font-size: 34px; }
 .over-card h2 { font-size: 38px; }
 .over-card .scoreline { border-block: 2px solid #393040; padding: 15px 0; }
 .card-foot { border-top-style: dashed; }
+.pause-music { display: flex; align-items: center; gap: 8px; }
+.fps-toggle { padding-inline: 10px; border: 1px solid var(--line-strong); }
+.fps-counter {
+  position: absolute;
+  top: clamp(5px, 1.8cqw, 12px);
+  left: 8%;
+  min-inline-size: 7ch;
+  padding: 3px 5px;
+  border: 1px solid #a59980;
+  border-radius: 2px;
+  background: #191522e8;
+  color: #ebdcb5;
+  font: 700 clamp(9px, 1.1cqw, 12px)/1.15 'Courier New', monospace;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  pointer-events: none;
+}
 .toast { border-radius: 2px; background: #ebdcb5; color: #201b28; border: 2px solid #201b28; box-shadow: 3px 3px 0 #11101a; font-family: 'Courier New', monospace; }
 .hud-controls { border-radius: 0; }
 .hud-btn { color: #ebdcb5; border-radius: 1px; }

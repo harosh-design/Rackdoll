@@ -604,6 +604,7 @@
 
     <div class="stage" id="stage">
       <canvas id="game" tabindex="-1" aria-label="Ragdoll volleyball court"></canvas>
+      <span class="fps-counter" id="fps-counter" hidden>— FPS</span>
       <div class="stage-corners" aria-hidden="true">
         <span class="stage-corner stage-corner-top-left"></span>
         <span class="stage-corner stage-corner-top-right"></span>
@@ -683,7 +684,12 @@
             <footer class="lobby-foot">
               <button class="btn btn-primary btn-xl" id="play" type="button"><svg width="22" height="22" aria-hidden="true"><use href="#i-play" /></svg><span>Start match</span><kbd>Enter</kbd></button>
               <p class="lobby-ticket"><span id="selected-map-name">Graveyard</span><span aria-hidden="true">·</span> First to 10</p>
-              <div class="lobby-links"><span><kbd>Esc</kbd> pause</span><button id="reset-bindings" type="button">Reset controls</button><button id="show-help" type="button">How to play <span aria-hidden="true">↗</span></button></div>
+              <div class="lobby-links">
+                <span><kbd>Esc</kbd> pause</span>
+                <button id="reset-bindings" type="button">Reset controls</button>
+                <button class="fps-toggle" data-fps-toggle type="button" aria-pressed="false" aria-controls="fps-counter">FPS counter</button>
+                <button id="show-help" type="button">How to play <span aria-hidden="true">↗</span></button>
+              </div>
             </footer>
           </main>
           <aside class="lobby-player lobby-player-2" data-bind-card="2" aria-label="Player 2, right side">
@@ -727,7 +733,7 @@
                   <li><b>First to 10 points</b> wins the match. Three touches max per side.</li>
                   <li><b>Jump first, then tap <kbd data-keyof="serve">I</kbd></b> for a serve that clears the net. You have six seconds to serve.</li>
                   <li>The ball takes the colour of whoever touched it last.</li>
-                  <li><b>Choose a map before playing.</b> Graveyard has an impaling spike; Crematorium has a blunt blast fan that repels players, the ball, hazards and bats, with an upward draft three times gentler than its side jets; Dead Circus has a flexible stitched pole; Tomb has a blunt burial column and six slabs per side. In Tomb, the first ball landing cracks a slab, resets both touch counts and bounces; a new landing on that cracked slab scores for the opponent, regardless of the last touch. All twelve slabs reset before the next serve. Every round restores both players and resets the divider.</li>
+                  <li><b>Choose a map before playing.</b> Graveyard has an impaling spike. Crematorium has a blunt blast fan that repels players, the ball, hazards and bats. Its upward draft is three times gentler than its side jets. Dead Circus has a flexible stitched pole. Tomb has six slabs per side and an impaling spike that keeps limbs attached. Hold Jump to pull free. In Tomb, the first ball landing cracks a slab, resets both touch counts and bounces. A fresh landing on the same cracked slab scores for the opposite side. Every round restores both players, the divider and all slabs.</li>
                 </ul>
               </section>
               <section>
@@ -783,12 +789,15 @@
           <button class="btn btn-ghost" id="quit" type="button">Main menu</button>
         </div>
         <div class="card-foot">
-          <span>Music</span>
-          <button class="icon-btn js-sound" type="button" aria-label="Music" aria-pressed="true" title="Music (M)">
-            <svg class="ic-sound-on"><use href="#i-sound-on" /></svg>
-            <svg class="ic-sound-off"><use href="#i-sound-off" /></svg>
-            <kbd>M</kbd>
-          </button>
+          <div class="pause-music">
+            <span>Music</span>
+            <button class="icon-btn js-sound" type="button" aria-label="Music" aria-pressed="true" title="Music (M)">
+              <svg class="ic-sound-on"><use href="#i-sound-on" /></svg>
+              <svg class="ic-sound-off"><use href="#i-sound-off" /></svg>
+              <kbd>M</kbd>
+            </button>
+          </div>
+          <button class="seg fps-toggle" data-fps-toggle type="button" aria-pressed="false" aria-controls="fps-counter">FPS counter</button>
         </div>
       </div>
     </section>

@@ -176,6 +176,8 @@ migrate to the corresponding map. The divider is part of the map:
   thinner upward trails show the outlets and their relative strengths.
 - **Dead Circus — Stitched pole** has six physical segments connected by spring-driven hinges.
   Players and the ball can bend it into the opposing half; it returns when released.
+- **Tomb — Tomb spike** shares Graveyard's tapered blade, pinning and jump release.
+  Struggling on the Tomb spike keeps every limb attached.
 
 Each round releases impaled parts, straightens the rubber net and restores
 both players' full bodies. Wall-button hazards are always enabled.
@@ -200,8 +202,9 @@ including previously saved configurations. Saved defaults from earlier layouts
 update to the current defaults. Older settings keep custom bindings
 and gain separate dive and slide keys; the old default Space attack becomes I
 when that key is free. **Reset controls** restores both players' defaults.
-Esc pauses the game. **How to play** opens the
-complete instructions without leaving match setup.
+Esc pauses the game. **How to play** opens the complete instructions from match setup.
+**FPS counter** in the main and pause menus toggles the measured render rate during
+matches. The browser remembers the setting.
 
 **Serve in the air.** The held ball hangs at your feet. Tap I (or Z for
 player 2) to serve with a fixed underhand flick. Jump first to clear the net.
@@ -506,8 +509,9 @@ build on it without touching the physics:
 
 ### Tomb rules
 
-Tomb is a vaulted underground burial hall with a blunt carved column. Each half
-has six stone slabs spanning the playable floor between its wall and the column.
+Tomb is a candlelit burial hall with six stone slabs per side between its walls
+and the tapered spike. The spike catches deep impalements, keeps limbs attached
+under strain and releases trapped players when they hold jump.
 A free ball's first landing cracks one slab and bounces without ending the rally.
 Each new crack resets both touch counts, allowing another three player touches.
 A separate landing on that cracked slab awards one point to the other half,
@@ -519,7 +523,7 @@ for the existing two-second transition. Players fade away before the scored
 slab opens; a skeletal hand emerges from that exact opening, grabs the ball at
 its recorded impact position, lifts it and retreats. Smaller hands replace the
 broken stone and repair the other damaged slabs directly on the court before
-live play resumes. The generated burial-hall background adds carved vaults,
-coffin niches, sealed doors and candlelit edge details with a quiet center. Every new rally, restart and match restores all slabs. Pause
-freezes the transition and impact effects; reduced motion removes shaking,
-particles and continuous hand movement while preserving the sequence of states.
+live play resumes. The pencil-comic burial hall frames a quiet plum center with
+inked vaults, coffin niches, sealed doors and candles. Every new rally, restart
+and match restores all slabs. Pause freezes the transition and impact effects.
+Reduced motion displays fixed hand and crack poses and hides the stone dust.
